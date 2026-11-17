@@ -1,0 +1,27 @@
+{
+  "start": "main",
+  "nodes": {
+    "main": {
+      "text": "What is it, @player?",
+      "options": [
+        { "text": "Follow me.", "if": { "all": [ { "owner": true }, { "not": { "mode": "follow" } } ] }, "actions": [ { "order": "follow" } ] },
+        { "text": "Wait here.", "if": { "all": [ { "owner": true }, { "not": { "mode": "wait" } } ] }, "actions": [ { "order": "wait" } ] },
+        { "text": "Guard this place.", "if": { "all": [ { "owner": true }, { "not": { "mode": "guard" } } ] }, "actions": [ { "order": "guard" } ] },
+        { "text": "Who are you?", "goto": "about" },
+        { "text": "Got anything for me?", "if": { "not": { "tag": "felix_gift" } }, "goto": "gift" },
+        { "text": "Say hi!", "actions": [ { "animation": "animation.felix.wave" } ] },
+        { "text": "Bye." }
+      ]
+    },
+    "about": {
+      "text": [ "I'm @npc. I walk where you walk and wait where you tell me to.", "Ask me to guard a place and nothing hostile gets near it." ],
+      "options": [ { "text": "Good to know.", "goto": "main" } ]
+    },
+    "gift": {
+      "text": "Here, take these. I picked them on the way.",
+      "animation": "animation.felix.wave",
+      "actions": [ { "give": "minecraft:apple", "count": 3 }, { "tag": "felix_gift" }, { "sound": "minecraft:entity.item.pickup" } ],
+      "options": [ { "text": "Thanks!", "goto": "main" } ]
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "start": "hello",
+  "nodes": {
+    "hello": {
+      "text": "Apples! Fresh apples! Two of them buy you a loaf of bread.",
+      "options": [
+        { "text": "Two apples for a bread.", "if": { "item": "minecraft:apple", "count": 2 }, "actions": [ { "take": "minecraft:apple", "count": 2 }, { "give": "minecraft:bread" } ], "goto": "sold" },
+        { "text": "I have no apples.", "if": { "not": { "item": "minecraft:apple", "count": 2 } }, "goto": "poor" },
+        { "text": "Bye." }
+      ]
+    },
+    "sold": {
+      "text": "A pleasure. Come again!",
+      "animation": "animation.felix.wave",
+      "actions": [ { "command": "execute at @npc run particle minecraft:happy_villager ~ ~1.5 ~ 0.5 0.5 0.5 0 10" } ],
+      "options": [ { "text": "Again!", "goto": "hello" }, { "text": "Bye." } ]
+    },
+    "poor": {
+      "text": "Then go and pick some, @player.",
+      "options": [ { "text": "Fine.", "goto": "hello" } ]
+    }
+  }
+}

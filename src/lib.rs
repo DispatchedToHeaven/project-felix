@@ -7,10 +7,11 @@
 //! - `sync` is what an entity plays, set on the server (`/felix animate`) and synced to clients.
 //! - `runtime` plays the animations on the client: idle and walk, synced actions, blends, effects.
 //! - `companion` is the NPC on the server: owner, orders (follow, wait, guard), look, goals, commands.
-//! - `menu` is the NPC's menu on the client.
+//! - `dialog` reads dialog trees (no mod API types); `talk` runs them on the server.
+//! - `menu` is the talk screen on the client.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
-    AddClientReloadListenersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
+    AddClientReloadListenersEvent, AddServerReloadListenersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
     Host, HostSide, InteractionKeyMappingTriggeredEvent, InteractionResult, LevelTickPostEvent, RegisterCommandsEvent,
     RegisterEntityRenderersEvent, Registrar, RegistrationContext, RunModCommandEvent, ScreenMouseButtonPressedPreEvent,
     ScreenRenderPostEvent, ServerHost,
@@ -21,6 +22,7 @@ pub use mod_api::serde_json;
 pub mod anim;
 pub mod animations;
 pub mod companion;
+pub mod dialog;
 pub mod geo;
 pub mod menu;
 pub mod models;
@@ -28,6 +30,7 @@ pub mod molang;
 pub mod npc;
 pub mod runtime;
 pub mod sync;
+pub mod talk;
 
 #[derive(Default)]
 struct Felix;
@@ -37,6 +40,7 @@ impl Hooks for Felix {
     fn register(&self, r: &mut dyn Registrar, _cx: &RegistrationContext) {
         runtime::register(r);
         companion::register(r);
+        talk::register(r, std::sync::Arc::new(menu::ViewHandler), std::sync::Arc::new(menu::CloseHandler));
     }
 
     /// Models from `assets/<namespace>/geo/*.geo.json` and animations from
@@ -44,6 +48,11 @@ impl Hooks for Felix {
     fn add_client_reload_listeners(&self, _host: &dyn ClientHost, e: &mut AddClientReloadListenersEvent<'_>) {
         models::add_listener(e);
         animations::add_listener(e);
+    }
+
+    /// Dialogs from `data/<namespace>/felix_dialogs/*.json`, read on every data reload.
+    fn add_server_reload_listeners(&self, _host: &dyn Host, e: &mut AddServerReloadListenersEvent<'_>) {
+        talk::add_listener(e);
     }
 
     fn register_entity_renderers(&self, _cx: &RegistrationContext, e: &mut RegisterEntityRenderersEvent<'_>) {
@@ -65,6 +74,7 @@ impl Hooks for Felix {
     fn level_tick_post(&self, host: HostSide, _e: &mut LevelTickPostEvent) {
         if let HostSide::Server(host) = host {
             companion::level_tick(host);
+            talk::level_tick(host);
         }
     }
 

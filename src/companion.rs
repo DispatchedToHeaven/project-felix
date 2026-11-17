@@ -4,7 +4,6 @@
 //! The entity type copies a tame wolf (`data/projectfelix/horizon/entity_type/npc.json`), so it
 //! follows its owner, teleports to them and fights for them as a tame wolf does. Waiting and
 //! guarding are goals of our own that take the movement away from the wolf's following.
-use crate::sync::{ACTION, Action};
 use mod_api::{
     AttachmentCodec, AttachmentError, AttachmentType, Command, CommandArgumentValue, CommandSource, Compound,
     EntityRef, EntityPart, EntitySizeEvent, EntityTypeKey, Flow, Goal, GoalContext, GoalFlags, GoalRegistrar, Holder, Host,
@@ -16,8 +15,6 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 pub const NPC: &str = "projectfelix:npc";
 pub const DEFAULT_MODEL: &str = "projectfelix:felix";
-/// Client to server: an order from the menu (entity id as 4 bytes, little end first, then the order).
-pub const ORDER: &str = "projectfelix:order";
 
 /// How far a guard looks for monsters around its post, and how far it chases them.
 const GUARD_SIGHT: f64 = 10.0;
@@ -153,13 +150,10 @@ fn orders_of(id: u32) -> Option<Orders> {
 pub fn register(r: &mut dyn Registrar) {
     let _ = NPC_KEY.set(r.entity_type_key(NPC));
     r.entity_part(NPC, CompanionGoals);
-    let mut handlers = r.payload_handlers();
-    let mut reg = handlers.registrar("1");
-    reg.play_to_server(PayloadId(ORDER.into()), Arc::new(OrderHandler));
 }
 
 /// Server level tick: reads the orders of NPCs the goals asked about, and points guards at the
-/// monsters near their posts (every half second); the wolf's own attack goals do the fighting.
+/// monsters near their posts (each tick); the wolf's own attack goals do the fighting.
 pub fn level_tick(host: &mut dyn ServerHost) {
     let guards: Vec<(u32, [f64; 3])> = match SERVER.lock() {
         Ok(s) => s.orders.iter().filter(|(_, o)| o.mode == Mode::Guard).map(|(id, o)| (*id, o.post)).collect(),
@@ -200,7 +194,13 @@ pub fn entity_size(host: &dyn Host, e: &mut EntitySizeEvent<'_>) {
     }
 }
 
-fn set_orders(host: &mut dyn ServerHost, entity: EntityRef, mode: Mode) -> bool {
+/// Whether `entity` is an NPC of this mod.
+pub fn is_npc(host: &dyn Host, entity: EntityRef) -> bool {
+    entity.kind(host).is_some_and(|k| Some(&k) == NPC_KEY.get())
+}
+
+/// Gives the NPC new orders; waiting and guarding hold where it stands now.
+pub fn set_orders(host: &mut dyn ServerHost, entity: EntityRef, mode: Mode) -> bool {
     let post = entity.position(&*host).unwrap_or([0.0; 3]);
     let o = Orders { mode, post };
     if ORDERS.set(host, Holder::Entity(entity.id()), o).is_err() {
@@ -287,102 +287,13 @@ impl Goal for KeepPost {
     }
 }
 
-// ---- orders from the menu -----------------------------------------------------------------------
-
-/// What a menu button asks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Order {
-    Follow,
-    Wait,
-    Guard,
-    Wave,
-}
-
-impl Order {
-    pub fn byte(self) -> u8 {
-        match self {
-            Order::Follow => 0,
-            Order::Wait => 1,
-            Order::Guard => 2,
-            Order::Wave => 3,
-        }
-    }
-    fn from_byte(b: u8) -> Option<Order> {
-        Some(match b {
-            0 => Order::Follow,
-            1 => Order::Wait,
-            2 => Order::Guard,
-            3 => Order::Wave,
-            _ => return None,
-        })
-    }
-}
-
-pub fn order_bytes(entity: u32, order: Order) -> Vec<u8> {
-    let mut b = entity.to_le_bytes().to_vec();
-    b.push(order.byte());
-    b
-}
-
-struct OrderHandler;
-
-impl IPayloadHandler for OrderHandler {
-    fn handle(&self, payload: PayloadBytes, context: &mut dyn IPayloadContext) -> Result<(), String> {
-        let Ok(player) = context.player() else { return Ok(()) };
-        let Ok(host) = context.server_host() else { return Ok(()) };
-        let b = &payload.0;
-        if b.len() != 5 {
-            return Ok(());
-        }
-        let id = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-        let Some(order) = Order::from_byte(b[4]) else { return Ok(()) };
-        apply_order(host, player, id, order);
-        Ok(())
-    }
-}
-
-fn tell(host: &mut dyn ServerHost, player: PlayerRef, line: &str) {
-    let _ = player.action_bar(host, Text::literal(line));
-}
-
-fn apply_order(host: &mut dyn ServerHost, player: PlayerRef, id: u32, order: Order) {
-    let Some(entity) = host.entity(id) else { return };
-    if !entity.kind(&*host).is_some_and(|k| Some(&k) == NPC_KEY.get()) {
-        return;
-    }
-    let owner = LivingRef::new(entity).owner(&*host);
-    if owner.is_some() && owner != Some(player.uuid()) {
-        tell(host, player, "This companion listens to its owner.");
-        return;
-    }
-    match order {
-        Order::Follow => {
-            set_orders(host, entity, Mode::Follow);
-            tell(host, player, "Following you.");
-        }
-        Order::Wait => {
-            set_orders(host, entity, Mode::Wait);
-            tell(host, player, "Waiting here.");
-        }
-        Order::Guard => {
-            set_orders(host, entity, Mode::Guard);
-            tell(host, player, "Guarding this place.");
-        }
-        Order::Wave => {
-            let time = entity.level(&*host).and_then(|l| l.game_time(&*host)).unwrap_or(0);
-            let model = LOOK.get(host, Holder::Entity(id)).ok().flatten().map(|l| l.model).unwrap_or(DEFAULT_MODEL.into());
-            let name = model.rsplit(':').next().unwrap_or("felix");
-            let _ = ACTION.set(host, Holder::Entity(id), Some(Action { animation: format!("animation.{name}.wave"), start: time }));
-        }
-    }
-}
-
 // ---- commands -----------------------------------------------------------------------------------
 
 pub fn register_commands(e: &mut RegisterCommandsEvent<'_>) {
     e.commands.push(Command::op("felix spawn", 2));
     e.commands.push(Command::op("felix look <targets:entities> <spec:text>", 2));
     e.commands.push(Command::op("felix order <targets:entities> <order:word>", 2));
+    e.commands.push(Command::op("felix dialog <targets:entities> <dialog:text>", 2));
 }
 
 fn uuid_tag(uuid: u128) -> Tag {
@@ -464,6 +375,17 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
                 }
             }
             feedback(host, format!("{n} companions: {mode:?}"));
+        }
+        ["felix", "dialog"] => {
+            let id = text_argument(e, "dialog").unwrap_or_default().trim().to_string();
+            let mut n = 0;
+            for t in targets(e) {
+                if crate::talk::DIALOG.set(host, Holder::Entity(t.id()), Some(id.clone())).is_ok() {
+                    n += 1;
+                }
+            }
+            let note = if crate::talk::dialog_exists(&id) { "" } else { " (no such dialog is loaded yet)" };
+            feedback(host, format!("{n} NPCs now speak {id}{note}"));
         }
         _ => return Flow::Continue,
     }
