@@ -34,6 +34,13 @@ impl EntityRenderer for NpcRenderer {
         if let Some(t) = &table {
             living.body_rot = t.yaw;
         }
+        let court = runtime::courts()
+            .into_iter()
+            .find(|(id, _)| *id == entity.id)
+            .and_then(|(_, c)| Some((c.yaw, crate::sports::Match::from_json(&crate::serde_json::from_str(&c.json).ok()?)?)));
+        if let Some((yaw, _)) = &court {
+            living.body_rot = *yaw;
+        }
         let pose = runtime::pose(entity.id, &look.model, &living, entity.age, now);
         let mut root = model.root.clone();
         apply(&mut root, &pose);
@@ -53,6 +60,9 @@ impl EntityRenderer for NpcRenderer {
         }
         if let Some(t) = &table {
             draw_table(draw, t);
+        }
+        if let Some((_, m)) = &court {
+            crate::sports_client::draw_court(draw, m, now);
         }
         if living.death_time > 0.0 {
             let tip = ((living.death_time - 1.0) / 20.0 * 1.6).max(0.0).sqrt().min(1.0) * 90.0;

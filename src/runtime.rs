@@ -8,6 +8,7 @@ use crate::molang::{self, MapContext};
 use crate::companion::{LOOK, Look, ORDERS, Orders};
 use crate::scene::{self, Scene};
 use crate::games::{TABLE, Table};
+use crate::matches::{Court, SPORT};
 use crate::scenes::{Playing, SCENE};
 use crate::sync::{ACTION, Action};
 use crate::{animations, models};
@@ -88,6 +89,18 @@ struct State {
     scenes: HashMap<u32, Active>,
     /// Game tables, by NPC.
     tables: HashMap<u32, Table>,
+    /// Ball game courts, by NPC.
+    courts: HashMap<u32, Court>,
+}
+
+/// Every ball game being played, by NPC.
+pub fn courts() -> Vec<(u32, Court)> {
+    STATE.lock().map(|s| s.courts.iter().map(|(k, v)| (*k, v.clone())).collect()).unwrap_or_default()
+}
+
+/// The client's clock as the renderer last saw it: game time in ticks, with the partial tick.
+pub fn clock() -> f64 {
+    STATE.lock().map(|s| s.clock).unwrap_or(0.0)
 }
 
 /// The game table at NPC `id`, if a game is set up there.
@@ -338,10 +351,19 @@ pub fn tick(host: &mut dyn ClientHost) {
             }
         }
     }
+    let mut courts = HashMap::new();
+    if let Ok(query) = host.query(&SPORT) {
+        for row in query.iter().flatten() {
+            if let (AttachmentHolder::Entity(e), Some(c)) = (row.holder, row.value) {
+                courts.insert(e.id(), c.clone());
+            }
+        }
+    }
     let mut fire = Vec::new();
     {
         let Ok(mut state) = STATE.lock() else { return };
         state.tables = tables;
+        state.courts = courts;
         let mut scenes = std::mem::take(&mut state.scenes);
         scenes.retain(|id, a| playing.get(id) == Some(&a.playing));
         for (id, p) in playing {

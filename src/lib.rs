@@ -12,9 +12,11 @@
 //! - `scene` reads scenes (no mod API types); `scenes` starts and ends them on the server.
 //! - `chess` and `checkers` are the games' rules and engines (no mod API types); `games` runs
 //!   them at an NPC's table on the server, `game_screen` is the board on the client.
+//! - `sports` are the ball games' rules (no mod API types); `matches` runs them on the server,
+//!   `sports_client` takes the keys and draws the HUD, the court and the ball.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
-    AddClientReloadListenersEvent, AddServerReloadListenersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
+    AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
     Host, HostSide, InteractionKeyMappingTriggeredEvent, InteractionResult, LevelTickPostEvent, RegisterCommandsEvent,
     RegisterEntityRenderersEvent, Registrar, RegistrationContext, RunModCommandEvent, ScreenMouseButtonPressedPreEvent,
     ScreenRenderPostEvent, ServerHost,
@@ -31,6 +33,7 @@ pub mod dialog;
 pub mod game_screen;
 pub mod games;
 pub mod geo;
+pub mod matches;
 pub mod menu;
 pub mod models;
 pub mod molang;
@@ -38,6 +41,8 @@ pub mod npc;
 pub mod runtime;
 pub mod scene;
 pub mod scenes;
+pub mod sports;
+pub mod sports_client;
 pub mod sync;
 pub mod talk;
 
@@ -51,6 +56,8 @@ impl Hooks for Felix {
         companion::register(r);
         talk::register(r, std::sync::Arc::new(menu::ViewHandler), std::sync::Arc::new(menu::CloseHandler));
         games::register(r, std::sync::Arc::new(game_screen::ViewHandler));
+        matches::register(r);
+        sports_client::register(r);
     }
 
     /// Models from `assets/<namespace>/geo/*.geo.json` and animations from
@@ -64,6 +71,14 @@ impl Hooks for Felix {
     fn add_server_reload_listeners(&self, _host: &dyn Host, e: &mut AddServerReloadListenersEvent<'_>) {
         talk::add_listener(e);
         scenes::add_listener(e);
+    }
+
+    fn register_gui_layers(&self, _cx: &RegistrationContext, e: &mut RegisterGuiLayersEvent<'_>) {
+        sports_client::register_layers(e);
+    }
+
+    fn gui_layer_draw(&self, host: &dyn ClientHost, e: &mut GuiLayerDrawEvent<'_>) {
+        sports_client::draw_layer(host, e);
     }
 
     fn register_entity_renderers(&self, _cx: &RegistrationContext, e: &mut RegisterEntityRenderersEvent<'_>) {
@@ -88,6 +103,7 @@ impl Hooks for Felix {
             talk::level_tick(host);
             scenes::level_tick(host);
             games::level_tick(host);
+            matches::level_tick(host);
         }
     }
 
@@ -119,5 +135,6 @@ impl Hooks for Felix {
         runtime::tick(host);
         menu::tick(host);
         game_screen::tick(host);
+        sports_client::tick(host);
     }
 }

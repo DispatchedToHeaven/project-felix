@@ -357,7 +357,7 @@ fn after_move(host: &mut dyn ServerHost, npc: EntityRef, now: i64) {
             let npc_side = if g.white == Seat::Npc { Some(Color::White) } else if g.black == Seat::Npc { Some(Color::Black) } else { None };
             if let Some(side) = npc_side {
                 let won = text.contains(if side == Color::White { "White wins" } else { "Black wins" });
-                reaction = Some(if won { "animation.felix.play_chess" } else { "animation.felix.wave" });
+                reaction = Some(if won { "animation.felix.cheer" } else { "animation.felix.wave" });
             }
         } else if g.seat(g.board.side()) == Seat::Npc {
             think(g);

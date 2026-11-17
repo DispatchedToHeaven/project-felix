@@ -1,1 +1,7 @@
-{ "entity.projectfelix.npc": "NPC" }
+{
+  "entity.projectfelix.npc": "NPC",
+  "key.categories.projectfelix": "Project Felix",
+  "key.projectfelix.left": "Ball games: left",
+  "key.projectfelix.right": "Ball games: right",
+  "key.projectfelix.smash": "Ball games: smash / shoot"
+}

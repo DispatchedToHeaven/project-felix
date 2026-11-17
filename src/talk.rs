@@ -129,6 +129,13 @@ pub fn level_tick(host: &mut dyn ServerHost) {
     }
 }
 
+/// Runs `line` as the server console at the next level tick.
+pub fn queue(line: String) {
+    if let Ok(mut p) = PENDING.lock() {
+        p.push(line);
+    }
+}
+
 fn end(player: PlayerRef) {
     if let Ok(mut s) = SESSIONS.lock() {
         s.remove(&player.uuid());
@@ -186,7 +193,8 @@ fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> Player
     PlayerFacts { game, in_game, tags, items, owner, mode }
 }
 
-fn uuid_text(u: u128) -> String {
+/// A UUID written with dashes, as commands take it.
+pub fn uuid_text(u: u128) -> String {
     let h = format!("{u:032x}");
     format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
 }
@@ -289,6 +297,12 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
                 let (Some(p), Some(kind)) = (player, crate::games::GameKind::parse(kind)) else { continue };
                 if let Err(e) = crate::games::start(host, npc, kind, p, *vs_npc) {
                     eprintln!("[projectfelix] game: {e}");
+                }
+            }
+            Action::Sport(name) => {
+                let (Some(p), Some(sport)) = (player, crate::sports::Sport::parse(name)) else { continue };
+                if let Err(e) = crate::matches::start(host, npc, sport, p) {
+                    eprintln!("[projectfelix] sport: {e}");
                 }
             }
             Action::JoinGame => {

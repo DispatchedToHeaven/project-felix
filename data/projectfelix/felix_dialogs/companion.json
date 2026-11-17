@@ -12,6 +12,7 @@
         { "text": "Say hi!", "actions": [ { "animation": "animation.felix.wave" } ] },
         { "text": "Show me a chess game.", "if": { "game": "none" }, "actions": [ { "scene": "projectfelix:chess" } ] },
         { "text": "Let's play.", "if": { "game": "none" }, "goto": "games" },
+        { "text": "Fancy a ball game?", "if": { "game": "none" }, "goto": "sports" },
         { "text": "Back to the board.", "if": { "in_game": true }, "actions": [ { "open_game": true } ] },
         { "text": "Take the other seat.", "if": { "all": [ { "game": "waiting" }, { "in_game": false } ] }, "actions": [ { "join_game": true } ] },
         { "text": "Let me watch.", "if": { "all": [ { "game": "playing" }, { "in_game": false } ] }, "actions": [ { "open_game": true } ] },
@@ -25,6 +26,15 @@
         { "text": "Draughts, against you.", "actions": [ { "game": "checkers", "vs": "npc" } ] },
         { "text": "Chess, with a friend.", "actions": [ { "game": "chess", "vs": "player" } ] },
         { "text": "Draughts, with a friend.", "actions": [ { "game": "checkers", "vs": "player" } ] },
+        { "text": "Not now.", "goto": "main" }
+      ]
+    },
+    "sports": {
+      "text": "Sure! Stand where I put you and watch the ball. Left, right, or smash it when it comes high.",
+      "options": [
+        { "text": "Table tennis.", "actions": [ { "sport": "table_tennis" } ] },
+        { "text": "Tennis.", "actions": [ { "sport": "tennis" } ] },
+        { "text": "Basketball.", "actions": [ { "sport": "basketball" } ] },
         { "text": "Not now.", "goto": "main" }
       ]
     },
