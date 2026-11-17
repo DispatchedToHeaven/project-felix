@@ -13,6 +13,8 @@ use std::sync::{Arc, LazyLock, RwLock};
 /// A loaded model: its bones as a part tree (the root draws nothing itself) and what it came from.
 pub struct LoadedModel {
     pub root: ModelPart,
+    /// The bones as read, for locators.
+    pub geo: geo::Model,
     pub texture_width: u32,
     pub texture_height: u32,
     pub quads: usize,
@@ -37,14 +39,15 @@ impl ClientReloadListener for Listener {
             let Some(bytes) = cx.read(id) else { continue };
             match geo::parse(bytes) {
                 Ok(models) => {
-                    let m = &models[0];
+                    let m = models.into_iter().next().unwrap();
                     let loaded = LoadedModel {
-                        root: to_parts(m),
+                        root: to_parts(&m),
                         texture_width: m.texture_width,
                         texture_height: m.texture_height,
                         quads: m.quad_count(),
+                        geo: m,
                     };
-                    eprintln!("[projectfelix] model {name}: {} bones, {} faces", m.bones.len(), loaded.quads);
+                    eprintln!("[projectfelix] model {name}: {} bones, {} faces", loaded.geo.bones.len(), loaded.quads);
                     next.insert(name.to_string(), Arc::new(loaded));
                 }
                 Err(e) => eprintln!("[projectfelix] model {name} not loaded: {e}"),

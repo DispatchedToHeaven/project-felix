@@ -1,6 +1,6 @@
 id = "projectfelix"
 name = "Project Felix"
-version = "0.1.0"
+version = "0.2.0"
 description = "NPCs with Blockbench models and animations."
 authors = ["DispatchedToHeaven"]
 # A native mod: Rust in src/, compiled by the launcher against the game build [native] pins, beside data/ and assets/.

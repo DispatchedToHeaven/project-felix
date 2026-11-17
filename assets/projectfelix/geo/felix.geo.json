@@ -52,7 +52,8 @@
 				},
 				{
 					"name": "rightArm", "parent": "body", "pivot": [-5, 22, 0],
-					"cubes": [{ "origin": [-8, 12, -2], "size": [4, 12, 4], "uv": [40, 16] }]
+					"cubes": [{ "origin": [-8, 12, -2], "size": [4, 12, 4], "uv": [40, 16] }],
+					"locators": { "hand": [-6, 11, 0] }
 				},
 				{
 					"name": "leftArm", "parent": "body", "pivot": [5, 22, 0],

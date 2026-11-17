@@ -1,7 +1,8 @@
 //! The NPC: entity type `projectfelix:npc` (content file `data/projectfelix/horizon/entity_type/npc.json`,
-//! a wandering trader's body for now) drawn with a Blockbench model.
-use crate::models;
-use mod_api::{BlockEntityDrawContext, EntityRenderState, EntityRenderer, RegisterEntityRenderersEvent};
+//! a wandering trader's body for now) drawn with a Blockbench model and its animations.
+use crate::{models, runtime};
+use mod_api::{BlockEntityDrawContext, EntityRenderState, EntityRenderer, ModelPart, RegisterEntityRenderersEvent};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// The model and texture every NPC has until NPCs get their own (0.3.0).
@@ -16,8 +17,11 @@ impl EntityRenderer for NpcRenderer {
             return Err(format!("model {MODEL} is not loaded"));
         };
         let Some(living) = entity.living else { return Ok(()) };
+        let now = draw.game_time() as f64 + draw.partial() as f64;
+        let pose = runtime::pose(entity.id, MODEL, &living, entity.age, now);
         let mut root = model.root.clone();
-        // Look where the head looks: Blockbench's usual bone name, any case.
+        apply(&mut root, &pose);
+        // Look where the head looks, on top of what the animations do.
         if let Some(head) = find_mut(&mut root, "head") {
             head.y_rot += living.y_rot.to_radians();
             head.x_rot += living.x_rot.to_radians();
@@ -37,7 +41,25 @@ impl EntityRenderer for NpcRenderer {
     }
 }
 
-fn find_mut<'a>(part: &'a mut mod_api::ModelPart, name: &str) -> Option<&'a mut mod_api::ModelPart> {
+/// Each bone part moved, turned and scaled by its animated change (bones by lowercase name).
+fn apply(part: &mut ModelPart, pose: &HashMap<String, runtime::Full>) {
+    for (name, child) in part.children_mut() {
+        if let Some(f) = pose.get(&name.to_ascii_lowercase()) {
+            child.x += f.position[0];
+            child.y += f.position[1];
+            child.z += f.position[2];
+            child.x_rot += f.rotation[0];
+            child.y_rot += f.rotation[1];
+            child.z_rot += f.rotation[2];
+            child.x_scale *= f.scale[0];
+            child.y_scale *= f.scale[1];
+            child.z_scale *= f.scale[2];
+        }
+        apply(child, pose);
+    }
+}
+
+fn find_mut<'a>(part: &'a mut ModelPart, name: &str) -> Option<&'a mut ModelPart> {
     let key = part.children().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(n, _)| n.to_string());
     if let Some(key) = key {
         return part.get_child_mut(&key);
