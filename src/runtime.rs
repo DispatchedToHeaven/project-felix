@@ -5,6 +5,7 @@
 //! synced actions and fires the effects the animations passed since the last tick.
 use crate::anim::{Animation, BonePose, EffectKind, LoopMode};
 use crate::molang::{self, MapContext};
+use crate::companion::{LOOK, Look, ORDERS, Orders};
 use crate::sync::{ACTION, Action};
 use crate::{animations, models};
 use mod_api::{
@@ -77,6 +78,24 @@ struct State {
     npcs: HashMap<u32, Npc>,
     /// Synced actions by entity id, as the last client tick read them.
     actions: HashMap<u32, Action>,
+    /// Synced orders and looks, likewise.
+    orders: HashMap<u32, Orders>,
+    looks: HashMap<u32, Look>,
+}
+
+/// The NPCs drawn in the last five seconds.
+pub fn visible_npcs() -> Vec<u32> {
+    STATE.lock().map(|s| s.npcs.keys().copied().collect()).unwrap_or_default()
+}
+
+/// An NPC's orders, as the server last synced them.
+pub fn orders(id: u32) -> Option<Orders> {
+    STATE.lock().ok()?.orders.get(&id).copied()
+}
+
+/// An NPC's look, if the server gave it one.
+pub fn look(id: u32) -> Option<Look> {
+    STATE.lock().ok()?.looks.get(&id).cloned()
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -239,11 +258,29 @@ pub fn tick(host: &mut dyn ClientHost) {
             }
         }
     }
+    let mut orders = HashMap::new();
+    if let Ok(query) = host.query(&ORDERS) {
+        for row in query.iter().flatten() {
+            if let AttachmentHolder::Entity(e) = row.holder {
+                orders.insert(e.id(), *row.value);
+            }
+        }
+    }
+    let mut looks = HashMap::new();
+    if let Ok(query) = host.query(&LOOK) {
+        for row in query.iter().flatten() {
+            if let (AttachmentHolder::Entity(e), Some(l)) = (row.holder, row.value) {
+                looks.insert(e.id(), l.clone());
+            }
+        }
+    }
     let mut fire = Vec::new();
     {
         let Ok(mut state) = STATE.lock() else { return };
         let now = state.clock;
         state.actions = actions;
+        state.orders = orders;
+        state.looks = looks;
         // NPCs not drawn for five seconds are gone or out of sight.
         state.npcs.retain(|_, n| now - n.last_frame < 100.0);
         let State { npcs, actions, .. } = &mut *state;

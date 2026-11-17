@@ -1,7 +1,7 @@
 // Paints the test NPC's texture (assets/projectfelix/textures/entity/felix.png, 64x64) on the
 // geometry's box-UV layout. Right side red, left side green, nose orange: in game they show at
 // once whether sides, faces and mesh UVs land where Blockbench puts them.
-// Usage: node tools/felix-texture.mjs
+// Usage: node tools/felix-texture.mjs  (also writes felix_alt.png: the same with a green shirt and grey hair)
 import { writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
@@ -56,9 +56,16 @@ function chunk(type, data) {
 }
 const ihdr = Buffer.alloc(13);
 ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4); ihdr[8] = 8; ihdr[9] = 6;
-const raw = Buffer.alloc(H * (W * 4 + 1));
-for (let y = 0; y < H; y++) Buffer.from(px.buffer, y * W * 4, W * 4).copy(raw, y * (W * 4 + 1) + 1);
-const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
-const out = fileURLToPath(new URL('../assets/projectfelix/textures/entity/felix.png', import.meta.url));
-writeFileSync(out, png);
-console.log('wrote', out);
+function save(name) {
+  const raw = Buffer.alloc(H * (W * 4 + 1));
+  for (let y = 0; y < H; y++) Buffer.from(px.buffer, y * W * 4, W * 4).copy(raw, y * (W * 4 + 1) + 1);
+  const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+  const out = fileURLToPath(new URL('../assets/projectfelix/textures/entity/' + name, import.meta.url));
+  writeFileSync(out, png);
+  console.log('wrote', out);
+}
+save('felix.png');
+// The variant: grey hair, green shirt.
+const recolor = (from, to) => { const a = hex(from), b = hex(to); for (let i = 0; i < px.length; i += 4) if (px[i] === a[0] && px[i + 1] === a[1] && px[i + 2] === a[2]) px.set(b, i); };
+recolor('#5a3a22', '#8a8a8a'); recolor('#2a4a9a', '#2a7a3a'); recolor('#3a6ad0', '#3ab04a');
+save('felix_alt.png');

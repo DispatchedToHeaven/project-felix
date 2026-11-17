@@ -1,24 +1,31 @@
 //! The NPC: entity type `projectfelix:npc` (content file `data/projectfelix/horizon/entity_type/npc.json`,
-//! a wandering trader's body for now) drawn with a Blockbench model and its animations.
+//! a tame wolf's body) drawn with a Blockbench model and its animations.
+use crate::companion::{DEFAULT_MODEL, Look};
 use crate::{models, runtime};
 use mod_api::{BlockEntityDrawContext, EntityRenderState, EntityRenderer, ModelPart, RegisterEntityRenderersEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// The model and texture every NPC has until NPCs get their own (0.3.0).
-const MODEL: &str = "projectfelix:felix";
-const TEXTURE: &str = "projectfelix:entity/felix";
 
 struct NpcRenderer;
 
 impl EntityRenderer for NpcRenderer {
     fn submit(&self, entity: &EntityRenderState, draw: &mut dyn BlockEntityDrawContext) -> Result<(), String> {
-        let Some(model) = models::get(MODEL) else {
-            return Err(format!("model {MODEL} is not loaded"));
+        let look = runtime::look(entity.id).unwrap_or_else(|| Look::of_model(DEFAULT_MODEL));
+        // A look whose model isn't loaded falls back to the default one.
+        let (look, model) = match models::get(&look.model) {
+            Some(m) => (look, m),
+            None => {
+                let fallback = Look::of_model(DEFAULT_MODEL);
+                // Nothing to draw with yet (resources still loading): draw nothing rather than
+                // fail, which would switch the renderer off for every NPC.
+                let Some(m) = models::get(&fallback.model) else { return Ok(()) };
+                (fallback, m)
+            }
         };
         let Some(living) = entity.living else { return Ok(()) };
         let now = draw.game_time() as f64 + draw.partial() as f64;
-        let pose = runtime::pose(entity.id, MODEL, &living, entity.age, now);
+        let pose = runtime::pose(entity.id, &look.model, &living, entity.age, now);
         let mut root = model.root.clone();
         apply(&mut root, &pose);
         // Look where the head looks, on top of what the animations do.
@@ -35,9 +42,12 @@ impl EntityRenderer for NpcRenderer {
             draw.rotate_about([0.0, 0.0, 1.0], tip, [0.0; 3]);
         }
         let tint = if living.has_red_overlay { 0xFF9999 } else { 0xFFFFFF };
-        let drawn = draw.model_part(&root, TEXTURE, tint);
+        // A texture the atlas doesn't have: the model's usual one instead.
+        if !draw.model_part(&root, &look.texture, tint) {
+            draw.model_part(&root, &Look::of_model(&look.model).texture, tint);
+        }
         draw.pop();
-        if drawn { Ok(()) } else { Err(format!("texture {TEXTURE} is missing")) }
+        Ok(())
     }
 }
 

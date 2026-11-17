@@ -1,1 +1,9 @@
-{ "template": "minecraft:wandering_trader" }
+{
+  "template": "minecraft:wolf",
+  "attributes": { "minecraft:max_health": 30.0, "minecraft:movement_speed": 0.3, "minecraft:attack_damage": 5.0 },
+  "sounds": {
+    "ambient": "none",
+    "hurt": "minecraft:entity.player.hurt",
+    "death": "minecraft:entity.player.death"
+  }
+}

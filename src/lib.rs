@@ -6,17 +6,23 @@
 //!   reloaded with the assets.
 //! - `sync` is what an entity plays, set on the server (`/felix animate`) and synced to clients.
 //! - `runtime` plays the animations on the client: idle and walk, synced actions, blends, effects.
+//! - `companion` is the NPC on the server: owner, orders (follow, wait, guard), look, goals, commands.
+//! - `menu` is the NPC's menu on the client.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
-    AddClientReloadListenersEvent, ClientHost, ClientTickPostEvent, Flow, Hooks, RegisterCommandsEvent,
-    RegisterEntityRenderersEvent, Registrar, RegistrationContext, RunModCommandEvent, ServerHost,
+    AddClientReloadListenersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
+    Host, HostSide, InteractionKeyMappingTriggeredEvent, InteractionResult, LevelTickPostEvent, RegisterCommandsEvent,
+    RegisterEntityRenderersEvent, Registrar, RegistrationContext, RunModCommandEvent, ScreenMouseButtonPressedPreEvent,
+    ScreenRenderPostEvent, ServerHost,
 };
 
 pub use mod_api::serde_json;
 
 pub mod anim;
 pub mod animations;
+pub mod companion;
 pub mod geo;
+pub mod menu;
 pub mod models;
 pub mod molang;
 pub mod npc;
@@ -30,6 +36,7 @@ struct Felix;
 impl Hooks for Felix {
     fn register(&self, r: &mut dyn Registrar, _cx: &RegistrationContext) {
         runtime::register(r);
+        companion::register(r);
     }
 
     /// Models from `assets/<namespace>/geo/*.geo.json` and animations from
@@ -45,13 +52,44 @@ impl Hooks for Felix {
 
     fn register_commands(&self, _host: &mut dyn ServerHost, e: &mut RegisterCommandsEvent<'_>) {
         sync::register_commands(e);
+        companion::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
-        sync::run_command(host, e)
+        match companion::run_command(host, e) {
+            Flow::Cancel => Flow::Cancel,
+            _ => sync::run_command(host, e),
+        }
+    }
+
+    fn level_tick_post(&self, host: HostSide, _e: &mut LevelTickPostEvent) {
+        if let HostSide::Server(host) = host {
+            companion::level_tick(host);
+        }
+    }
+
+    fn entity_size(&self, host: &dyn Host, e: &mut EntitySizeEvent<'_>) {
+        companion::entity_size(host, e);
+    }
+
+    fn entity_interact(&self, host: HostSide, e: &mut EntityInteractEvent<'_>) -> Option<InteractionResult> {
+        menu::interact(host, e.entity, e.kind, e.hand)
+    }
+
+    fn interaction_key_mapping_triggered(&self, host: &mut dyn ClientHost, e: &mut InteractionKeyMappingTriggeredEvent) -> Flow {
+        menu::use_key(host, e)
+    }
+
+    fn screen_render_post(&self, host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
+        menu::render(host, e);
+    }
+
+    fn screen_mouse_button_pressed_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
+        menu::mouse_pressed(host, e)
     }
 
     fn client_tick_post(&self, host: &mut dyn ClientHost, _e: &mut ClientTickPostEvent) {
         runtime::tick(host);
+        menu::tick(host);
     }
 }
