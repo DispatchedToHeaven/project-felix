@@ -10,6 +10,7 @@
         { "text": "Who are you?", "goto": "about" },
         { "text": "Got anything for me?", "if": { "not": { "tag": "felix_gift" } }, "goto": "gift" },
         { "text": "Say hi!", "actions": [ { "animation": "animation.felix.wave" } ] },
+        { "text": "Play chess?", "actions": [ { "scene": "projectfelix:chess" } ] },
         { "text": "Bye." }
       ]
     },

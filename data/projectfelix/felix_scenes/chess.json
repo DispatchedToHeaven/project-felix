@@ -1,0 +1,23 @@
+{
+  "length": 11,
+  "actor": {
+    "animation": "animation.felix.play_chess"
+  },
+  "props": [
+    {
+      "model": "projectfelix:chess_table",
+      "texture": "projectfelix:entity/chess_table",
+      "offset": [
+        0,
+        0,
+        1.2
+      ],
+      "animation": "animation.chess_table.scholars_mate"
+    }
+  ],
+  "end": [
+    {
+      "command": "tellraw @player {\"text\":\"Checkmate in four. Again?\",\"color\":\"yellow\"}"
+    }
+  ]
+}

@@ -294,6 +294,7 @@ pub fn register_commands(e: &mut RegisterCommandsEvent<'_>) {
     e.commands.push(Command::op("felix look <targets:entities> <spec:text>", 2));
     e.commands.push(Command::op("felix order <targets:entities> <order:word>", 2));
     e.commands.push(Command::op("felix dialog <targets:entities> <dialog:text>", 2));
+    e.commands.push(Command::op("felix scene <targets:entities> <scene:text>", 2));
 }
 
 fn uuid_tag(uuid: u128) -> Tag {
@@ -386,6 +387,23 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
             }
             let note = if crate::talk::dialog_exists(&id) { "" } else { " (no such dialog is loaded yet)" };
             feedback(host, format!("{n} NPCs now speak {id}{note}"));
+        }
+        ["felix", "scene"] => {
+            let id = text_argument(e, "scene").unwrap_or_default().trim().to_string();
+            let player = match e.source {
+                CommandSource::Player { player, .. } => Some(*player),
+                _ => None,
+            };
+            let mut n = 0;
+            let mut why = String::new();
+            for t in targets(e) {
+                match crate::scenes::start(host, t, &id, player) {
+                    Ok(()) => n += 1,
+                    Err(err) => why = err,
+                }
+            }
+            let note = if why.is_empty() { String::new() } else { format!(" ({why})") };
+            feedback(host, format!("{n} NPCs play {id}{note}"));
         }
         _ => return Flow::Continue,
     }

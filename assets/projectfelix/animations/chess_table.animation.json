@@ -1,0 +1,230 @@
+{
+	"format_version": "1.8.0",
+	"animations": {
+		"animation.chess_table.scholars_mate": {
+			"loop": "hold_on_last_frame",
+			"animation_length": 9,
+			"bones": {
+				"w_p_e2": {
+					"position": {
+						"0.40": [
+							0,
+							0,
+							0
+						],
+						"0.70": {
+							"post": [
+								0,
+								2.5,
+								-2
+							],
+							"lerp_mode": "catmullrom"
+						},
+						"1.00": [
+							0,
+							0,
+							-4
+						]
+					}
+				},
+				"b_p_e7": {
+					"position": {
+						"1.40": [
+							0,
+							0,
+							0
+						],
+						"1.70": {
+							"post": [
+								0,
+								2.5,
+								2
+							],
+							"lerp_mode": "catmullrom"
+						},
+						"2.00": [
+							0,
+							0,
+							4
+						]
+					}
+				},
+				"w_b_f1": {
+					"position": {
+						"2.40": [
+							0,
+							0,
+							0
+						],
+						"2.70": {
+							"post": [
+								3,
+								2.5,
+								-3
+							],
+							"lerp_mode": "catmullrom"
+						},
+						"3.00": [
+							6,
+							0,
+							-6
+						]
+					}
+				},
+				"b_n_b8": {
+					"position": {
+						"3.40": [
+							0,
+							0,
+							0
+						],
+						"3.70": {
+							"post": [
+								-1,
+								2.5,
+								2
+							],
+							"lerp_mode": "catmullrom"
+						},
+						"4.00": [
+							-2,
+							0,
+							4
+						]
+					}
+				},
+				"w_q_d1": {
+					"position": {
+						"4.40": [
+							0,
+							0,
+							0
+						],
+						"4.70": {
+							"post": [
+								-4,
+								2.5,
+								-4
+							],
+							"lerp_mode": "catmullrom"
+						},
+						"5.00": [
+							-8,
+							0,
+							-8
+						],
+						"6.40": [
+							-8,
+							0,
+							-8
+						],
+						"6.70": {
+							"post": [
+								-6,
+								2.5,
+								-10
+							],
+							"lerp_mode": "catmullrom"
+						},
+						"7.00": [
+							-4,
+							0,
+							-12
+						]
+					}
+				},
+				"b_n_g8": {
+					"position": {
+						"5.40": [
+							0,
+							0,
+							0
+						],
+						"5.70": {
+							"post": [
+								1,
+								2.5,
+								2
+							],
+							"lerp_mode": "catmullrom"
+						},
+						"6.00": [
+							2,
+							0,
+							4
+						]
+					}
+				},
+				"b_p_f7": {
+					"scale": {
+						"0.0": [
+							1,
+							1,
+							1
+						],
+						"6.95": {
+							"pre": [
+								1,
+								1,
+								1
+							],
+							"post": [
+								0,
+								0,
+								0
+							]
+						}
+					}
+				},
+				"b_k_e8": {
+					"rotation": {
+						"7.6": [
+							0,
+							0,
+							0
+						],
+						"8.2": {
+							"vector": [
+								0,
+								0,
+								85
+							],
+							"easing": "easeOutBounce"
+						}
+					}
+				}
+			},
+			"sound_effects": {
+				"1.00": {
+					"effect": "minecraft:block.wood.place"
+				},
+				"2.00": {
+					"effect": "minecraft:block.wood.place"
+				},
+				"3.00": {
+					"effect": "minecraft:block.wood.place"
+				},
+				"4.00": {
+					"effect": "minecraft:block.wood.place"
+				},
+				"5.00": {
+					"effect": "minecraft:block.wood.place"
+				},
+				"6.00": {
+					"effect": "minecraft:block.wood.place"
+				},
+				"7.00": {
+					"effect": "minecraft:block.wood.place"
+				},
+				"8.20": {
+					"effect": "minecraft:entity.player.levelup"
+				}
+			},
+			"particle_effects": {
+				"8.2": {
+					"effect": "minecraft:happy_villager"
+				}
+			}
+		}
+	}
+}

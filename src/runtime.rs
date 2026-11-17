@@ -6,6 +6,8 @@
 use crate::anim::{Animation, BonePose, EffectKind, LoopMode};
 use crate::molang::{self, MapContext};
 use crate::companion::{LOOK, Look, ORDERS, Orders};
+use crate::scene::{self, Scene};
+use crate::scenes::{Playing, SCENE};
 use crate::sync::{ACTION, Action};
 use crate::{animations, models};
 use mod_api::{
@@ -81,6 +83,43 @@ struct State {
     /// Synced orders and looks, likewise.
     orders: HashMap<u32, Orders>,
     looks: HashMap<u32, Look>,
+    /// Scenes playing, by NPC.
+    scenes: HashMap<u32, Active>,
+}
+
+/// A scene playing on an NPC, its file read, and how far each prop's effects have been fired.
+struct Active {
+    playing: Playing,
+    scene: Arc<Scene>,
+    props_fired: Vec<Option<f32>>,
+}
+
+impl Active {
+    fn on_at(&self, now: f64) -> bool {
+        now >= self.playing.start as f64 && now < self.playing.start as f64 + self.scene.length as f64 * 20.0
+    }
+}
+
+/// The scene NPC `id` plays at `now`: the way it faces, the scene, and when it started.
+pub fn scene_of(id: u32, now: f64) -> Option<(f32, Arc<Scene>, f64)> {
+    let s = STATE.lock().ok()?;
+    let a = s.scenes.get(&id).filter(|a| a.on_at(now))?;
+    Some((a.playing.yaw, a.scene.clone(), a.playing.start as f64))
+}
+
+/// A prop's bones at `t` seconds into its animation `name`.
+pub fn prop_pose(name: &str, t: f32) -> HashMap<String, Full> {
+    let Some(a) = animations::get(name) else { return HashMap::new() };
+    let (t, _) = a.local_time(t);
+    let mut cx = MapContext::default();
+    cx.queries.insert("anim_time".into(), t);
+    full_of(a.sample(t, &mut cx)).into_iter().map(|(k, v)| (k.to_ascii_lowercase(), v)).collect()
+}
+
+/// The scene actor's animation, as a synced action from the scene's start, while it plays.
+fn scene_action(scenes: &HashMap<u32, Active>, id: u32, now: f64) -> Option<Action> {
+    let a = scenes.get(&id).filter(|a| a.on_at(now))?;
+    Some(Action { animation: a.scene.actor_animation.clone()?, start: a.playing.start })
 }
 
 /// The NPCs drawn in the last five seconds.
@@ -202,7 +241,7 @@ fn merged(npc: &Npc, now: f64) -> HashMap<String, Full> {
 }
 
 /// Brings `npc`'s layers up to `now`: the base by how fast it walks, the action from the server.
-fn update_layers(npc: &mut Npc, id: u32, actions: &HashMap<u32, Action>, now: f64) {
+fn update_layers(npc: &mut Npc, id: u32, actions: &HashMap<u32, Action>, scenes: &HashMap<u32, Active>, now: f64) {
     let prefix = prefix(&npc.model);
     let wanted = if npc.walk_speed > WALKING { "walk" } else { "idle" };
     let wanted = animations::get(&format!("{prefix}{wanted}")).or_else(|| animations::get(&format!("{prefix}idle")));
@@ -215,7 +254,8 @@ fn update_layers(npc: &mut Npc, id: u32, actions: &HashMap<u32, Action>, now: f6
     if npc.leaving.as_ref().is_some_and(|(_, since)| now - since >= BASE_BLEND) {
         npc.leaving = None;
     }
-    let synced = actions.get(&id);
+    let from_scene = scene_action(scenes, id, now);
+    let synced = from_scene.as_ref().or_else(|| actions.get(&id));
     let same = match (&npc.action, synced) {
         (Some(l), Some(a)) => l.animation.name == a.animation && l.start == a.start as f64,
         (None, None) => true,
@@ -235,7 +275,7 @@ fn update_layers(npc: &mut Npc, id: u32, actions: &HashMap<u32, Action>, now: f6
 pub fn pose(id: u32, model: &str, living: &LivingRenderState, age: f32, now: f64) -> HashMap<String, Full> {
     let Ok(mut state) = STATE.lock() else { return HashMap::new() };
     state.clock = now;
-    let State { npcs, actions, .. } = &mut *state;
+    let State { npcs, actions, scenes, .. } = &mut *state;
     let npc = npcs.entry(id).or_default();
     npc.model = model.to_string();
     npc.body_rot = living.body_rot;
@@ -243,7 +283,7 @@ pub fn pose(id: u32, model: &str, living: &LivingRenderState, age: f32, now: f64
     npc.head = [living.y_rot, living.x_rot];
     npc.age = age;
     npc.last_frame = now;
-    update_layers(npc, id, actions, now);
+    update_layers(npc, id, actions, scenes, now);
     merged(npc, now)
 }
 
@@ -274,18 +314,62 @@ pub fn tick(host: &mut dyn ClientHost) {
             }
         }
     }
+    let mut playing = HashMap::new();
+    if let Ok(query) = host.query(&SCENE) {
+        for row in query.iter().flatten() {
+            if let (AttachmentHolder::Entity(e), Some(p)) = (row.holder, row.value) {
+                playing.insert(e.id(), p.clone());
+            }
+        }
+    }
     let mut fire = Vec::new();
     {
         let Ok(mut state) = STATE.lock() else { return };
+        let mut scenes = std::mem::take(&mut state.scenes);
+        scenes.retain(|id, a| playing.get(id) == Some(&a.playing));
+        for (id, p) in playing {
+            if scenes.contains_key(&id) {
+                continue;
+            }
+            match scene::parse(p.json.as_bytes()) {
+                Ok(s) => {
+                    let props_fired = vec![None; s.props.len()];
+                    scenes.insert(id, Active { playing: p, scene: Arc::new(s), props_fired });
+                }
+                Err(e) => eprintln!("[projectfelix] scene {} not shown: {e}", p.id),
+            }
+        }
+        state.scenes = scenes;
         let now = state.clock;
         state.actions = actions;
         state.orders = orders;
         state.looks = looks;
         // NPCs not drawn for five seconds are gone or out of sight.
         state.npcs.retain(|_, n| now - n.last_frame < 100.0);
-        let State { npcs, actions, .. } = &mut *state;
+        let State { npcs, actions, scenes, .. } = &mut *state;
         for (&id, npc) in npcs.iter_mut() {
-            update_layers(npc, id, actions, now);
+            update_layers(npc, id, actions, scenes, now);
+            // The props' own effects (a piece set down), from the NPC's feet plus the prop's place.
+            if let Some(a) = scenes.get_mut(&id).filter(|a| a.on_at(now)) {
+                let t = ((now - a.playing.start as f64) / 20.0) as f32;
+                for (i, prop) in a.scene.props.iter().enumerate() {
+                    let Some(anim) = prop.animation.as_ref().and_then(|n| animations::get(n)) else { continue };
+                    let (to, _) = anim.local_time(t);
+                    let from = a.props_fired[i].unwrap_or(-1.0);
+                    if from != to {
+                        let p = scene::prop_place(prop.offset);
+                        let r = (180.0 - a.playing.yaw).to_radians();
+                        let (s, c) = r.sin_cos();
+                        let off = [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c];
+                        for e in anim.effects_between(from, to) {
+                            if !matches!(e.kind, EffectKind::Script(_)) {
+                                fire.push((id, String::new(), 0.0, HashMap::new(), e.kind.clone(), off));
+                            }
+                        }
+                    }
+                    a.props_fired[i] = Some(to);
+                }
+            }
             let mut effects = Vec::new();
             for layer in [npc.base.as_mut(), npc.action.as_mut()].into_iter().flatten() {
                 let (to, _) = layer.animation.local_time(layer.elapsed(now));
@@ -308,14 +392,15 @@ pub fn tick(host: &mut dyn ClientHost) {
                         molang::eval(&expr, &mut cx);
                         npc.vars.vars = cx.vars;
                     }
-                    other => fire.push((id, npc.model.clone(), npc.body_rot, pose.clone(), other)),
+                    other => fire.push((id, npc.model.clone(), npc.body_rot, pose.clone(), other, [0.0; 3])),
                 }
             }
         }
     }
-    for (id, model, body_rot, pose, kind) in fire {
+    for (id, model, body_rot, pose, kind, shift) in fire {
         let Some(entity) = host.entity(id) else { continue };
         let Some(at) = entity.position(&*host) else { continue };
+        let at = [at[0] + shift[0] as f64, at[1] + shift[1] as f64, at[2] + shift[2] as f64];
         match kind {
             EffectKind::Sound(sound) => {
                 host.play_local_sound(&SoundPlay::at(&sound, SoundSource::Neutral, at), 0);

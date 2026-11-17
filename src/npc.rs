@@ -23,20 +23,30 @@ impl EntityRenderer for NpcRenderer {
                 (fallback, m)
             }
         };
-        let Some(living) = entity.living else { return Ok(()) };
+        let Some(mut living) = entity.living else { return Ok(()) };
         let now = draw.game_time() as f64 + draw.partial() as f64;
+        // In a scene the NPC faces the way the scene began, whatever its body does.
+        let scene = runtime::scene_of(entity.id, now);
+        if let Some((yaw, _, _)) = &scene {
+            living.body_rot = *yaw;
+        }
         let pose = runtime::pose(entity.id, &look.model, &living, entity.age, now);
         let mut root = model.root.clone();
         apply(&mut root, &pose);
         // Look where the head looks, on top of what the animations do.
         if let Some(head) = find_mut(&mut root, "head") {
             head.y_rot += living.y_rot.to_radians();
-            head.x_rot += living.x_rot.to_radians();
+            // The model is drawn y up: looking down (positive pitch) turns the head the other way
+            // from a vanilla model's (y down).
+            head.x_rot -= living.x_rot.to_radians();
         }
         draw.push();
         draw.rotate_about([0.0, 1.0, 0.0], 180.0 - living.body_rot, [0.0; 3]);
         let s = living.scale * living.age_scale;
         draw.scale([s, s, s]);
+        if let Some((_, scene, start)) = &scene {
+            draw_props(draw, scene, ((now - start) / 20.0) as f32);
+        }
         if living.death_time > 0.0 {
             let tip = ((living.death_time - 1.0) / 20.0 * 1.6).max(0.0).sqrt().min(1.0) * 90.0;
             draw.rotate_about([0.0, 0.0, 1.0], tip, [0.0; 3]);
@@ -48,6 +58,26 @@ impl EntityRenderer for NpcRenderer {
         }
         draw.pop();
         Ok(())
+    }
+}
+
+/// A scene's props, at `t` seconds into it, in the NPC's frame (turned as the NPC, scaled as it).
+fn draw_props(draw: &mut dyn BlockEntityDrawContext, scene: &crate::scene::Scene, t: f32) {
+    for prop in &scene.props {
+        let Some(model) = models::get(&prop.model) else { continue };
+        let mut root = model.root.clone();
+        if let Some(anim) = &prop.animation {
+            apply(&mut root, &runtime::prop_pose(anim, t));
+        }
+        draw.push();
+        draw.translate(crate::scene::prop_place(prop.offset));
+        if prop.turn != 0.0 {
+            draw.rotate_about([0.0, 1.0, 0.0], prop.turn, [0.0; 3]);
+        }
+        if !draw.model_part(&root, &prop.texture, 0xFFFFFF) {
+            draw.model_part(&root, &Look::of_model(&prop.model).texture, 0xFFFFFF);
+        }
+        draw.pop();
     }
 }
 

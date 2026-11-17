@@ -223,7 +223,7 @@ fn choose(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
         enter(host, player, npc, session.dialog, &node);
         return;
     }
-    run(host, player, npc, &choice.actions);
+    run_for(host, Some(player), npc, &choice.actions);
     match &choice.goto {
         Some(next) => enter(host, player, npc, session.dialog, next),
         None => send_close(host, player),
@@ -233,9 +233,9 @@ fn choose(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
 fn enter(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Arc<Dialog>, node_name: &str) {
     let Some(node) = dialog.nodes.get(node_name).cloned() else { return };
     if let Some(anim) = &node.animation {
-        run(host, player, npc, &[Action::Animation(anim.clone())]);
+        run_for(host, Some(player), npc, &[Action::Animation(anim.clone())]);
     }
-    run(host, player, npc, &node.actions);
+    run_for(host, Some(player), npc, &node.actions);
     let f = facts(host, player, npc);
     let shown: Vec<usize> = (0..node.options.len()).filter(|i| node.options[*i].shown(&f)).collect();
     let name = player.name(&*host).unwrap_or_default();
@@ -258,8 +258,9 @@ fn send_close(host: &mut dyn ServerHost, player: PlayerRef) {
     let _ = player.send_payload(host, &PayloadId(CLOSE.into()), PayloadBytes(Vec::new()));
 }
 
-fn run(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, actions: &[Action]) {
-    let name = player.name(&*host).unwrap_or_default();
+/// Runs dialog actions for `npc`; `player` (the one talking, if any) fills `@player`.
+pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: EntityRef, actions: &[Action]) {
+    let name = player.and_then(|p| p.name(&*host)).unwrap_or_default();
     let npc_uuid = npc.uuid(host).map(uuid_text).unwrap_or_default();
     for a in actions {
         match a {
@@ -274,6 +275,11 @@ fn run(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, actions: &[
                     _ => Mode::Follow,
                 };
                 companion::set_orders(host, npc, mode);
+            }
+            Action::Scene(id) => {
+                if let Err(e) = crate::scenes::start(host, npc, id, player) {
+                    eprintln!("[projectfelix] scene {id}: {e}");
+                }
             }
             other => {
                 if let Ok(mut p) = PENDING.lock() {

@@ -9,6 +9,7 @@
 //! - `companion` is the NPC on the server: owner, orders (follow, wait, guard), look, goals, commands.
 //! - `dialog` reads dialog trees (no mod API types); `talk` runs them on the server.
 //! - `menu` is the talk screen on the client.
+//! - `scene` reads scenes (no mod API types); `scenes` starts and ends them on the server.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
     AddClientReloadListenersEvent, AddServerReloadListenersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
@@ -29,6 +30,8 @@ pub mod models;
 pub mod molang;
 pub mod npc;
 pub mod runtime;
+pub mod scene;
+pub mod scenes;
 pub mod sync;
 pub mod talk;
 
@@ -50,9 +53,10 @@ impl Hooks for Felix {
         animations::add_listener(e);
     }
 
-    /// Dialogs from `data/<namespace>/felix_dialogs/*.json`, read on every data reload.
+    /// Dialogs and scenes from `data/<namespace>/felix_dialogs/` and `felix_scenes/`, read on every data reload.
     fn add_server_reload_listeners(&self, _host: &dyn Host, e: &mut AddServerReloadListenersEvent<'_>) {
         talk::add_listener(e);
+        scenes::add_listener(e);
     }
 
     fn register_entity_renderers(&self, _cx: &RegistrationContext, e: &mut RegisterEntityRenderersEvent<'_>) {
@@ -75,6 +79,7 @@ impl Hooks for Felix {
         if let HostSide::Server(host) = host {
             companion::level_tick(host);
             talk::level_tick(host);
+            scenes::level_tick(host);
         }
     }
 

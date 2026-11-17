@@ -21,7 +21,8 @@
 //! to its `goto` node, or ends without one. Options whose `if` fails are not shown. Conditions:
 //! `tag`, `item` (+ `count`), `owner`, `mode` (`follow`, `wait`, `guard`), `not`, `all`, `any`.
 //! Actions: `command` (run as the server console), `give` / `take` (+ `count`), `tag`, `untag`,
-//! `animation` (played on the NPC), `order` (`follow`, `wait`, `guard`), `sound` (at the NPC).
+//! `animation` (played on the NPC), `order` (`follow`, `wait`, `guard`), `sound` (at the NPC),
+//! `scene` (a scene from `felix_scenes`, played by the NPC).
 //! `@player` is the player's name; `@npc` is the NPC's name in texts and its UUID in commands.
 //! No mod API types here.
 
@@ -71,6 +72,7 @@ pub enum Action {
     Animation(String),
     Order(String),
     Sound(String),
+    Scene(String),
 }
 
 /// What conditions ask about the player and the NPC.
@@ -115,7 +117,7 @@ pub fn commands(action: &Action, player: &str, npc: &str) -> Vec<String> {
         Action::Tag(t) => vec![format!("tag {player} add {t}")],
         Action::Untag(t) => vec![format!("tag {player} remove {t}")],
         Action::Sound(s) => vec![format!("execute as {npc} at @s run playsound {s} neutral @a ~ ~ ~")],
-        Action::Animation(_) | Action::Order(_) => Vec::new(),
+        Action::Animation(_) | Action::Order(_) | Action::Scene(_) => Vec::new(),
     }
 }
 
@@ -203,7 +205,7 @@ fn read_cond(v: &Value) -> Result<Cond, String> {
     }
 }
 
-fn read_actions(v: Option<&Value>) -> Result<Vec<Action>, String> {
+pub fn read_actions(v: Option<&Value>) -> Result<Vec<Action>, String> {
     let Some(v) = v else { return Ok(Vec::new()) };
     let list = v.as_array().ok_or("actions is not a list")?;
     list.iter()
@@ -227,6 +229,8 @@ fn read_actions(v: Option<&Value>) -> Result<Vec<Action>, String> {
                 Action::Order(o)
             } else if let Some(snd) = s("sound") {
                 Action::Sound(snd)
+            } else if let Some(sc) = s("scene") {
+                Action::Scene(sc)
             } else {
                 return Err(format!("unknown action {a}"));
             })
