@@ -1,0 +1,14 @@
+id = "projectfelix"
+name = "Project Felix"
+version = "0.1.0"
+description = "NPCs with Blockbench models and animations."
+authors = ["DispatchedToHeaven"]
+# A native mod: Rust in src/, compiled by the launcher against the game build [native] pins, beside data/ and assets/.
+api = "0.2"
+side = "both"
+capabilities = ["registries"]
+
+[native]
+game = "26.3"
+horizon = "db7638b30c531c7f8004fdc5b6946de468db7aac"
+mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"

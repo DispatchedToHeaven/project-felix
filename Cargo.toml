@@ -1,0 +1,10 @@
+[package]
+name = "projectfelix"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license-file = "LICENSE"
+
+[dependencies]
+# The pinned SDK's API crate, fetched into .horizon/sdk/ by any `cargo horizon-mod` command.
+horizon-mod-api = { path = ".horizon/sdk/api/crates/horizon-mod-api" }
