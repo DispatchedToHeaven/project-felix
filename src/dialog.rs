@@ -19,10 +19,12 @@
 //!
 //! A node's `actions` run when it is shown; an option's when it is picked, then the dialog goes
 //! to its `goto` node, or ends without one. Options whose `if` fails are not shown. Conditions:
-//! `tag`, `item` (+ `count`), `owner`, `mode` (`follow`, `wait`, `guard`), `not`, `all`, `any`.
+//! `tag`, `item` (+ `count`), `owner`, `mode` (`follow`, `wait`, `guard`), `game` (the NPC's table:
+//! `none`, `waiting`, `playing`, `over`), `in_game` (the player sits at it), `not`, `all`, `any`.
 //! Actions: `command` (run as the server console), `give` / `take` (+ `count`), `tag`, `untag`,
 //! `animation` (played on the NPC), `order` (`follow`, `wait`, `guard`), `sound` (at the NPC),
-//! `scene` (a scene from `felix_scenes`, played by the NPC).
+//! `scene` (a scene from `felix_scenes`, played by the NPC), `game` (`chess` or `checkers`, with
+//! `vs`: `npc` or `player`), `join_game` (take the free seat), `open_game` (the board, to play or watch).
 //! `@player` is the player's name; `@npc` is the NPC's name in texts and its UUID in commands.
 //! No mod API types here.
 
@@ -57,6 +59,8 @@ pub enum Cond {
     Item(String, u32),
     Owner(bool),
     Mode(String),
+    Game(String),
+    InGame(bool),
     Not(Box<Cond>),
     All(Vec<Cond>),
     Any(Vec<Cond>),
@@ -73,6 +77,9 @@ pub enum Action {
     Order(String),
     Sound(String),
     Scene(String),
+    Game(String, bool),
+    JoinGame,
+    OpenGame,
 }
 
 /// What conditions ask about the player and the NPC.
@@ -81,6 +88,13 @@ pub trait Facts {
     fn item_count(&self, item: &str) -> u32;
     fn is_owner(&self) -> bool;
     fn mode(&self) -> &str;
+    /// The NPC's table: `none`, `waiting`, `playing` or `over`.
+    fn game(&self) -> &str {
+        "none"
+    }
+    fn in_game(&self) -> bool {
+        false
+    }
 }
 
 impl Cond {
@@ -90,6 +104,8 @@ impl Cond {
             Cond::Item(item, n) => f.item_count(item) >= *n,
             Cond::Owner(want) => f.is_owner() == *want,
             Cond::Mode(m) => f.mode() == m,
+            Cond::Game(g) => f.game() == g,
+            Cond::InGame(want) => f.in_game() == *want,
             Cond::Not(c) => !c.holds(f),
             Cond::All(list) => list.iter().all(|c| c.holds(f)),
             Cond::Any(list) => list.iter().any(|c| c.holds(f)),
@@ -117,7 +133,7 @@ pub fn commands(action: &Action, player: &str, npc: &str) -> Vec<String> {
         Action::Tag(t) => vec![format!("tag {player} add {t}")],
         Action::Untag(t) => vec![format!("tag {player} remove {t}")],
         Action::Sound(s) => vec![format!("execute as {npc} at @s run playsound {s} neutral @a ~ ~ ~")],
-        Action::Animation(_) | Action::Order(_) | Action::Scene(_) => Vec::new(),
+        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::JoinGame | Action::OpenGame => Vec::new(),
     }
 }
 
@@ -194,6 +210,10 @@ fn read_cond(v: &Value) -> Result<Cond, String> {
         Ok(Cond::Owner(b))
     } else if let Some(mode) = s("mode") {
         Ok(Cond::Mode(mode))
+    } else if let Some(g) = s("game") {
+        Ok(Cond::Game(g))
+    } else if let Some(b) = m.get("in_game").and_then(Value::as_bool) {
+        Ok(Cond::InGame(b))
     } else if let Some(n) = m.get("not") {
         Ok(Cond::Not(Box::new(read_cond(n)?)))
     } else if let Some(all) = list("all")? {
@@ -231,6 +251,12 @@ pub fn read_actions(v: Option<&Value>) -> Result<Vec<Action>, String> {
                 Action::Sound(snd)
             } else if let Some(sc) = s("scene") {
                 Action::Scene(sc)
+            } else if let Some(g) = s("game") {
+                Action::Game(g, m.get("vs").and_then(Value::as_str) != Some("player"))
+            } else if m.contains_key("join_game") {
+                Action::JoinGame
+            } else if m.contains_key("open_game") {
+                Action::OpenGame
             } else {
                 return Err(format!("unknown action {a}"));
             })

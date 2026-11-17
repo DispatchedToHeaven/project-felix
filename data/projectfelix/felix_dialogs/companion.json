@@ -10,8 +10,22 @@
         { "text": "Who are you?", "goto": "about" },
         { "text": "Got anything for me?", "if": { "not": { "tag": "felix_gift" } }, "goto": "gift" },
         { "text": "Say hi!", "actions": [ { "animation": "animation.felix.wave" } ] },
-        { "text": "Play chess?", "actions": [ { "scene": "projectfelix:chess" } ] },
+        { "text": "Show me a chess game.", "if": { "game": "none" }, "actions": [ { "scene": "projectfelix:chess" } ] },
+        { "text": "Let's play.", "if": { "game": "none" }, "goto": "games" },
+        { "text": "Back to the board.", "if": { "in_game": true }, "actions": [ { "open_game": true } ] },
+        { "text": "Take the other seat.", "if": { "all": [ { "game": "waiting" }, { "in_game": false } ] }, "actions": [ { "join_game": true } ] },
+        { "text": "Let me watch.", "if": { "all": [ { "game": "playing" }, { "in_game": false } ] }, "actions": [ { "open_game": true } ] },
         { "text": "Bye." }
+      ]
+    },
+    "games": {
+      "text": "What shall we play? I can play myself, or keep the board for you and a friend.",
+      "options": [
+        { "text": "Chess, against you.", "actions": [ { "game": "chess", "vs": "npc" } ] },
+        { "text": "Draughts, against you.", "actions": [ { "game": "checkers", "vs": "npc" } ] },
+        { "text": "Chess, with a friend.", "actions": [ { "game": "chess", "vs": "player" } ] },
+        { "text": "Draughts, with a friend.", "actions": [ { "game": "checkers", "vs": "player" } ] },
+        { "text": "Not now.", "goto": "main" }
       ]
     },
     "about": {

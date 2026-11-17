@@ -563,6 +563,66 @@
 					"effect": "minecraft:entity.villager.celebrate"
 				}
 			}
+		},
+		"animation.felix.move_piece": {
+			"loop": false,
+			"animation_length": 1.4,
+			"bones": {
+				"rightArm": {
+					"rotation": {
+						"0.0": [
+							0,
+							0,
+							0
+						],
+						"0.45": {
+							"post": [
+								-62,
+								8,
+								0
+							],
+							"lerp_mode": "catmullrom"
+						},
+						"0.8": {
+							"post": [
+								-52,
+								4,
+								0
+							],
+							"lerp_mode": "catmullrom"
+						},
+						"1.4": [
+							0,
+							0,
+							0
+						]
+					}
+				},
+				"head": {
+					"rotation": {
+						"0.0": [
+							0,
+							0,
+							0
+						],
+						"0.3": [
+							20,
+							0,
+							0
+						],
+						"1.1": [
+							20,
+							0,
+							0
+						],
+						"1.4": [
+							0,
+							0,
+							0
+						]
+					}
+				}
+			}
 		}
 	}
 }

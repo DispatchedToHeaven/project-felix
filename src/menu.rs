@@ -53,6 +53,15 @@ fn send(name: &'static str, bytes: Vec<u8>) {
     }
 }
 
+/// The board took the screen: forget the talk without closing it.
+pub fn yield_screen() {
+    if let Ok(mut t) = TALKING.lock() {
+        t.view = None;
+        t.shown = false;
+        t.close = false;
+    }
+}
+
 /// `entity_interact`: a right-click on an NPC starts talking, and does nothing else on the
 /// server (no wolf feeding, sitting or collar dyeing).
 pub fn interact(host: HostSide, entity: i32, kind: &str, hand: Hand) -> Option<InteractionResult> {
@@ -127,7 +136,7 @@ pub fn tick(host: &mut dyn ClientHost) {
     if gone {
         let _ = host.send_payload_to_server(&PayloadId(BYE.into()), PayloadBytes(Vec::new()));
     }
-    if close {
+    if close && !crate::game_screen::active() {
         host.mod_screen_close(SCREEN);
     }
 }
@@ -209,7 +218,7 @@ fn inside(r: [f32; 4], at: [f32; 2]) -> bool {
 
 /// `screen_render_post`: the talk, while the screen is open.
 pub fn render(host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
-    if host.mod_screen() != Some(SCREEN) {
+    if host.mod_screen() != Some(SCREEN) || crate::game_screen::active() {
         return;
     }
     let Some(view) = TALKING.lock().ok().and_then(|t| t.view.clone()) else { return };
@@ -240,7 +249,7 @@ pub fn render(host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
 
 /// `screen_mouse_button_pressed_pre`: an answer picked.
 pub fn mouse_pressed(host: &dyn ClientHost, e: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
-    if host.mod_screen() != Some(SCREEN) || e.button != 0 {
+    if host.mod_screen() != Some(SCREEN) || e.button != 0 || crate::game_screen::active() {
         return Flow::Continue;
     }
     let Some((view, buttons)) = TALKING.lock().ok().and_then(|t| Some((t.view.clone()?, t.buttons.clone()))) else {

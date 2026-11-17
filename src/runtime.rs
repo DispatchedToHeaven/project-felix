@@ -7,6 +7,7 @@ use crate::anim::{Animation, BonePose, EffectKind, LoopMode};
 use crate::molang::{self, MapContext};
 use crate::companion::{LOOK, Look, ORDERS, Orders};
 use crate::scene::{self, Scene};
+use crate::games::{TABLE, Table};
 use crate::scenes::{Playing, SCENE};
 use crate::sync::{ACTION, Action};
 use crate::{animations, models};
@@ -85,6 +86,13 @@ struct State {
     looks: HashMap<u32, Look>,
     /// Scenes playing, by NPC.
     scenes: HashMap<u32, Active>,
+    /// Game tables, by NPC.
+    tables: HashMap<u32, Table>,
+}
+
+/// The game table at NPC `id`, if a game is set up there.
+pub fn table_of(id: u32) -> Option<Table> {
+    STATE.lock().ok()?.tables.get(&id).cloned()
 }
 
 /// A scene playing on an NPC, its file read, and how far each prop's effects have been fired.
@@ -322,9 +330,18 @@ pub fn tick(host: &mut dyn ClientHost) {
             }
         }
     }
+    let mut tables = HashMap::new();
+    if let Ok(query) = host.query(&TABLE) {
+        for row in query.iter().flatten() {
+            if let (AttachmentHolder::Entity(e), Some(t)) = (row.holder, row.value) {
+                tables.insert(e.id(), t.clone());
+            }
+        }
+    }
     let mut fire = Vec::new();
     {
         let Ok(mut state) = STATE.lock() else { return };
+        state.tables = tables;
         let mut scenes = std::mem::take(&mut state.scenes);
         scenes.retain(|id, a| playing.get(id) == Some(&a.playing));
         for (id, p) in playing {

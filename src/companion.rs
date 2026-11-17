@@ -7,11 +7,11 @@
 use mod_api::{
     AttachmentCodec, AttachmentError, AttachmentType, Command, CommandArgumentValue, CommandSource, Compound,
     EntityRef, EntityPart, EntitySizeEvent, EntityTypeKey, Flow, Goal, GoalContext, GoalFlags, GoalRegistrar, Holder, Host,
-    IPayloadContext, IPayloadHandler, LivingRef, MobCategory, MobRef, PayloadBytes, PayloadId, PlayerRef, RegisterCommandsEvent,
+    LivingRef, MobCategory, MobRef, RegisterCommandsEvent,
     Registrar, RunModCommandEvent, ServerHost, Tag, Text,
 };
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 pub const NPC: &str = "projectfelix:npc";
 pub const DEFAULT_MODEL: &str = "projectfelix:felix";

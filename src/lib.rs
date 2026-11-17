@@ -10,6 +10,8 @@
 //! - `dialog` reads dialog trees (no mod API types); `talk` runs them on the server.
 //! - `menu` is the talk screen on the client.
 //! - `scene` reads scenes (no mod API types); `scenes` starts and ends them on the server.
+//! - `chess` and `checkers` are the games' rules and engines (no mod API types); `games` runs
+//!   them at an NPC's table on the server, `game_screen` is the board on the client.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
     AddClientReloadListenersEvent, AddServerReloadListenersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
@@ -21,9 +23,13 @@ use mod_api::{
 pub use mod_api::serde_json;
 
 pub mod anim;
+pub mod checkers;
+pub mod chess;
 pub mod animations;
 pub mod companion;
 pub mod dialog;
+pub mod game_screen;
+pub mod games;
 pub mod geo;
 pub mod menu;
 pub mod models;
@@ -44,6 +50,7 @@ impl Hooks for Felix {
         runtime::register(r);
         companion::register(r);
         talk::register(r, std::sync::Arc::new(menu::ViewHandler), std::sync::Arc::new(menu::CloseHandler));
+        games::register(r, std::sync::Arc::new(game_screen::ViewHandler));
     }
 
     /// Models from `assets/<namespace>/geo/*.geo.json` and animations from
@@ -80,6 +87,7 @@ impl Hooks for Felix {
             companion::level_tick(host);
             talk::level_tick(host);
             scenes::level_tick(host);
+            games::level_tick(host);
         }
     }
 
@@ -96,15 +104,20 @@ impl Hooks for Felix {
     }
 
     fn screen_render_post(&self, host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
+        game_screen::render(host, e);
         menu::render(host, e);
     }
 
     fn screen_mouse_button_pressed_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
-        menu::mouse_pressed(host, e)
+        match game_screen::mouse_pressed(host, e) {
+            Flow::Cancel => Flow::Cancel,
+            _ => menu::mouse_pressed(host, e),
+        }
     }
 
     fn client_tick_post(&self, host: &mut dyn ClientHost, _e: &mut ClientTickPostEvent) {
         runtime::tick(host);
         menu::tick(host);
+        game_screen::tick(host);
     }
 }

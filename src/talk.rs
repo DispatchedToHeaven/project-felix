@@ -140,6 +140,8 @@ fn read_id(b: &[u8]) -> Option<u32> {
 }
 
 struct PlayerFacts {
+    game: &'static str,
+    in_game: bool,
     tags: Vec<String>,
     items: HashMap<String, u32>,
     owner: bool,
@@ -159,6 +161,12 @@ impl Facts for PlayerFacts {
     fn mode(&self) -> &str {
         self.mode
     }
+    fn game(&self) -> &str {
+        self.game
+    }
+    fn in_game(&self) -> bool {
+        self.in_game
+    }
 }
 
 fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> PlayerFacts {
@@ -174,7 +182,8 @@ fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> Player
         Ok(Mode::Guard) => "guard",
         _ => "follow",
     };
-    PlayerFacts { tags, items, owner, mode }
+    let (game, in_game) = crate::games::state_for(npc.id(), player);
+    PlayerFacts { game, in_game, tags, items, owner, mode }
 }
 
 fn uuid_text(u: u128) -> String {
@@ -275,6 +284,24 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
                     _ => Mode::Follow,
                 };
                 companion::set_orders(host, npc, mode);
+            }
+            Action::Game(kind, vs_npc) => {
+                let (Some(p), Some(kind)) = (player, crate::games::GameKind::parse(kind)) else { continue };
+                if let Err(e) = crate::games::start(host, npc, kind, p, *vs_npc) {
+                    eprintln!("[projectfelix] game: {e}");
+                }
+            }
+            Action::JoinGame => {
+                if let Some(p) = player
+                    && let Err(e) = crate::games::join(host, npc, p)
+                {
+                    eprintln!("[projectfelix] join: {e}");
+                }
+            }
+            Action::OpenGame => {
+                if let Some(p) = player {
+                    crate::games::open(host, npc, p);
+                }
             }
             Action::Scene(id) => {
                 if let Err(e) = crate::scenes::start(host, npc, id, player) {
