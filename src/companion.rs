@@ -138,6 +138,16 @@ struct Server {
 static SERVER: LazyLock<Mutex<Server>> = LazyLock::new(Default::default);
 static NPC_KEY: OnceLock<EntityTypeKey> = OnceLock::new();
 
+/// The NPCs whose goals ran lately (every loaded NPC), by entity id.
+pub fn npcs() -> Vec<u32> {
+    SERVER.lock().map(|s| s.orders.keys().copied().collect()).unwrap_or_default()
+}
+
+/// An NPC's orders as last read.
+pub fn mode_of(id: u32) -> Mode {
+    orders_of(id).map(|o| o.mode).unwrap_or_default()
+}
+
 fn orders_of(id: u32) -> Option<Orders> {
     let mut s = SERVER.lock().ok()?;
     let o = s.orders.get(&id).copied();
@@ -223,6 +233,7 @@ struct CompanionGoals;
 #[mod_api::horizon_part]
 impl EntityPart for CompanionGoals {
     fn register_goals(&self, goals: &mut GoalRegistrar<'_>) {
+        goals.add_goal(0, Present);
         goals.add_goal(1, Wait);
         goals.add_goal(1, KeepPost);
     }
@@ -230,6 +241,20 @@ impl EntityPart for CompanionGoals {
 
 fn distance_sq(a: [f64; 3], b: [f64; 3]) -> f64 {
     (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)
+}
+
+/// Never runs: asking for its orders each tick makes every loaded NPC known here (for its rules
+/// too), whichever of its goals runs.
+struct Present;
+
+impl Goal for Present {
+    fn flags(&self) -> GoalFlags {
+        GoalFlags::NONE
+    }
+    fn can_use(&mut self, cx: &mut GoalContext<'_>) -> bool {
+        let _ = orders_of(cx.mob().entity().id());
+        false
+    }
 }
 
 /// Waiting: holds the movement so the wolf's following never runs.
@@ -341,7 +366,7 @@ fn uuid_tag(uuid: u128) -> Tag {
     Tag::IntArray(vec![(uuid >> 96) as i32, (uuid >> 64) as i32, (uuid >> 32) as i32, uuid as i32])
 }
 
-fn targets(e: &RunModCommandEvent<'_>) -> Vec<EntityRef> {
+pub(crate) fn targets(e: &RunModCommandEvent<'_>) -> Vec<EntityRef> {
     e.command
         .arguments
         .iter()
@@ -354,7 +379,7 @@ fn targets(e: &RunModCommandEvent<'_>) -> Vec<EntityRef> {
         .unwrap_or_default()
 }
 
-fn text_argument(e: &RunModCommandEvent<'_>, name: &str) -> Option<String> {
+pub(crate) fn text_argument(e: &RunModCommandEvent<'_>, name: &str) -> Option<String> {
     e.command.arguments.iter().find(|a| a.name == name).and_then(|a| match &a.value {
         CommandArgumentValue::String(s) => Some(s.clone()),
         _ => None,

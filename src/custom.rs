@@ -67,7 +67,12 @@ fn admit(file: Vec<u8>) -> Result<Arc<Profile>, String> {
         crate::geo::parse(m).map_err(|e| format!("model.geo.json: {e}"))?;
     }
     let dialog = crate::dialog::parse(p.dialog_json().as_bytes()).map_err(|e| format!("dialog: {e}"))?;
+    let rules = match &p.rules {
+        Some(r) => crate::rules::parse(r.as_bytes()).map_err(|e| format!("rules.json: {e}"))?,
+        None => Vec::new(),
+    };
     crate::talk::set_extra_dialog(&dialog_of(&p.id), dialog);
+    crate::rulebook::set_extra(&dialog_of(&p.id), rules);
     let p = Arc::new(p);
     if let Ok(mut s) = SERVER.lock() {
         s.profiles.insert(p.id.clone(), (p.clone(), Arc::new(file)));
@@ -275,7 +280,7 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
             let file = SERVER.lock().ok().and_then(|s| s.profiles.get(&id).map(|x| x.1.clone()));
             match (file, path(EXPORTS, &format!("{id}{EXT}"))) {
                 (Some(file), Some(to)) => match host.data_files().write(&to, &file) {
-                    Ok(()) => say(host, format!("Exported: horizon-mod-data/projectfelix/{EXPORTS}/{id}{EXT} (a zip: npc.json, skin.png, dialog.json)")),
+                    Ok(()) => say(host, format!("Exported: horizon-mod-data/projectfelix/{EXPORTS}/{id}{EXT} (a zip: npc.json, skin.png, dialog.json, rules.json)")),
                     Err(err) => say(host, format!("Not exported: {err:?}")),
                 },
                 _ => say(host, format!("No NPC {id}")),

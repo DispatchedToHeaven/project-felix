@@ -19,10 +19,12 @@
 //! - `zipfile`, `skin` and `profile` are NPCs made in the game: their files, and skins as
 //!   texel quads (no mod API types); `custom` keeps them on the server, `skins` draws their skins
 //!   on the client, `creator` is the maker in the world.
+//! - `rules` reads NPC rules (event, if, then, else; no mod API types); `rulebook` runs them on
+//!   the server.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
     ScreenKeyPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
-    ScreenCharTypedPreEvent, AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
+    ScreenCharTypedPreEvent, ServerTickEvent, ServerTickPhase, LivingDamagePostEvent, LivingDeathEvent, ServerChatEvent, LevelRandomHost, AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
     Host, HostSide, InteractionKeyMappingTriggeredEvent, InteractionResult, LevelTickPostEvent, RegisterCommandsEvent,
     RegisterEntityRenderersEvent, Registrar, RegistrationContext, RunModCommandEvent, ScreenMouseButtonPressedPreEvent,
     ScreenRenderPostEvent, ServerHost,
@@ -50,6 +52,8 @@ pub mod models;
 pub mod profile;
 pub mod molang;
 pub mod npc;
+pub mod rulebook;
+pub mod rules;
 pub mod runtime;
 pub mod scene;
 pub mod scenes;
@@ -87,6 +91,7 @@ impl Hooks for Felix {
     fn add_server_reload_listeners(&self, _host: &dyn Host, e: &mut AddServerReloadListenersEvent<'_>) {
         talk::add_listener(e);
         scenes::add_listener(e);
+        rulebook::add_listener(e);
     }
 
     fn register_gui_layers(&self, _cx: &RegistrationContext, e: &mut RegisterGuiLayersEvent<'_>) {
@@ -105,10 +110,14 @@ impl Hooks for Felix {
         sync::register_commands(e);
         companion::register_commands(e);
         custom::register_commands(e);
+        rulebook::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = rulebook::run_command(host, e) {
             return Flow::Cancel;
         }
         match companion::run_command(host, e) {
@@ -126,6 +135,26 @@ impl Hooks for Felix {
             matches::level_tick(host);
             custom::level_tick(host);
         }
+    }
+
+    fn server_tick(&self, host: &mut dyn ServerHost, e: &mut ServerTickEvent<'_>) {
+        if let ServerTickPhase::ServerTickEnd { world_running: true } = e.phase {
+            rulebook::tick(host);
+        }
+    }
+
+    fn living_damage_post(&self, _level: &mut dyn LevelRandomHost, e: &mut LivingDamagePostEvent<'_>) {
+        rulebook::on_hurt(e.entity, e.source.causing);
+    }
+
+    fn living_death(&self, host: &mut dyn ServerHost, e: &mut LivingDeathEvent<'_>) -> Flow {
+        rulebook::on_death(&*host, e.entity, e.source.causing);
+        Flow::Continue
+    }
+
+    fn server_chat(&self, _host: &mut dyn ServerHost, e: &mut ServerChatEvent<'_>) -> Flow {
+        rulebook::on_chat(e.player_id, e.raw_text);
+        Flow::Continue
     }
 
     fn entity_size(&self, host: &dyn Host, e: &mut EntitySizeEvent<'_>) {

@@ -1,0 +1,17 @@
+{ "rules": [
+  { "when": "sees_monster", "radius": 16, "cooldown": 8,
+    "if": { "mode": "guard" },
+    "then": [ { "say": "A @target! Stay behind me, @player." }, { "attack": true } ],
+    "else": [ { "say": "Look out, a @target!" }, { "look": true } ] },
+  { "when": { "hears": "hello" },
+    "then": [ { "tell": "Hello, @player." }, { "animation": "animation.felix.wave" } ] },
+  { "when": "hurt_by_player", "cooldown": 3,
+    "if": { "owner": true },
+    "then": { "say": "Hey! Why, @player?" },
+    "else": { "say": "Leave me alone!" } },
+  { "when": "owner_hurt", "then": [ { "say": "I've got you, @player!" }, { "attack": true } ] },
+  { "when": "kills", "then": { "say": "That's one @target less." } },
+  { "when": "dusk", "then": { "say": "It's getting dark. Stay close." } },
+  { "when": "dawn", "then": { "say": "Morning! We made it." } },
+  { "when": "low_health", "then": { "say": "I'm badly hurt..." } }
+] }

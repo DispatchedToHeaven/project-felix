@@ -1,6 +1,6 @@
-//! An NPC made in the game: its name, model, skin and what it says, and its file, `<id>.felixnpc`
-//! (a zip: `npc.json`, `skin.png`, `dialog.json`, and `model.geo.json` when it brings its own
-//! model). No mod API types here.
+//! An NPC made in the game: its name, model, skin, what it says and its rules, and its file,
+//! `<id>.felixnpc` (a zip: `npc.json`, `skin.png`, `dialog.json`, `rules.json` when it has rules,
+//! and `model.geo.json` when it brings its own model). No mod API types here.
 //!
 //! `npc.json`: `{ "format": 1, "id", "name", "model", "greeting", "topics": [{ "ask", "answer" }] }`.
 //! The dialog is built from the greeting and the topics, with a companion's orders for its owner,
@@ -23,6 +23,8 @@ pub struct Profile {
     pub skin: Vec<u8>,
     /// A model of its own (`.geo.json`), drawn as `npc:<id>`.
     pub model_file: Option<Vec<u8>>,
+    /// Its rules (`rules.json`, see `rules`).
+    pub rules: Option<String>,
 }
 
 /// An id from a name: lower case letters, digits and `_`, at most 32.
@@ -55,6 +57,7 @@ impl Profile {
             own_dialog: None,
             skin: Vec::new(),
             model_file: None,
+            rules: None,
         }
     }
 
@@ -108,6 +111,9 @@ impl Profile {
         if let Some(m) = &self.model_file {
             entries.push(Entry { name: "model.geo.json".into(), data: m.clone() });
         }
+        if let Some(r) = &self.rules {
+            entries.push(Entry { name: "rules.json".into(), data: r.clone().into_bytes() });
+        }
         zipfile::write(&entries, crc32)
     }
 
@@ -132,6 +138,10 @@ impl Profile {
         if let Some(d) = &own_dialog {
             crate::dialog::parse(d.as_bytes()).map_err(|e| format!("dialog.json: {e}"))?;
         }
+        let rules = get("rules.json").map(|r| String::from_utf8_lossy(&r).into_owned());
+        if let Some(r) = &rules {
+            crate::rules::parse(r.as_bytes()).map_err(|e| format!("rules.json: {e}"))?;
+        }
         Ok(Profile {
             id,
             name: s("name"),
@@ -141,6 +151,7 @@ impl Profile {
             own_dialog,
             skin: get("skin.png").unwrap_or_default(),
             model_file: get("model.geo.json"),
+            rules,
         })
     }
 }
@@ -177,6 +188,7 @@ mod tests {
         p.greeting = "Morning, @player.".into();
         p.topics = vec![("Seen any monsters?".into(), "Only a creeper, by the river.".into())];
         p.skin = vec![137, 80, 78, 71];
+        p.rules = Some(r#"{ "rules": [ { "when": "sees_monster", "then": [ { "say": "A @target!" } ] } ] }"#.into());
         let back = Profile::unpack(&p.pack(&crc), &|_| Err("no".into())).unwrap();
         assert_eq!(back, p);
         let d = crate::dialog::parse(back.dialog_json().as_bytes()).unwrap();
@@ -197,5 +209,13 @@ mod tests {
         assert_eq!(back.name, p.name);
         let z = zipfile::write(&[Entry { name: "npc.json".into(), data: br#"{"id":"Bad Id"}"#.to_vec() }], &crc);
         assert!(Profile::unpack(&z, &|_| Err("no".into())).is_err());
+        let z = zipfile::write(
+            &[
+                Entry { name: "npc.json".into(), data: br#"{"format":1,"id":"ann","name":"Ann"}"#.to_vec() },
+                Entry { name: "rules.json".into(), data: br#"{"rules":[{"when":"flies"}]}"#.to_vec() },
+            ],
+            &crc,
+        );
+        assert!(Profile::unpack(&z, &|_| Err("no".into())).unwrap_err().contains("rules.json"));
     }
 }

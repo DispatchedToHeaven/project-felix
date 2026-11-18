@@ -3,11 +3,17 @@
 //! ask about. Skins are PNG files in `horizon-mod-data/projectfelix/skins/` on the player's side;
 //! models of the player's own (`user:<name>`) go into the NPC's file, so everyone sees them.
 //!
+//! Its rules (the Rules page): when it sees a monster, hears a word, is hurt..., if it is night, it
+//! guards..., then it says something, attacks, plays an animation..., else something else. Up to
+//! [`MAX_RULES`] here; rules of its file the page can't show are kept as they are.
+//!
 //! Click a field to type in it; Tab and Enter go to the next one, Ctrl+V pastes, Escape closes.
 use crate::companion::DEFAULT_MODEL;
 use crate::custom::SAVE;
 use crate::models;
 use crate::profile::{self, Profile};
+use crate::rules::{self, CONDS, DOS, Row, WHENS};
+use crate::serde_json::{Value, json};
 use mod_api::{
     ClientHost, ConfigPath, DrawContext, Flow, IPayloadContext, IPayloadHandler, PayloadBytes, PayloadId,
     ScreenCharTypedPreEvent, ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent, ScreenMouseScrolledPreEvent,
@@ -26,6 +32,9 @@ const OWN_MODEL: &str = "(its own model)";
 /// The skin choice that keeps the skin the NPC has.
 const KEPT_SKIN: &str = "(the skin it has)";
 const NO_SKIN: &str = "(the model's texture)";
+/// Rule texts are fields from here on: three a rule (the event's word, then's, else's).
+const RULE_TEXT: usize = 100;
+pub const MAX_RULES: usize = 4;
 const W: f32 = 330.0;
 const ROW: f32 = 14.0;
 
@@ -36,6 +45,13 @@ enum Do {
     Skin,
     Save(bool),
     Close,
+    Page,
+    When(usize),
+    If(usize),
+    Then(usize),
+    Else(usize),
+    DelRule(usize),
+    AddRule,
 }
 
 struct Skin {
@@ -56,6 +72,10 @@ struct Creator {
     /// 0: none (or the kept one, when `kept` is set); then `skins`.
     skin: usize,
     kept: Option<Skin>,
+    rules: Vec<Row>,
+    /// Rules of its file a row can't show, kept as they are.
+    kept_rules: Vec<Value>,
+    rules_page: bool,
     buttons: Vec<([f32; 4], Do)>,
     status: String,
     shown: bool,
@@ -112,6 +132,15 @@ impl IPayloadHandler for OpenHandler {
         let mut kept = None;
         let mut own_model = None;
         let mut model = models.iter().position(|m| m == DEFAULT_MODEL).unwrap_or(0);
+        let (mut rows, mut kept_rules) = (Vec::new(), Vec::new());
+        if let Some(v) = editing.as_ref().and_then(|p| p.rules.as_ref()).and_then(|r| crate::serde_json::from_str::<Value>(r).ok()) {
+            for r in v.get("rules").unwrap_or(&v).as_array().cloned().unwrap_or_default() {
+                match Row::from_json(&r).filter(|_| rows.len() < MAX_RULES) {
+                    Some(row) => rows.push(row),
+                    None => kept_rules.push(r),
+                }
+            }
+        }
         if let Some(p) = &editing {
             fields[0] = p.name.clone();
             fields[1] = p.greeting.clone();
@@ -148,6 +177,9 @@ impl IPayloadHandler for OpenHandler {
             skin: if kept.is_some() || skins.is_empty() { 0 } else { 1 },
             skins,
             kept,
+            rules: rows,
+            kept_rules,
+            rules_page: false,
             buttons: Vec::new(),
             status,
             shown,
@@ -162,6 +194,41 @@ impl IPayloadHandler for OpenHandler {
 }
 
 impl Creator {
+    /// Field `i`: a main page field, or a rule's text.
+    fn text(&mut self, i: usize) -> Option<&mut String> {
+        if i < FIELDS {
+            return self.fields.get_mut(i);
+        }
+        let j = i.checked_sub(RULE_TEXT)?;
+        let r = self.rules.get_mut(j / 3)?;
+        Some(match j % 3 {
+            0 => &mut r.when_arg,
+            1 => &mut r.then_arg,
+            _ => &mut r.otherwise_arg,
+        })
+    }
+
+    /// The fields of the page shown, in Tab order.
+    fn order(&self) -> Vec<usize> {
+        if !self.rules_page {
+            return (0..FIELDS).collect();
+        }
+        let mut o = Vec::new();
+        for (n, r) in self.rules.iter().enumerate() {
+            let base = RULE_TEXT + n * 3;
+            if WHENS[r.when].1.is_some() {
+                o.push(base);
+            }
+            if DOS[r.then].2 {
+                o.push(base + 1);
+            }
+            if r.cond != 0 && DOS[r.otherwise].2 {
+                o.push(base + 2);
+            }
+        }
+        o
+    }
+
     fn skin(&self) -> Option<&Skin> {
         if self.skin == 0 { self.kept.as_ref() } else { self.skins.get(self.skin - 1) }
     }
@@ -204,6 +271,18 @@ impl Creator {
         }
         if let Some(s) = self.skin() {
             p.skin = s.png.clone();
+        }
+        for (n, r) in self.rules.iter().enumerate() {
+            if let Some(what) = WHENS[r.when].1.filter(|_| r.when_arg.trim().is_empty()) {
+                return Err(format!("Rule {}: \"{}\" needs the {what}", n + 1, WHENS[r.when].0));
+            }
+        }
+        let mut list: Vec<Value> = self.rules.iter().map(Row::to_json).collect();
+        list.extend(self.kept_rules.iter().cloned());
+        if !list.is_empty() {
+            let v = json!({ "rules": list });
+            rules::read(&v).map_err(|e| format!("Rules: {e}"))?;
+            p.rules = Some(crate::serde_json::to_string_pretty(&v).unwrap_or_default());
         }
         Ok(p)
     }
@@ -360,6 +439,12 @@ pub fn render(host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
         None => format!("New NPC: {}", profile::make_id(c.fields[0].trim())),
     };
     draw.text(&title, [x0, y0], 0xFFFF_D86A, false);
+    if c.rules_page {
+        draw_rules(draw, &mut buttons, c, [x0, y0 + ROW], mouse, blink);
+        bottom(draw, &mut buttons, c, [x0, y0 + height - 26.0], mouse);
+        c.buttons = buttons;
+        return;
+    }
     let lab = 52.0;
     let preview = 96.0;
     let fw = W - lab - preview - 8.0;
@@ -404,16 +489,76 @@ pub fn render(host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
         }
         None => draw.text("no skin", [pr[0] + 4.0, pr[1] + 4.0], 0xFF80_8090, false),
     }
-    // Buttons and the status line.
-    y += 6.0;
-    let bw = 76.0;
-    button(draw, &mut buttons, [x0, y, bw, 16.0], "Save", Do::Save(false), mouse);
-    button(draw, &mut buttons, [x0 + bw + 4.0, y, bw, 16.0], "Save & spawn", Do::Save(true), mouse);
-    button(draw, &mut buttons, [x0 + W - 50.0, y, 50.0, 16.0], "Close", Do::Close, mouse);
-    y += 20.0;
-    let status = tail(draw, &c.status, W);
-    draw.text(&status, [x0, y], 0xFFC0_C0C8, false);
+    let _ = y;
+    bottom(draw, &mut buttons, c, [x0, y0 + height - 26.0], mouse);
     c.buttons = buttons;
+}
+
+/// The buttons below either page, and the status line.
+fn bottom(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, c: &Creator, at: [f32; 2], mouse: [f32; 2]) {
+    let [x0, y] = at;
+    let bw = 76.0;
+    button(draw, buttons, [x0, y, bw, 16.0], "Save", Do::Save(false), mouse);
+    button(draw, buttons, [x0 + bw + 4.0, y, bw, 16.0], "Save & spawn", Do::Save(true), mouse);
+    let page = if c.rules_page { "Topics".to_string() } else { format!("Rules ({})", c.rules.len() + c.kept_rules.len()) };
+    button(draw, buttons, [x0 + 2.0 * (bw + 4.0), y, 70.0, 16.0], &page, Do::Page, mouse);
+    button(draw, buttons, [x0 + W - 50.0, y, 50.0, 16.0], "Close", Do::Close, mouse);
+    let status = tail(draw, &c.status, W);
+    draw.text(&status, [x0, y + 20.0], 0xFFC0_C0C8, false);
+}
+
+/// A field with a grey hint while it is empty.
+#[allow(clippy::too_many_arguments)]
+fn hint_field(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, r: [f32; 4], text: &str, hint: &str, focus: bool, what: Do, mouse: [f32; 2], blink: bool) {
+    field(draw, buttons, r, text, focus, what, mouse, blink);
+    if text.is_empty() && !focus {
+        let h = head(draw, hint, r[2] - 6.0);
+        draw.text(&h, [r[0] + 3.0, r[1] + 3.0], 0xFF60_6070, false);
+    }
+}
+
+/// The rules page: two lines a rule. When [event] [its word] [condition] x;
+/// then [action] [text], else [action] [text].
+fn draw_rules(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, c: &Creator, at: [f32; 2], mouse: [f32; 2], blink: bool) {
+    let [x0, mut y] = at;
+    let grey = 0xFFA0_A0A0;
+    let note = if c.kept_rules.is_empty() {
+        "When it..., if..., then it... else it...".to_string()
+    } else {
+        format!("When it..., if..., then... ({} more from its file kept)", c.kept_rules.len())
+    };
+    draw.text(&note, [x0, y], grey, false);
+    y += 12.0;
+    let h = ROW - 2.0;
+    for (n, r) in c.rules.iter().enumerate() {
+        let base = RULE_TEXT + n * 3;
+        draw.fill([x0 - 2.0, y - 2.0, W + 4.0, 2.0 * ROW + 2.0], 0x4030_3048);
+        picker(draw, buttons, [x0, y, 112.0, h], WHENS[r.when].0, Do::When(n), mouse);
+        let mut x = x0 + 115.0;
+        if let Some(hint) = WHENS[r.when].1 {
+            hint_field(draw, buttons, [x, y, 70.0, h], &r.when_arg, hint, c.focus == Some(base), Do::Field(base), mouse, blink);
+            x += 73.0;
+        }
+        picker(draw, buttons, [x, y, x0 + W - 15.0 - x, h], CONDS[r.cond], Do::If(n), mouse);
+        button(draw, buttons, [x0 + W - 12.0, y, 12.0, h], "x", Do::DelRule(n), mouse);
+        y += ROW;
+        draw.text("then", [x0, y + 3.0], grey, false);
+        picker(draw, buttons, [x0 + 24.0, y, 82.0, h], DOS[r.then].0, Do::Then(n), mouse);
+        if DOS[r.then].2 {
+            hint_field(draw, buttons, [x0 + 108.0, y, 56.0, h], &r.then_arg, "text", c.focus == Some(base + 1), Do::Field(base + 1), mouse, blink);
+        }
+        if r.cond != 0 {
+            draw.text("else", [x0 + 168.0, y + 3.0], grey, false);
+            picker(draw, buttons, [x0 + 192.0, y, 82.0, h], DOS[r.otherwise].0, Do::Else(n), mouse);
+            if DOS[r.otherwise].2 {
+                hint_field(draw, buttons, [x0 + 276.0, y, 54.0, h], &r.otherwise_arg, "text", c.focus == Some(base + 2), Do::Field(base + 2), mouse, blink);
+            }
+        }
+        y += ROW + 6.0;
+    }
+    if c.rules.len() < MAX_RULES {
+        button(draw, buttons, [x0, y, 64.0, 14.0], "+ Rule", Do::AddRule, mouse);
+    }
 }
 
 fn cycle(i: usize, by: i32, n: usize) -> usize {
@@ -440,6 +585,42 @@ fn act(host: &dyn ClientHost, c: &mut Creator, what: Do, by: i32) {
         }
         Do::Save(spawn) => c.save(host, spawn),
         Do::Close => c.close = true,
+        Do::Page => {
+            c.rules_page = !c.rules_page;
+            c.focus = c.order().first().copied();
+        }
+        Do::When(n) => {
+            if let Some(r) = c.rules.get_mut(n) {
+                r.when = cycle(r.when, by, WHENS.len());
+            }
+        }
+        Do::If(n) => {
+            if let Some(r) = c.rules.get_mut(n) {
+                r.cond = cycle(r.cond, by, CONDS.len());
+            }
+        }
+        Do::Then(n) => {
+            if let Some(r) = c.rules.get_mut(n) {
+                r.then = cycle(r.then, by, DOS.len());
+            }
+        }
+        Do::Else(n) => {
+            if let Some(r) = c.rules.get_mut(n) {
+                r.otherwise = cycle(r.otherwise, by, DOS.len());
+            }
+        }
+        Do::DelRule(n) => {
+            if n < c.rules.len() {
+                c.rules.remove(n);
+                c.focus = None;
+            }
+        }
+        Do::AddRule => {
+            if c.rules.len() < MAX_RULES {
+                // A start: when it sees a monster, it says so.
+                c.rules.push(Row { then: 1, then_arg: "A @target!".into(), ..Row::default() });
+            }
+        }
     }
 }
 
@@ -469,7 +650,7 @@ pub fn mouse_scrolled(host: &dyn ClientHost, e: &mut ScreenMouseScrolledPreEvent
     let Ok(mut lock) = CREATOR.lock() else { return Flow::Continue };
     let Some(c) = lock.as_mut() else { return Flow::Continue };
     let mouse = e.screen.mouse;
-    if let Some(what) = c.buttons.iter().find(|(r, w)| inside(*r, mouse) && matches!(w, Do::Model | Do::Skin)).map(|(_, w)| *w) {
+    if let Some(what) = c.buttons.iter().find(|(r, w)| inside(*r, mouse) && matches!(w, Do::Model | Do::Skin | Do::When(_) | Do::If(_) | Do::Then(_) | Do::Else(_))).map(|(_, w)| *w) {
         act(host, c, what, if e.scroll[1] > 0.0 { -1 } else { 1 });
     }
     Flow::Cancel
@@ -477,11 +658,12 @@ pub fn mouse_scrolled(host: &dyn ClientHost, e: &mut ScreenMouseScrolledPreEvent
 
 fn type_text(c: &mut Creator, text: &str) {
     let Some(i) = c.focus else { return };
+    let Some(field) = c.text(i) else { return };
     for ch in text.chars().filter(|ch| !ch.is_control()) {
-        if c.fields[i].chars().count() >= max_len(i) {
+        if field.chars().count() >= max_len(i) {
             break;
         }
-        c.fields[i].push(ch);
+        field.push(ch);
     }
 }
 
@@ -507,17 +689,25 @@ pub fn key_pressed(host: &dyn ClientHost, e: &mut ScreenKeyPressedPreEvent<'_>) 
         // Escape goes to the screen, which closes.
         "key.keyboard.escape" => return Flow::Continue,
         "key.keyboard.backspace" => {
-            if let Some(i) = c.focus {
+            if let Some(f) = c.focus.and_then(|i| c.text(i)) {
                 if ctrl {
-                    c.fields[i].clear();
+                    f.clear();
                 } else {
-                    c.fields[i].pop();
+                    f.pop();
                 }
             }
         }
         "key.keyboard.tab" | "key.keyboard.enter" | "key.keyboard.keypad.enter" => {
-            let by = if shift { FIELDS - 1 } else { 1 };
-            c.focus = Some(c.focus.map_or(0, |i| (i + by) % FIELDS));
+            let order = c.order();
+            if !order.is_empty() {
+                let at = c.focus.and_then(|f| order.iter().position(|i| *i == f));
+                let next = match at {
+                    Some(p) if shift => (p + order.len() - 1) % order.len(),
+                    Some(p) => (p + 1) % order.len(),
+                    None => 0,
+                };
+                c.focus = Some(order[next]);
+            }
         }
         "key.keyboard.v" if ctrl => {
             if let Some(text) = host.clipboard_text() {

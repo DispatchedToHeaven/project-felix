@@ -218,6 +218,11 @@ fn npc_near(host: &mut dyn ServerHost, player: PlayerRef, id: u32) -> Option<Ent
     (d <= REACH * REACH).then_some(npc)
 }
 
+/// Starts NPC `npc`'s dialog with `player` (if they are near), as a right-click does.
+pub fn start(host: &mut dyn ServerHost, player: PlayerRef, npc: u32) {
+    talk(host, player, &npc.to_le_bytes());
+}
+
 fn talk(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
     let Some(id) = read_id(b) else { return };
     let Some(npc) = npc_near(host, player, id) else { return };
