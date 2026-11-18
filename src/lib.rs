@@ -23,6 +23,7 @@
 //!   the server.
 //! - `character` reads characters (a graph of moods, relations; no mod API types); `heart` keeps
 //!   each NPC's mood and relations on the server and makes it obey worse when upset.
+//! - `quest` reads quests (no mod API types); `quests` runs them on the server: boards, logs, kills.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
     ScreenKeyPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
@@ -54,6 +55,8 @@ pub mod matches;
 pub mod menu;
 pub mod models;
 pub mod profile;
+pub mod quest;
+pub mod quests;
 pub mod molang;
 pub mod npc;
 pub mod rulebook;
@@ -97,6 +100,7 @@ impl Hooks for Felix {
         scenes::add_listener(e);
         rulebook::add_listener(e);
         heart::add_listener(e);
+        quests::add_listener(e);
     }
 
     fn register_gui_layers(&self, _cx: &RegistrationContext, e: &mut RegisterGuiLayersEvent<'_>) {
@@ -117,10 +121,14 @@ impl Hooks for Felix {
         custom::register_commands(e);
         rulebook::register_commands(e);
         heart::register_commands(e);
+        quests::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = quests::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = heart::run_command(host, e) {
@@ -149,6 +157,7 @@ impl Hooks for Felix {
     fn server_tick(&self, host: &mut dyn ServerHost, e: &mut ServerTickEvent<'_>) {
         if let ServerTickPhase::ServerTickEnd { world_running: true } = e.phase {
             heart::tick(host);
+            quests::tick(host);
             rulebook::tick(host);
         }
     }
@@ -161,6 +170,7 @@ impl Hooks for Felix {
     fn living_death(&self, host: &mut dyn ServerHost, e: &mut LivingDeathEvent<'_>) -> Flow {
         rulebook::on_death(&*host, e.entity, e.source.causing);
         heart::on_death(host, e.entity, e.source.causing);
+        quests::on_death(host, e.entity, e.source.causing);
         Flow::Continue
     }
 

@@ -125,7 +125,7 @@ pub fn on_chat(player_entity: i32, text: &str) {
     }
 }
 
-fn kind_of(host: &dyn mod_api::Host, e: EntityRef) -> (String, &'static str) {
+pub(crate) fn kind_of(host: &dyn mod_api::Host, e: EntityRef) -> (String, &'static str) {
     let kind = e.kind(host).map(|k| k.id(host)).unwrap_or_default();
     let category = if kind == "minecraft:player" {
         "player"
@@ -366,7 +366,7 @@ fn run(host: &mut dyn ServerHost, h: &Here, ev: &Event, dos: &[Do]) {
             Do::Act(a) => {
                 use crate::dialog::Action;
                 // What needs a player waits for one.
-                let needs_player = matches!(a, Action::News | Action::Give(..) | Action::Take(..) | Action::Tag(_) | Action::Untag(_) | Action::Game(..) | Action::Sport(_) | Action::JoinGame | Action::OpenGame | Action::EditAnimation(_));
+                let needs_player = matches!(a, Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Give(..) | Action::Take(..) | Action::Tag(_) | Action::Untag(_) | Action::Game(..) | Action::Sport(_) | Action::JoinGame | Action::OpenGame | Action::EditAnimation(_));
                 if needs_player && ev.player.is_none() {
                     continue;
                 }
@@ -528,12 +528,14 @@ fn look(host: &mut dyn ServerHost, h: &Here, rules: &[Rule], mind: &mut Mind, no
                     events.push(None);
                 }
             }
-            When::FriendHurt | When::FriendKilled | When::Feels(_) | When::HearsRumor => {
+            When::FriendHurt | When::FriendKilled | When::Feels(_) | When::HearsRumor | When::QuestDone | When::QuestFailed => {
                 let key = match &rule.when {
                     When::FriendHurt => "friend_hurt".to_string(),
                     When::FriendKilled => "friend_killed".to_string(),
                     When::Feels(m) => format!("mood:{m}"),
                     When::HearsRumor => "rumor".to_string(),
+                    When::QuestDone => "quest_done".to_string(),
+                    When::QuestFailed => "quest_failed".to_string(),
                     _ => String::new(),
                 };
                 for hd in heard {

@@ -30,7 +30,8 @@
 //! News is what an NPC saw a player do (hit it, kill a friend, give it a gift…). Friends standing
 //! together tell each other their news, and the one who hears it thinks of that player a little as
 //! the teller does: half as much for each telling, more if the one it happened to is its friend too.
-//! Its character may move its mood on `rumor_bad` and `rumor_good`.
+//! Its character may move its mood on `rumor_bad` and `rumor_good`. Quests done for it
+//! (`quest_done`) and failed (`quest_failed`) are news too.
 
 use crate::serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -353,6 +354,8 @@ impl News {
             "apology" => "apology",
             "praise" => "praise",
             "scold" => "scold",
+            "quest_done" => "helped",
+            "quest_failed" => "let_down",
             _ => return None,
         })
     }
@@ -396,6 +399,8 @@ impl News {
             "apology" => format!("{player} said sorry to {victim}"),
             "praise" => format!("{player} praised {victim}"),
             "scold" => format!("{player} shouted at {victim}"),
+            "helped" => format!("{player} helped {victim}"),
+            "let_down" => format!("{player} let {victim} down"),
             k => format!("{player} and {victim}: {k}"),
         };
         let lead = if self.hops > 0 {

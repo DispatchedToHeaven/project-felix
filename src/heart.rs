@@ -458,6 +458,17 @@ pub fn on_death(host: &mut dyn ServerHost, victim: u32, killer: i32) {
     }
 }
 
+/// NPC `npc` says `line` to the players near it.
+pub fn say_aloud(host: &mut dyn ServerHost, npc: EntityRef, line: &str) {
+    let name = STATE.lock().ok().and_then(|s| s.live.get(&npc.id()).map(|l| l.name.clone())).or_else(|| npc.name(&*host)).unwrap_or_else(|| "NPC".into());
+    say(host, npc, &name, line);
+}
+
+/// The loaded NPC with `uuid`, by entity id.
+pub fn npc_by_uuid(uuid: u128) -> Option<u32> {
+    STATE.lock().ok()?.live.iter().find(|(_, l)| l.uuid == uuid).map(|(id, _)| *id)
+}
+
 /// A dialog or a rule makes NPC `npc` feel `event` (a gift, an apology), about `player`.
 pub fn feel(host: &mut dyn ServerHost, npc: EntityRef, player: Option<PlayerRef>, event: &str) {
     feel_at(host, npc.id(), event, player, 1.0, None);

@@ -1,0 +1,11 @@
+{
+  "title": "Apples for @npc",
+  "bring": "minecraft:apple",
+  "count": 5,
+  "offer": "I'm so hungry. Could you bring me 5 apples, @player?",
+  "progress": "Got the apples yet, @player?",
+  "done": "Thank you! These look delicious.",
+  "fail": "Never mind the apples, then.",
+  "reward": [ { "give": "minecraft:emerald", "count": 2 } ],
+  "repeat": true
+}

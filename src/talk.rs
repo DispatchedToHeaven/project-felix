@@ -282,11 +282,19 @@ fn choose(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
         send_close(host, player);
         return;
     }
+    // A quest board opens in place of this dialog.
+    let board = actions.iter().any(|a| matches!(a, Action::Quests(_)));
     run_for(host, Some(player), npc, &actions);
     match &choice.goto {
         Some(next) => enter(host, player, npc, session.dialog, next),
+        None if board => {}
         None => send_close(host, player),
     }
+}
+
+/// Shows `player` node `node` of a dialog built on the spot (a quest board), as NPC `npc`'s.
+pub fn open(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Arc<Dialog>, node: &str) {
+    enter(host, player, npc, dialog, node);
 }
 
 fn enter(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Arc<Dialog>, node_name: &str) {
@@ -342,6 +350,26 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
             Action::News => {
                 if let Some(p) = player {
                     crate::heart::tell_news(host, npc, p);
+                }
+            }
+            Action::Quests(list) => {
+                if let Some(p) = player {
+                    crate::quests::board(host, p, npc, list);
+                }
+            }
+            Action::Quest(id) => {
+                if let Some(p) = player {
+                    crate::quests::take(host, p, npc, id);
+                }
+            }
+            Action::HandIn => {
+                if let Some(p) = player {
+                    crate::quests::hand_in(host, p, npc);
+                }
+            }
+            Action::GiveUp => {
+                if let Some(p) = player {
+                    crate::quests::give_up(host, p, npc);
                 }
             }
             Action::Relation(delta) => {

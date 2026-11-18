@@ -73,6 +73,11 @@ fn admit(file: Vec<u8>) -> Result<Arc<Profile>, String> {
     };
     crate::talk::set_extra_dialog(&dialog_of(&p.id), dialog);
     crate::rulebook::set_extra(&dialog_of(&p.id), rules);
+    let quests = match &p.quests {
+        Some(q) => crate::serde_json::from_str::<crate::serde_json::Value>(q).map_err(|e| format!("quests.json: {e}")).and_then(|v| crate::quest::read_list(&v))?,
+        None => Vec::new(),
+    };
+    crate::quests::set_extra(&dialog_of(&p.id), quests);
     let p = Arc::new(p);
     if let Ok(mut s) = SERVER.lock() {
         s.profiles.insert(p.id.clone(), (p.clone(), Arc::new(file)));

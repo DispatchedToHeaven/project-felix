@@ -1,0 +1,12 @@
+{
+  "title": "Zombie trouble",
+  "kill": "minecraft:zombie",
+  "count": 3,
+  "time": 15,
+  "offer": "Zombies keep coming at night. Could you deal with 3 of them in the next 15 minutes, @player?",
+  "progress": "How many zombies so far, @player?",
+  "done": "That's them. I'll sleep easier now.",
+  "fail": "Too late. They came back.",
+  "reward": [ { "give": "minecraft:iron_ingot", "count": 4 }, { "give": "minecraft:bread", "count": 2 } ],
+  "min_relation": 0
+}

@@ -19,7 +19,9 @@
     "gift": 8,
     "apology": 4,
     "praise": 3,
-    "scold": -5
+    "scold": -5,
+    "quest_done": 10,
+    "quest_failed": -4
   },
   "moods": {
     "calm": {
@@ -29,7 +31,8 @@
         "friend_killed": "grieving",
         "scold": "upset",
         "gift": "happy",
-        "praise": "happy"
+        "praise": "happy",
+        "quest_done": "happy"
       },
       "chatter": [
         "Nice day, isn't it, @listener?",
@@ -93,7 +96,8 @@
             "to": "angry",
             "below": -20
           }
-        ]
+        ],
+        "quest_done": "calm"
       },
       "chatter": [
         "Not now, @listener. I'm not in the mood."
@@ -122,7 +126,8 @@
         "after:240": "upset",
         "apology": "upset",
         "gift": "upset",
-        "friend_killed": "grieving"
+        "friend_killed": "grieving",
+        "quest_done": "upset"
       },
       "chatter": [
         "Leave it, @listener."

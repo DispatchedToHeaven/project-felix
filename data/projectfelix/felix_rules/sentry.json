@@ -134,6 +134,14 @@
           "say": "So that's the kind of person @player is."
         }
       ]
+    },
+    {
+      "when": "quest_done",
+      "then": [
+        {
+          "animation": "animation.felix.cheer"
+        }
+      ]
     }
   ]
 }

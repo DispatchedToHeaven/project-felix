@@ -150,6 +150,18 @@
           ]
         },
         {
+          "text": "Need any help?",
+          "actions": [
+            {
+              "quests": [
+                "projectfelix:apples",
+                "projectfelix:zombies",
+                "projectfelix:walk"
+              ]
+            }
+          ]
+        },
+        {
           "text": "Something else...",
           "goto": "more"
         },

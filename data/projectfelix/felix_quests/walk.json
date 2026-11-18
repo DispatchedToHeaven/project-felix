@@ -1,0 +1,11 @@
+{
+  "title": "A walk with @npc",
+  "walk": true,
+  "distance": 30,
+  "offer": "I'd like to see a bit more of the world. Walk me 30 blocks from here, @player?",
+  "progress": "Are we there yet?",
+  "done": "What a nice walk. Thanks, @player!",
+  "fail": "Oh well. Maybe another time.",
+  "reward": [ { "give": "minecraft:cookie", "count": 3 } ],
+  "repeat": true
+}

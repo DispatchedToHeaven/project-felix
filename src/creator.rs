@@ -7,12 +7,16 @@
 //! guards..., then it says something, attacks, plays an animation..., else something else. Up to
 //! [`MAX_RULES`] here; rules of its file the page can't show are kept as they are.
 //!
+//! Its quests (the Quests page): bring an item, kill some of a mob, go to a place, or walk it some
+//! blocks away; what it says when it asks, and an item as the reward. Up to [`MAX_QUESTS`].
+//!
 //! Click a field to type in it; Tab and Enter go to the next one, Ctrl+V pastes, Escape closes.
 use crate::companion::DEFAULT_MODEL;
 use crate::custom::SAVE;
 use crate::models;
 use crate::profile::{self, Profile};
 use crate::rules::{self, CONDS, DOS, Row, WHENS};
+use crate::quest::{self, KINDS};
 use crate::serde_json::{Value, json};
 use mod_api::{
     ClientHost, ConfigPath, DrawContext, Flow, IPayloadContext, IPayloadHandler, PayloadBytes, PayloadId,
@@ -34,6 +38,9 @@ const KEPT_SKIN: &str = "(the skin it has)";
 const NO_SKIN: &str = "(the model's texture)";
 /// Rule texts are fields from here on: three a rule (the event's word, then's, else's).
 const RULE_TEXT: usize = 100;
+/// Quest `n`'s fields: its word, count, offer, reward.
+const QUEST_TEXT: usize = 200;
+pub const MAX_QUESTS: usize = 3;
 pub const MAX_RULES: usize = 4;
 /// The characters the maker offers (a file may bring another).
 const CHARACTERS: &[&str] = &["projectfelix:kind", "projectfelix:touchy", "projectfelix:stoic"];
@@ -48,7 +55,11 @@ enum Do {
     Character,
     Save(bool),
     Close,
-    Page,
+    /// 1: rules, 2: quests (again: back to the topics).
+    Page(u8),
+    Kind(usize),
+    DelQuest(usize),
+    AddQuest,
     When(usize),
     If(usize),
     Then(usize),
@@ -78,7 +89,10 @@ struct Creator {
     rules: Vec<Row>,
     /// Rules of its file a row can't show, kept as they are.
     kept_rules: Vec<Value>,
-    rules_page: bool,
+    quests: Vec<quest::Row>,
+    kept_quests: Vec<Value>,
+    /// 0: name and topics, 1: rules, 2: quests.
+    page: u8,
     characters: Vec<String>,
     character: usize,
     buttons: Vec<([f32; 4], Do)>,
@@ -154,6 +168,15 @@ impl IPayloadHandler for OpenHandler {
                 }
             }
         }
+        let (mut qrows, mut kept_quests) = (Vec::new(), Vec::new());
+        if let Some(v) = editing.as_ref().and_then(|p| p.quests.as_ref()).and_then(|r| crate::serde_json::from_str::<Value>(r).ok()) {
+            for q in v.get("quests").unwrap_or(&v).as_array().cloned().unwrap_or_default() {
+                match quest::Row::from_json(&q).filter(|_| qrows.len() < MAX_QUESTS) {
+                    Some(row) => qrows.push(row),
+                    None => kept_quests.push(q),
+                }
+            }
+        }
         if let Some(p) = &editing {
             fields[0] = p.name.clone();
             fields[1] = p.greeting.clone();
@@ -192,7 +215,9 @@ impl IPayloadHandler for OpenHandler {
             kept,
             rules: rows,
             kept_rules,
-            rules_page: false,
+            quests: qrows,
+            kept_quests,
+            page: 0,
             characters,
             character,
             buttons: Vec::new(),
@@ -219,6 +244,15 @@ impl Creator {
         if i < FIELDS {
             return self.fields.get_mut(i);
         }
+        if let Some(j) = i.checked_sub(QUEST_TEXT) {
+            let q = self.quests.get_mut(j / 4)?;
+            return Some(match j % 4 {
+                0 => &mut q.what,
+                1 => &mut q.count,
+                2 => &mut q.offer,
+                _ => &mut q.reward,
+            });
+        }
         let j = i.checked_sub(RULE_TEXT)?;
         let r = self.rules.get_mut(j / 3)?;
         Some(match j % 3 {
@@ -230,8 +264,20 @@ impl Creator {
 
     /// The fields of the page shown, in Tab order.
     fn order(&self) -> Vec<usize> {
-        if !self.rules_page {
+        if self.page == 0 {
             return (0..FIELDS).collect();
+        }
+        if self.page == 2 {
+            let mut o = Vec::new();
+            for (n, q) in self.quests.iter().enumerate() {
+                let base = QUEST_TEXT + n * 4;
+                o.push(base);
+                if q.kind < 2 {
+                    o.push(base + 1);
+                }
+                o.extend([base + 2, base + 3]);
+            }
+            return o;
         }
         let mut o = Vec::new();
         for (n, r) in self.rules.iter().enumerate() {
@@ -304,6 +350,16 @@ impl Creator {
             let v = json!({ "rules": list });
             rules::read(&v).map_err(|e| format!("Rules: {e}"))?;
             p.rules = Some(crate::serde_json::to_string_pretty(&v).unwrap_or_default());
+        }
+        let mut list = Vec::new();
+        for (n, q) in self.quests.iter().enumerate() {
+            list.push(q.to_json().map_err(|e| format!("Quest {}: {e}", n + 1))?);
+        }
+        list.extend(self.kept_quests.iter().cloned());
+        if !list.is_empty() {
+            let v = json!({ "quests": list });
+            quest::read_list(&v).map_err(|e| format!("Quests: {e}"))?;
+            p.quests = Some(crate::serde_json::to_string_pretty(&v).unwrap_or_default());
         }
         Ok(p)
     }
@@ -460,7 +516,13 @@ pub fn render(host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
         None => format!("New NPC: {}", profile::make_id(c.fields[0].trim())),
     };
     draw.text(&title, [x0, y0], 0xFFFF_D86A, false);
-    if c.rules_page {
+    if c.page == 2 {
+        draw_quests(draw, &mut buttons, c, [x0, y0 + ROW], mouse, blink);
+        bottom(draw, &mut buttons, c, [x0, y0 + height - 26.0], mouse);
+        c.buttons = buttons;
+        return;
+    }
+    if c.page == 1 {
         draw_rules(draw, &mut buttons, c, [x0, y0 + ROW], mouse, blink);
         bottom(draw, &mut buttons, c, [x0, y0 + height - 26.0], mouse);
         c.buttons = buttons;
@@ -519,11 +581,12 @@ pub fn render(host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
 /// The buttons below either page, and the status line.
 fn bottom(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, c: &Creator, at: [f32; 2], mouse: [f32; 2]) {
     let [x0, y] = at;
-    let bw = 76.0;
-    button(draw, buttons, [x0, y, bw, 16.0], "Save", Do::Save(false), mouse);
-    button(draw, buttons, [x0 + bw + 4.0, y, bw, 16.0], "Save & spawn", Do::Save(true), mouse);
-    let page = if c.rules_page { "Topics".to_string() } else { format!("Rules ({})", c.rules.len() + c.kept_rules.len()) };
-    button(draw, buttons, [x0 + 2.0 * (bw + 4.0), y, 70.0, 16.0], &page, Do::Page, mouse);
+    button(draw, buttons, [x0, y, 56.0, 16.0], "Save", Do::Save(false), mouse);
+    button(draw, buttons, [x0 + 60.0, y, 76.0, 16.0], "Save & spawn", Do::Save(true), mouse);
+    let rules = if c.page == 1 { "Topics".to_string() } else { format!("Rules ({})", c.rules.len() + c.kept_rules.len()) };
+    button(draw, buttons, [x0 + 140.0, y, 64.0, 16.0], &rules, Do::Page(1), mouse);
+    let quests = if c.page == 2 { "Topics".to_string() } else { format!("Quests ({})", c.quests.len() + c.kept_quests.len()) };
+    button(draw, buttons, [x0 + 208.0, y, 68.0, 16.0], &quests, Do::Page(2), mouse);
     button(draw, buttons, [x0 + W - 50.0, y, 50.0, 16.0], "Close", Do::Close, mouse);
     let status = tail(draw, &c.status, W);
     draw.text(&status, [x0, y + 20.0], 0xFFC0_C0C8, false);
@@ -583,6 +646,40 @@ fn draw_rules(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, c: 
     }
 }
 
+/// The quests page: two lines a quest. [kind] [its word] [count] x; says [offer] gives [reward].
+fn draw_quests(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, c: &Creator, at: [f32; 2], mouse: [f32; 2], blink: bool) {
+    let [x0, mut y] = at;
+    let grey = 0xFFA0_A0A0;
+    let note = if c.kept_quests.is_empty() {
+        "What it asks players to do, and what it gives for it".to_string()
+    } else {
+        format!("Its quests ({} more from its file kept)", c.kept_quests.len())
+    };
+    draw.text(&note, [x0, y], grey, false);
+    y += 12.0;
+    let h = ROW - 2.0;
+    for (n, q) in c.quests.iter().enumerate() {
+        let base = QUEST_TEXT + n * 4;
+        let focus = |k: usize| c.focus == Some(base + k);
+        draw.fill([x0 - 2.0, y - 2.0, W + 4.0, 2.0 * ROW + 2.0], 0x4030_3048);
+        picker(draw, buttons, [x0, y, 64.0, h], KINDS[q.kind].0, Do::Kind(n), mouse);
+        hint_field(draw, buttons, [x0 + 67.0, y, 150.0, h], &q.what, KINDS[q.kind].1, focus(0), Do::Field(base), mouse, blink);
+        if q.kind < 2 {
+            hint_field(draw, buttons, [x0 + 220.0, y, 40.0, h], &q.count, "count", focus(1), Do::Field(base + 1), mouse, blink);
+        }
+        button(draw, buttons, [x0 + W - 12.0, y, 12.0, h], "x", Do::DelQuest(n), mouse);
+        y += ROW;
+        draw.text("says", [x0, y + 3.0], grey, false);
+        hint_field(draw, buttons, [x0 + 26.0, y, 170.0, h], &q.offer, "what it asks (or its own words)", focus(2), Do::Field(base + 2), mouse, blink);
+        draw.text("gives", [x0 + 200.0, y + 3.0], grey, false);
+        hint_field(draw, buttons, [x0 + 228.0, y, W - 228.0, h], &q.reward, "item count", focus(3), Do::Field(base + 3), mouse, blink);
+        y += ROW + 6.0;
+    }
+    if c.quests.len() < MAX_QUESTS {
+        button(draw, buttons, [x0, y, 64.0, 14.0], "+ Quest", Do::AddQuest, mouse);
+    }
+}
+
 fn cycle(i: usize, by: i32, n: usize) -> usize {
     if n == 0 {
         return 0;
@@ -608,9 +705,26 @@ fn act(host: &dyn ClientHost, c: &mut Creator, what: Do, by: i32) {
         }
         Do::Save(spawn) => c.save(host, spawn),
         Do::Close => c.close = true,
-        Do::Page => {
-            c.rules_page = !c.rules_page;
+        Do::Page(p) => {
+            c.page = if c.page == p { 0 } else { p };
             c.focus = c.order().first().copied();
+        }
+        Do::Kind(n) => {
+            if let Some(q) = c.quests.get_mut(n) {
+                q.kind = cycle(q.kind, by, KINDS.len());
+                q.what.clear();
+            }
+        }
+        Do::DelQuest(n) => {
+            if n < c.quests.len() {
+                c.quests.remove(n);
+                c.focus = None;
+            }
+        }
+        Do::AddQuest => {
+            if c.quests.len() < MAX_QUESTS {
+                c.quests.push(quest::Row { what: "minecraft:apple".into(), count: "3".into(), reward: "minecraft:emerald 1".into(), ..quest::Row::default() });
+            }
         }
         Do::When(n) => {
             if let Some(r) = c.rules.get_mut(n) {
@@ -673,7 +787,7 @@ pub fn mouse_scrolled(host: &dyn ClientHost, e: &mut ScreenMouseScrolledPreEvent
     let Ok(mut lock) = CREATOR.lock() else { return Flow::Continue };
     let Some(c) = lock.as_mut() else { return Flow::Continue };
     let mouse = e.screen.mouse;
-    if let Some(what) = c.buttons.iter().find(|(r, w)| inside(*r, mouse) && matches!(w, Do::Model | Do::Skin | Do::Character | Do::When(_) | Do::If(_) | Do::Then(_) | Do::Else(_))).map(|(_, w)| *w) {
+    if let Some(what) = c.buttons.iter().find(|(r, w)| inside(*r, mouse) && matches!(w, Do::Model | Do::Skin | Do::Character | Do::Kind(_) | Do::When(_) | Do::If(_) | Do::Then(_) | Do::Else(_))).map(|(_, w)| *w) {
         act(host, c, what, if e.scroll[1] > 0.0 { -1 } else { 1 });
     }
     Flow::Cancel

@@ -18,7 +18,9 @@
     "gift": 4,
     "apology": 4,
     "praise": 1,
-    "scold": -1
+    "scold": -1,
+    "quest_done": 5,
+    "quest_failed": -3
   },
   "moods": {
     "calm": {
@@ -59,7 +61,8 @@
       "on": {
         "after:120": "calm",
         "apology": "calm",
-        "gift": "calm"
+        "gift": "calm",
+        "quest_done": "calm"
       },
       "chatter": [
         "..."

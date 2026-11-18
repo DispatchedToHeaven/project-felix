@@ -1,5 +1,6 @@
 //! An NPC made in the game: its name, model, skin, what it says and its rules, and its file,
 //! `<id>.felixnpc` (a zip: `npc.json`, `skin.png`, `dialog.json`, `rules.json` when it has rules,
+//! `quests.json` when it gives quests,
 //! and `model.geo.json` when it brings its own model). No mod API types here.
 //!
 //! `npc.json`: `{ "format": 1, "id", "name", "model", "character", "greeting", "topics": [{ "ask", "answer" }] }`.
@@ -27,6 +28,8 @@ pub struct Profile {
     pub rules: Option<String>,
     /// Its character (`projectfelix:kind`…; empty: the default).
     pub character: String,
+    /// The quests it gives (`quests.json`, see `quest`).
+    pub quests: Option<String>,
 }
 
 /// An id from a name: lower case letters, digits and `_`, at most 32.
@@ -61,6 +64,7 @@ impl Profile {
             model_file: None,
             rules: None,
             character: String::new(),
+            quests: None,
         }
     }
 
@@ -86,6 +90,9 @@ impl Profile {
                 format!("topic{i}"),
                 json!({ "text": answer, "options": [ { "text": "Something else...", "goto": "hello" }, { "text": "Bye." } ] }),
             );
+        }
+        if self.quests.is_some() {
+            options.push(json!({ "text": "Need any help?", "actions": [ { "quests": true } ] }));
         }
         let (more, more_nodes) = social("hello");
         options.extend(more);
@@ -121,6 +128,9 @@ impl Profile {
         if let Some(r) = &self.rules {
             entries.push(Entry { name: "rules.json".into(), data: r.clone().into_bytes() });
         }
+        if let Some(q) = &self.quests {
+            entries.push(Entry { name: "quests.json".into(), data: q.clone().into_bytes() });
+        }
         zipfile::write(&entries, crc32)
     }
 
@@ -145,6 +155,11 @@ impl Profile {
         if let Some(d) = &own_dialog {
             crate::dialog::parse(d.as_bytes()).map_err(|e| format!("dialog.json: {e}"))?;
         }
+        let quests = get("quests.json").map(|r| String::from_utf8_lossy(&r).into_owned());
+        if let Some(q) = &quests {
+            let v: Value = crate::serde_json::from_str(q).map_err(|e| format!("quests.json: {e}"))?;
+            crate::quest::read_list(&v).map_err(|e| format!("quests.json: {e}"))?;
+        }
         let rules = get("rules.json").map(|r| String::from_utf8_lossy(&r).into_owned());
         if let Some(r) = &rules {
             crate::rules::parse(r.as_bytes()).map_err(|e| format!("rules.json: {e}"))?;
@@ -160,6 +175,7 @@ impl Profile {
             model_file: get("model.geo.json"),
             rules,
             character: s("character"),
+            quests,
         })
     }
 }
