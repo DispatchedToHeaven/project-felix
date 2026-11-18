@@ -158,6 +158,11 @@ impl IPayloadHandler for OpenHandler {
         let mut model = models.iter().position(|m| m == DEFAULT_MODEL).unwrap_or(0);
         let (mut rows, mut kept_rules) = (Vec::new(), Vec::new());
         let mut characters: Vec<String> = CHARACTERS.iter().map(|s| s.to_string()).collect();
+        for k in crate::char_editor::known() {
+            if !characters.contains(&k) {
+                characters.push(k);
+            }
+        }
         let mut character = 0;
         let mut routines: Vec<String> = ROUTINES.iter().map(|s| s.to_string()).collect();
         let mut routine = 0;
@@ -431,12 +436,12 @@ pub fn tick(host: &mut dyn ClientHost) {
     }
 }
 
-fn inside(r: [f32; 4], at: [f32; 2]) -> bool {
+pub(crate) fn inside(r: [f32; 4], at: [f32; 2]) -> bool {
     at[0] >= r[0] && at[0] < r[0] + r[2] && at[1] >= r[1] && at[1] < r[1] + r[3]
 }
 
 /// The end of `text` that fits `width` (the end is where the typing is).
-fn tail(draw: &dyn DrawContext, text: &str, width: f32) -> String {
+pub(crate) fn tail(draw: &dyn DrawContext, text: &str, width: f32) -> String {
     let chars: Vec<char> = text.chars().collect();
     for start in 0..=chars.len() {
         let s: String = chars[start..].iter().collect();
@@ -448,7 +453,7 @@ fn tail(draw: &dyn DrawContext, text: &str, width: f32) -> String {
 }
 
 /// The start of `text` that fits `width`, with an ellipsis when cut.
-fn head(draw: &dyn DrawContext, text: &str, width: f32) -> String {
+pub(crate) fn head(draw: &dyn DrawContext, text: &str, width: f32) -> String {
     if draw.text_width(text) <= width {
         return text.to_string();
     }
@@ -459,7 +464,7 @@ fn head(draw: &dyn DrawContext, text: &str, width: f32) -> String {
     format!("{s}…")
 }
 
-fn button(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, r: [f32; 4], text: &str, what: Do, mouse: [f32; 2]) {
+pub(crate) fn button<T>(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], T)>, r: [f32; 4], text: &str, what: T, mouse: [f32; 2]) {
     draw.fill(r, if inside(r, mouse) { 0xE050_5868 } else { 0xD028_2C38 });
     draw.fill([r[0], r[1] + r[3] - 1.0, r[2], 1.0], 0xFF10_1018);
     let tw = draw.text_width(text);
@@ -469,7 +474,7 @@ fn button(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, r: [f32
 
 /// A field: its label to the left, its text, and the cursor when it has the focus.
 #[allow(clippy::too_many_arguments)]
-fn field(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, r: [f32; 4], text: &str, focus: bool, what: Do, mouse: [f32; 2], blink: bool) {
+pub(crate) fn field<T>(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], T)>, r: [f32; 4], text: &str, focus: bool, what: T, mouse: [f32; 2], blink: bool) {
     draw.fill(r, if focus { 0xF018_1820 } else if inside(r, mouse) { 0xE038_3C4C } else { 0xC020_2430 });
     draw.fill([r[0], r[1] + r[3] - 1.0, r[2], 1.0], if focus { 0xFFFF_D86A } else { 0xFF50_5060 });
     // The end where the typing is; the start otherwise.
@@ -484,7 +489,7 @@ fn field(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, r: [f32;
 
 /// A picker: a click takes the next choice, the wheel moves either way.
 #[allow(clippy::too_many_arguments)]
-fn picker(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, r: [f32; 4], value: &str, what: Do, mouse: [f32; 2]) {
+pub(crate) fn picker<T>(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], T)>, r: [f32; 4], value: &str, what: T, mouse: [f32; 2]) {
     draw.fill(r, if inside(r, mouse) { 0xE040_4458 } else { 0xC030_3040 });
     let v = tail(draw, value, r[2] - 18.0);
     draw.text(&v, [r[0] + 3.0, r[1] + 3.0], 0xFFFF_FFFF, false);
@@ -618,7 +623,7 @@ fn bottom(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, c: &Cre
 
 /// A field with a grey hint while it is empty.
 #[allow(clippy::too_many_arguments)]
-fn hint_field(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, r: [f32; 4], text: &str, hint: &str, focus: bool, what: Do, mouse: [f32; 2], blink: bool) {
+pub(crate) fn hint_field<T>(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], T)>, r: [f32; 4], text: &str, hint: &str, focus: bool, what: T, mouse: [f32; 2], blink: bool) {
     field(draw, buttons, r, text, focus, what, mouse, blink);
     if text.is_empty() && !focus {
         let h = head(draw, hint, r[2] - 6.0);

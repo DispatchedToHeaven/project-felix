@@ -271,6 +271,7 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
                         if let Ok(mut s) = SERVER.lock() {
                             s.makers.insert(p.uuid());
                         }
+                        crate::heart::send_list(host, p);
                         let _ = p.send_payload(host, &PayloadId(OPEN.into()), PayloadBytes(file));
                     }
                     None => say(host, format!("No NPC {}", id.unwrap_or_default())),

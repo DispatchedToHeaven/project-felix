@@ -11,15 +11,18 @@
 //!   think of those players a little as the teller does; with no news they just chat.
 //!
 //! An NPC's character is `projectfelix:kind` unless `/felix character` (or its file) says otherwise.
+//! Characters made in the character editor (`/felix character edit`) are kept in
+//! `horizon-mod-data/projectfelix/characters/<name>.json` on the server, as `felixchar:<name>`.
 use crate::character::{self, Bond, Character, Heart, News};
 use crate::companion::{self, Mode};
 use mod_api::{
     MobRef, AddServerReloadListenersEvent, AttachmentCodec, AttachmentError, AttachmentType, Command, CommandArgumentValue,
     CommandSource, Compound, EntityRef, FileToIdConverter, Flow, Holder, Identifier, LivingRef, PlayerRef,
     RegisterCommandsEvent, ReloadApply, ReloadResourceError, RunModCommandEvent, ServerHost, ServerReloadContext,
-    ServerReloadListener, Tag, Text,
+    ServerReloadListener, Tag, Text, ConfigPath, IPayloadContext, IPayloadHandler, PayloadBytes, PayloadId,
 };
-use std::collections::HashMap;
+use crate::serde_json::{Value, json};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
 
 pub const DEFAULT: &str = "projectfelix:kind";
@@ -161,17 +164,34 @@ pub static HEART: AttachmentType<Option<Heart>> = AttachmentType {
 // ---- characters from data packs -------------------------------------------------------------------------
 
 static LOADED: LazyLock<Mutex<HashMap<String, Arc<Character>>>> = LazyLock::new(Default::default);
+/// The files as they were, for the editor: data packs' and those made in the game.
+static RAW: LazyLock<Mutex<HashMap<String, Value>>> = LazyLock::new(Default::default);
+static MADE: LazyLock<Mutex<MadeHere>> = LazyLock::new(Default::default);
+
+/// Characters made in the game, and the players the editor was opened for.
+#[derive(Default)]
+struct MadeHere {
+    read: bool,
+    characters: HashMap<String, (Arc<Character>, Value)>,
+    editors: HashSet<u128>,
+}
+
+const MADE_FOLDER: &str = "characters";
+const MADE_PREFIX: &str = "felixchar:";
 static BUILT_IN: LazyLock<Arc<Character>> = LazyLock::new(|| {
     Arc::new(character::parse(include_bytes!("../data/projectfelix/felix_characters/kind.json")).expect("kind.json reads"))
 });
 
 fn character_named(id: &str) -> Arc<Character> {
+    if let Some(c) = MADE.lock().ok().and_then(|m| m.characters.get(id).map(|x| x.0.clone())) {
+        return c;
+    }
     let loaded = LOADED.lock().ok().and_then(|l| l.get(id).or_else(|| l.get(DEFAULT)).cloned());
     loaded.unwrap_or_else(|| BUILT_IN.clone())
 }
 
 pub fn character_exists(id: &str) -> bool {
-    id == DEFAULT || LOADED.lock().is_ok_and(|l| l.contains_key(id))
+    id == DEFAULT || LOADED.lock().is_ok_and(|l| l.contains_key(id)) || MADE.lock().is_ok_and(|m| m.characters.contains_key(id))
 }
 
 struct Listener;
@@ -179,11 +199,15 @@ struct Listener;
 impl ServerReloadListener for Listener {
     fn prepare(&self, cx: &ServerReloadContext) -> Result<Box<dyn ReloadApply>, ReloadResourceError> {
         let mut next = HashMap::new();
+        let mut raw = HashMap::new();
         for id in cx.list() {
             let Some(bytes) = cx.read(id) else { continue };
             match character::parse(bytes) {
                 Ok(c) => {
                     next.insert(id.to_string(), Arc::new(c));
+                    if let Ok(v) = crate::serde_json::from_slice::<Value>(bytes) {
+                        raw.insert(id.to_string(), v);
+                    }
                 }
                 Err(e) => eprintln!("[projectfelix] character {id} not loaded: {e}"),
             }
@@ -192,7 +216,123 @@ impl ServerReloadListener for Listener {
             if let Ok(mut live) = LOADED.lock() {
                 *live = next;
             }
+            if let Ok(mut r) = RAW.lock() {
+                *r = raw;
+            }
         }))
+    }
+}
+
+/// Reads the characters made in the game, the first time the level ticks.
+pub fn level_tick(host: &mut dyn ServerHost) {
+    if MADE.lock().is_ok_and(|m| m.read) {
+        return;
+    }
+    let files = host.data_files();
+    let mut names = Vec::new();
+    if let Ok(dir) = ConfigPath::new(MADE_FOLDER) {
+        let mut after: Option<String> = None;
+        while let Ok(page) = files.list(&dir, after.as_deref(), 256) {
+            if page.is_empty() {
+                break;
+            }
+            names.extend(page.iter().map(|e| e.name.clone()));
+            after = page.last().map(|e| e.name.clone());
+        }
+    }
+    let mut made = HashMap::new();
+    for name in names.into_iter().filter(|n| n.ends_with(".json")) {
+        let Ok(p) = ConfigPath::new(&format!("{MADE_FOLDER}/{name}")) else { continue };
+        let read = files.read(&p).map_err(|e| format!("{e:?}")).and_then(|b| crate::serde_json::from_slice::<Value>(&b).map_err(|e| e.to_string()));
+        match read.and_then(|v| Ok((Arc::new(character::read(&v)?), v))) {
+            Ok(c) => {
+                made.insert(format!("{MADE_PREFIX}{}", name.trim_end_matches(".json")), c);
+            }
+            Err(e) => eprintln!("[projectfelix] character {name} not loaded: {e}"),
+        }
+    }
+    if let Ok(mut m) = MADE.lock() {
+        m.read = true;
+        m.characters.extend(made);
+    }
+}
+
+/// Every character there is: the data packs' and those made in the game.
+fn all_characters() -> Vec<String> {
+    let mut ids: Vec<String> = LOADED.lock().map(|l| l.keys().cloned().collect()).unwrap_or_default();
+    if !ids.iter().any(|i| i == DEFAULT) {
+        ids.push(DEFAULT.into());
+    }
+    ids.extend(MADE.lock().map(|m| m.characters.keys().cloned().collect::<Vec<_>>()).unwrap_or_default());
+    ids.sort();
+    ids
+}
+
+/// Tells `player`'s client the characters made in the game (for the NPC maker).
+pub fn send_list(host: &mut dyn ServerHost, player: PlayerRef) {
+    let mut made: Vec<String> = MADE.lock().map(|m| m.characters.keys().cloned().collect()).unwrap_or_default();
+    made.sort();
+    let body = crate::serde_json::to_vec(&json!(made)).unwrap_or_default();
+    let _ = player.send_payload(host, &PayloadId(crate::char_editor::LIST.into()), PayloadBytes(body));
+}
+
+/// Opens the character editor for `player` on character `id` (one not there yet: a copy of the
+/// default, to be saved under that name).
+fn open_editor(host: &mut dyn ServerHost, player: PlayerRef, id: &str) {
+    let made = MADE.lock().ok().and_then(|m| m.characters.get(id).map(|x| x.1.clone()));
+    let file = made.or_else(|| RAW.lock().ok().and_then(|r| r.get(id).cloned()));
+    let (file, exists) = match file {
+        Some(f) => (f, true),
+        None => {
+            let base = RAW.lock().ok().and_then(|r| r.get(DEFAULT).cloned());
+            (base.unwrap_or_else(|| crate::serde_json::from_slice(include_bytes!("../data/projectfelix/felix_characters/kind.json")).unwrap_or(Value::Null)), false)
+        }
+    };
+    let name = id.rsplit(':').next().unwrap_or(id).to_string();
+    if let Ok(mut m) = MADE.lock() {
+        m.editors.insert(player.uuid());
+    }
+    let body = json!({ "id": if exists { id } else { "" }, "name": name, "file": file });
+    let _ = player.send_payload(host, &PayloadId(crate::char_editor::OPEN.into()), PayloadBytes(crate::serde_json::to_vec(&body).unwrap_or_default()));
+}
+
+/// The editor's Save: checked, written to `characters/<name>.json`, and taken at once.
+pub struct SaveCharacter;
+
+impl IPayloadHandler for SaveCharacter {
+    fn handle(&self, payload: PayloadBytes, context: &mut dyn IPayloadContext) -> Result<(), String> {
+        let Ok(player) = context.player() else { return Ok(()) };
+        let Ok(host) = context.server_host() else { return Ok(()) };
+        let tell = |host: &mut dyn ServerHost, line: String| {
+            let _ = player.tell(host, Text::literal(line));
+        };
+        if !MADE.lock().is_ok_and(|m| m.editors.contains(&player.uuid())) {
+            tell(host, "Open the editor with /felix character edit first".into());
+            return Ok(());
+        }
+        let Ok(v) = crate::serde_json::from_slice::<Value>(&payload.0) else { return Ok(()) };
+        let name = crate::profile::make_id(v.get("name").and_then(Value::as_str).unwrap_or("mine"));
+        let Some(file) = v.get("file").cloned() else { return Ok(()) };
+        let c = match character::read(&file) {
+            Ok(c) => c,
+            Err(e) => {
+                tell(host, format!("Not kept: {e}"));
+                return Ok(());
+            }
+        };
+        let bytes = crate::serde_json::to_vec_pretty(&file).unwrap_or_default();
+        let written = ConfigPath::new(&format!("{MADE_FOLDER}/{name}.json")).map_err(|e| format!("{e:?}")).and_then(|p| host.data_files().write(&p, &bytes).map_err(|e| format!("{e:?}")));
+        if let Err(e) = written {
+            tell(host, format!("Not written: {e}"));
+            return Ok(());
+        }
+        let id = format!("{MADE_PREFIX}{name}");
+        if let Ok(mut m) = MADE.lock() {
+            m.characters.insert(id.clone(), (Arc::new(c), file));
+        }
+        tell(host, format!("Kept as {id}: /felix character <npc> {id}, or pick it in the NPC maker"));
+        send_list(host, player);
+        Ok(())
     }
 }
 
@@ -931,6 +1071,8 @@ pub fn tell_news(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) {
 
 pub fn register_commands(e: &mut RegisterCommandsEvent<'_>) {
     e.commands.push(Command::op("felix character <targets:entities> <character:text>", 2));
+    e.commands.push(Command::op("felix character edit <id:text>", 2));
+    e.commands.push(Command::op("felix characters", 2));
     e.commands.push(Command::op("felix feel <targets:entities> <event:word>", 2));
     e.commands.push(Command::op("felix relation <target:entity> <who:entities> <value:integer>", 2));
     e.commands.push(Command::op("felix friends <targets:entities>", 2));
@@ -961,6 +1103,19 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
         _ => None,
     };
     match lit.as_slice() {
+        ["felix", "character", "edit"] => {
+            let Some(p) = source else {
+                feedback(host, "Only a player can edit a character.".into());
+                return Flow::Cancel;
+            };
+            let id = companion::text_argument(e, "id").unwrap_or_default().trim().to_string();
+            let id = if id.contains(':') { id } else { format!("{MADE_PREFIX}{id}") };
+            open_editor(host, p, &id);
+        }
+        ["felix", "characters"] => {
+            let list = all_characters();
+            feedback(host, format!("{} characters: {}", list.len(), list.join(", ")));
+        }
         ["felix", "character"] => {
             let id = companion::text_argument(e, "character").unwrap_or_default().trim().to_string();
             let npcs: Vec<EntityRef> = entities(e, "targets").into_iter().filter(|t| companion::is_npc(&*host, *t)).collect();

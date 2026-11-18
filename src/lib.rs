@@ -26,6 +26,8 @@
 //! - `quest` reads quests (no mod API types); `quests` runs them on the server: boards, logs, kills.
 //! - `routine` reads days (what an NPC does from what hour; no mod API types); `routines` has NPCs
 //!   live by them on the server: work, meet, home, sleep, guard, follow.
+//! - `char_edit` is a character as its editor holds it (no mod API types); `char_editor` is the
+//!   character editor in the world: moods as boxes, ways as lines.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
     ScreenKeyPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
@@ -42,6 +44,8 @@ pub mod anim_edit;
 pub mod checkers;
 pub mod chess;
 pub mod animations;
+pub mod char_edit;
+pub mod char_editor;
 pub mod character;
 pub mod companion;
 pub mod creator;
@@ -89,6 +93,7 @@ impl Hooks for Felix {
         matches::register(r);
         sports_client::register(r);
         custom::register(r, std::sync::Arc::new(skins::FileHandler), std::sync::Arc::new(creator::OpenHandler));
+        char_editor::register(r);
     }
 
     /// Models from `assets/<namespace>/geo/*.geo.json` and animations from
@@ -160,6 +165,7 @@ impl Hooks for Felix {
             games::level_tick(host);
             matches::level_tick(host);
             custom::level_tick(host);
+            heart::level_tick(host);
         }
     }
 
@@ -203,6 +209,10 @@ impl Hooks for Felix {
     }
 
     fn screen_render_post(&self, host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
+        if char_editor::active() {
+            char_editor::render(host, e);
+            return;
+        }
         if creator::active() {
             creator::render(host, e);
             return;
@@ -216,6 +226,9 @@ impl Hooks for Felix {
     }
 
     fn screen_mouse_button_pressed_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
+        if char_editor::active() {
+            return char_editor::mouse_pressed(host, e);
+        }
         if creator::active() {
             return creator::mouse_pressed(host, e);
         }
@@ -229,7 +242,9 @@ impl Hooks for Felix {
     }
 
     fn screen_mouse_dragged_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseDraggedPreEvent<'_>) -> Flow {
-        if creator::active() {
+        if char_editor::active() {
+            char_editor::mouse_dragged(host, e)
+        } else if creator::active() {
             Flow::Cancel
         } else if editor::active() {
             editor::mouse_dragged(host, e)
@@ -239,7 +254,9 @@ impl Hooks for Felix {
     }
 
     fn screen_mouse_button_released_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseButtonReleasedPreEvent<'_>) -> Flow {
-        if creator::active() {
+        if char_editor::active() {
+            char_editor::mouse_released(host)
+        } else if creator::active() {
             Flow::Cancel
         } else if editor::active() {
             editor::mouse_released(host, e)
@@ -249,7 +266,9 @@ impl Hooks for Felix {
     }
 
     fn screen_mouse_scrolled_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseScrolledPreEvent<'_>) -> Flow {
-        if creator::active() {
+        if char_editor::active() {
+            char_editor::mouse_scrolled(host, e.screen.mouse, e.scroll[1] > 0.0)
+        } else if creator::active() {
             creator::mouse_scrolled(host, e)
         } else if editor::active() {
             editor::mouse_scrolled(host, e)
@@ -259,7 +278,9 @@ impl Hooks for Felix {
     }
 
     fn screen_key_pressed_pre(&self, host: &dyn ClientHost, e: &mut ScreenKeyPressedPreEvent<'_>) -> Flow {
-        if creator::active() {
+        if char_editor::active() {
+            char_editor::key_pressed(host, e)
+        } else if creator::active() {
             creator::key_pressed(host, e)
         } else if editor::active() {
             editor::key_pressed(host, e)
@@ -269,7 +290,13 @@ impl Hooks for Felix {
     }
 
     fn screen_char_typed_pre(&self, host: &dyn ClientHost, e: &mut ScreenCharTypedPreEvent<'_>) -> Flow {
-        if creator::active() { creator::char_typed(host, e) } else { Flow::Continue }
+        if char_editor::active() {
+            char_editor::char_typed(host, e)
+        } else if creator::active() {
+            creator::char_typed(host, e)
+        } else {
+            Flow::Continue
+        }
     }
 
     fn client_tick_post(&self, host: &mut dyn ClientHost, _e: &mut ClientTickPostEvent) {
@@ -278,6 +305,7 @@ impl Hooks for Felix {
         game_screen::tick(host);
         editor::tick(host);
         creator::tick(host);
+        char_editor::tick(host);
         skins::tick(host);
         sports_client::tick(host);
     }
