@@ -123,6 +123,17 @@
           "animation": "animation.felix.wave"
         }
       ]
+    },
+    {
+      "when": "hears_rumor",
+      "if": {
+        "relation_below": -20
+      },
+      "then": [
+        {
+          "say": "So that's the kind of person @player is."
+        }
+      ]
     }
   ]
 }

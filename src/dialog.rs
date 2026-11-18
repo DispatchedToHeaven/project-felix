@@ -28,7 +28,8 @@
 //! `vs`: `npc` or `player`), `join_game` (take the free seat), `open_game` (the board, to play or watch),
 //! `sport` (`table_tennis`, `tennis` or `basketball`, against the NPC), `edit_animation` (opens the
 //! animation editor on the NPC, with an animation name or `animation.<model>.custom`), `feel` (an
-//! event for its character: `gift`, `apology`, `praise`, `scold`…), `relation` (+/- how much it likes the player).
+//! event for its character: `gift`, `apology`, `praise`, `scold`…), `relation` (+/- how much it likes the player), `news` (it tells, aloud, the newest
+//! thing it saw or heard a player do).
 //! `@player` is the player's name; `@npc` is the NPC's name in texts and its UUID in commands.
 //! No mod API types here.
 
@@ -91,6 +92,7 @@ pub enum Action {
     OpenGame,
     Feel(String),
     Relation(i32),
+    News,
 }
 
 /// What conditions ask about the player and the NPC.
@@ -155,7 +157,7 @@ pub fn commands(action: &Action, player: &str, npc: &str) -> Vec<String> {
         Action::Tag(t) => vec![format!("tag {player} add {t}")],
         Action::Untag(t) => vec![format!("tag {player} remove {t}")],
         Action::Sound(s) => vec![format!("execute as {npc} at @s run playsound {s} neutral @a ~ ~ ~")],
-        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) => Vec::new(),
+        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News => Vec::new(),
     }
 }
 
@@ -289,6 +291,8 @@ pub fn read_actions(v: Option<&Value>) -> Result<Vec<Action>, String> {
                 Action::JoinGame
             } else if m.contains_key("open_game") {
                 Action::OpenGame
+            } else if m.contains_key("news") {
+                Action::News
             } else if let Some(f) = s("feel") {
                 Action::Feel(f)
             } else if let Some(v) = m.get("relation").and_then(Value::as_f64) {

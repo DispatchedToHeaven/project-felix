@@ -18,7 +18,8 @@
 //! `{ "hears": "<word>" }` (a player says it in chat, within `radius`), `{ "every": <seconds> }`,
 //! `dawn`, `dusk`, `rain`, `low_health` (below a third), `friend_hurt` / `friend_killed` (a player
 //! hurt or killed an NPC it is friends with: the player is the event's), `{ "feels": "<mood>" }` (its
-//! mood turns to that, see `character`).
+//! mood turns to that, see `character`), `hears_rumor` (a friend told it what a player did: the
+//! player is the event's).
 //!
 //! If (optional; `not`, `all`, `any` combine them): `time` (`day` or `night`), `raining`, `mode`
 //! (`follow`, `wait`, `guard`), `health_below` (a fraction), `owner_near` (blocks), `owner` (the player
@@ -54,6 +55,7 @@ pub enum When {
     FriendHurt,
     FriendKilled,
     Feels(String),
+    HearsRumor,
 }
 
 impl When {
@@ -220,6 +222,7 @@ fn read_when(v: &Value) -> Result<When, String> {
             "low_health" => When::LowHealth,
             "friend_hurt" => When::FriendHurt,
             "friend_killed" => When::FriendKilled,
+            "hears_rumor" => When::HearsRumor,
             _ => return Err(format!("unknown \"when\": {s}")),
         });
     }
@@ -346,6 +349,7 @@ pub const WHENS: &[(&str, Option<&str>)] = &[
     ("a friend is hurt", None),
     ("a friend is killed", None),
     ("feels...", Some("mood")),
+    ("hears a rumor", None),
 ];
 
 fn when_json(i: usize, arg: &str) -> Value {
@@ -366,7 +370,8 @@ fn when_json(i: usize, arg: &str) -> Value {
         13 => json!("low_health"),
         14 => json!("friend_hurt"),
         15 => json!("friend_killed"),
-        _ => json!({ "feels": arg.trim() }),
+        16 => json!({ "feels": arg.trim() }),
+        _ => json!("hears_rumor"),
     }
 }
 
@@ -599,6 +604,7 @@ mod tests {
             Row { when: 14, cond: 17, then: 1, then_arg: "Stop it, @player!".into(), otherwise: 10, otherwise_arg: "scold".into(), ..Row::default() },
             Row { when: 16, when_arg: "upset".into(), cond: 0, then: 6, then_arg: "animation.felix.sad".into(), ..Row::default() },
             Row { when: 13, cond: 15, then: 1, then_arg: "Ow".into(), ..Row::default() },
+            Row { when: 17, cond: 17, then: 1, then_arg: "I heard about you, @player.".into(), ..Row::default() },
         ];
         for row in rows {
             let v = row.to_json();

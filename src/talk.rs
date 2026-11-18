@@ -339,6 +339,11 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
                 companion::set_orders(host, npc, mode_named(o));
             }
             Action::Feel(event) => crate::heart::feel(host, npc, player, event),
+            Action::News => {
+                if let Some(p) = player {
+                    crate::heart::tell_news(host, npc, p);
+                }
+            }
             Action::Relation(delta) => {
                 if let Some(p) = player {
                     crate::heart::befriend(host, npc, p, *delta);

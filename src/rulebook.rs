@@ -366,7 +366,7 @@ fn run(host: &mut dyn ServerHost, h: &Here, ev: &Event, dos: &[Do]) {
             Do::Act(a) => {
                 use crate::dialog::Action;
                 // What needs a player waits for one.
-                let needs_player = matches!(a, Action::Give(..) | Action::Take(..) | Action::Tag(_) | Action::Untag(_) | Action::Game(..) | Action::Sport(_) | Action::JoinGame | Action::OpenGame | Action::EditAnimation(_));
+                let needs_player = matches!(a, Action::News | Action::Give(..) | Action::Take(..) | Action::Tag(_) | Action::Untag(_) | Action::Game(..) | Action::Sport(_) | Action::JoinGame | Action::OpenGame | Action::EditAnimation(_));
                 if needs_player && ev.player.is_none() {
                     continue;
                 }
@@ -528,11 +528,12 @@ fn look(host: &mut dyn ServerHost, h: &Here, rules: &[Rule], mind: &mut Mind, no
                     events.push(None);
                 }
             }
-            When::FriendHurt | When::FriendKilled | When::Feels(_) => {
+            When::FriendHurt | When::FriendKilled | When::Feels(_) | When::HearsRumor => {
                 let key = match &rule.when {
                     When::FriendHurt => "friend_hurt".to_string(),
                     When::FriendKilled => "friend_killed".to_string(),
                     When::Feels(m) => format!("mood:{m}"),
+                    When::HearsRumor => "rumor".to_string(),
                     _ => String::new(),
                 };
                 for hd in heard {

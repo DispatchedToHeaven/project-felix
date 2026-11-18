@@ -142,6 +142,14 @@
           ]
         },
         {
+          "text": "Heard any news?",
+          "actions": [
+            {
+              "news": true
+            }
+          ]
+        },
+        {
           "text": "Something else...",
           "goto": "more"
         },

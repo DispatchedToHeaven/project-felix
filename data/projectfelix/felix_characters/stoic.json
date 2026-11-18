@@ -36,7 +36,11 @@
           }
         ],
         "friend_killed": "upset"
-      }
+      },
+      "chatter": [
+        "@listener.",
+        "Quiet today, @listener."
+      ]
     },
     "upset": {
       "obey": 0.85,
@@ -56,7 +60,10 @@
         "after:120": "calm",
         "apology": "calm",
         "gift": "calm"
-      }
+      },
+      "chatter": [
+        "..."
+      ]
     }
   }
 }

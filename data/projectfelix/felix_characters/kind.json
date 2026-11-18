@@ -30,7 +30,13 @@
         "scold": "upset",
         "gift": "happy",
         "praise": "happy"
-      }
+      },
+      "chatter": [
+        "Nice day, isn't it, @listener?",
+        "@listener, seen any zombies about?",
+        "I like it here, @listener.",
+        "How are you keeping, @listener?"
+      ]
     },
     "happy": {
       "speed": 1.15,
@@ -46,7 +52,11 @@
         "friend_hurt": "upset",
         "friend_killed": "grieving",
         "scold": "calm"
-      }
+      },
+      "chatter": [
+        "@listener! What a day!",
+        "I feel great today, @listener."
+      ]
     },
     "upset": {
       "obey": 0.55,
@@ -84,7 +94,10 @@
             "below": -20
           }
         ]
-      }
+      },
+      "chatter": [
+        "Not now, @listener. I'm not in the mood."
+      ]
     },
     "angry": {
       "obey": 0.2,
@@ -110,7 +123,10 @@
         "apology": "upset",
         "gift": "upset",
         "friend_killed": "grieving"
-      }
+      },
+      "chatter": [
+        "Leave it, @listener."
+      ]
     },
     "grieving": {
       "obey": 0.4,
@@ -133,7 +149,10 @@
       "on": {
         "after:300": "upset",
         "apology": "upset"
-      }
+      },
+      "chatter": [
+        "I can't stop thinking about it, @listener."
+      ]
     }
   }
 }

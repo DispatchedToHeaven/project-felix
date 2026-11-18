@@ -172,6 +172,7 @@ pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
         json!({ "text": "How are you?", "if": { "not": fine }, "goto": "feel_bad" }),
         json!({ "text": "Have an apple.", "if": { "item": "minecraft:apple" }, "actions": [ { "take": "minecraft:apple" }, { "feel": "gift" } ], "goto": "thanks" }),
         json!({ "text": "I'm sorry.", "if": { "not": fine }, "actions": [ { "feel": "apology" } ], "goto": "sorry" }),
+        json!({ "text": "Heard any news?", "actions": [ { "news": true } ] }),
     ];
     let again = json!([ { "text": "Something else...", "goto": back }, { "text": "Bye." } ]);
     let nodes = vec![
