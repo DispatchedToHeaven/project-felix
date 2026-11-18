@@ -161,7 +161,7 @@ pub fn look(id: u32) -> Option<Look> {
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
 /// The particles an animation may name: asked for at registration, as the API wants.
-const PARTICLES: &[&str] = &[
+pub const PARTICLES: &[&str] = &[
     "minecraft:angry_villager", "minecraft:bubble", "minecraft:bubble_pop", "minecraft:cherry_leaves",
     "minecraft:cloud", "minecraft:composter", "minecraft:crit", "minecraft:damage_indicator", "minecraft:dolphin",
     "minecraft:dripping_water", "minecraft:effect", "minecraft:electric_spark", "minecraft:enchant",
@@ -298,11 +298,10 @@ pub fn pose(id: u32, model: &str, living: &LivingRenderState, age: f32, now: f64
     state.clock = now;
     let State { npcs, actions, scenes, .. } = &mut *state;
     // The editor's preview: only the animation being made, at the editor's time.
-    if let Some((anim, t, _)) = crate::editor::preview(id, now) {
-        let (t, _) = anim.local_time(t);
-        let mut cx = MapContext::default();
-        cx.queries.insert("anim_time".into(), t);
-        return full_of(anim.sample(t, &mut cx)).into_iter().map(|(k, v)| (k.to_ascii_lowercase(), v)).collect();
+    if let Some(p) = crate::editor::preview(id, now) {
+        npcs.entry(id).or_default().body_rot = living.body_rot;
+        npcs.entry(id).or_default().last_frame = now;
+        return anim_pose(&p.anim, p.time);
     }
     let npc = npcs.entry(id).or_default();
     npc.model = model.to_string();
@@ -444,25 +443,44 @@ pub fn tick(host: &mut dyn ClientHost) {
         }
     }
     for (id, model, body_rot, pose, kind, shift) in fire {
-        let Some(entity) = host.entity(id) else { continue };
-        let Some(at) = entity.position(&*host) else { continue };
-        let at = [at[0] + shift[0] as f64, at[1] + shift[1] as f64, at[2] + shift[2] as f64];
-        match kind {
-            EffectKind::Sound(sound) => {
-                host.play_local_sound(&SoundPlay::at(&sound, SoundSource::Neutral, at), 0);
-            }
-            EffectKind::Particle(particle, locator) => {
-                let Some(key) = PARTICLE_KEYS.get().and_then(|k| k.get(particle.as_str())) else {
-                    eprintln!("[projectfelix] particle {particle} is not one an animation can use");
-                    continue;
-                };
-                let offset = locator.and_then(|l| locator_offset(&model, &l, &pose, body_rot)).unwrap_or([0.0; 3]);
-                let p = [at[0] + offset[0] as f64, at[1] + offset[1] as f64, at[2] + offset[2] as f64];
-                host.add_particle(&ParticleOptions::simple(*key), p, [0.0; 3]);
-            }
-            EffectKind::Script(_) => {}
-        }
+        play_effect(host, id, &model, body_rot, &pose, &kind, shift);
     }
+}
+
+/// Plays a sound or shows a particle of an animation on NPC `id` (drawn with `model`, turned
+/// by `body_rot`, posed by `pose`), `shift` blocks from its feet.
+pub fn play_effect(host: &mut dyn ClientHost, id: u32, model: &str, body_rot: f32, pose: &HashMap<String, Full>, kind: &EffectKind, shift: [f32; 3]) {
+    let Some(entity) = host.entity(id) else { return };
+    let Some(at) = entity.position(&*host) else { return };
+    let at = [at[0] + shift[0] as f64, at[1] + shift[1] as f64, at[2] + shift[2] as f64];
+    match kind {
+        EffectKind::Sound(sound) => {
+            host.play_local_sound(&SoundPlay::at(sound, SoundSource::Neutral, at), 0);
+        }
+        EffectKind::Particle(particle, locator) => {
+            let Some(key) = PARTICLE_KEYS.get().and_then(|k| k.get(particle.as_str())) else {
+                eprintln!("[projectfelix] particle {particle} is not one an animation can use");
+                return;
+            };
+            let offset = locator.as_ref().and_then(|l| locator_offset(model, l, pose, body_rot)).unwrap_or([0.0; 3]);
+            let p = [at[0] + offset[0] as f64, at[1] + offset[1] as f64, at[2] + offset[2] as f64];
+            host.add_particle(&ParticleOptions::simple(*key), p, [0.0; 3]);
+        }
+        EffectKind::Script(_) => {}
+    }
+}
+
+/// The bones of `anim` at `t` seconds, by lowercase name.
+pub fn anim_pose(anim: &Animation, t: f32) -> HashMap<String, Full> {
+    let (t, _) = anim.local_time(t);
+    let mut cx = MapContext::default();
+    cx.queries.insert("anim_time".into(), t);
+    full_of(anim.sample(t, &mut cx)).into_iter().map(|(k, v)| (k.to_ascii_lowercase(), v)).collect()
+}
+
+/// How NPC `id`'s body was turned when last drawn.
+pub fn body_rot(id: u32) -> f32 {
+    STATE.lock().ok().and_then(|s| s.npcs.get(&id).map(|n| n.body_rot)).unwrap_or(0.0)
 }
 
 /// Where locator `name` is now, in blocks from the entity's feet, the model turned as the renderer turns it.

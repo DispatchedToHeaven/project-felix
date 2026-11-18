@@ -418,6 +418,15 @@ fn poly_mesh(m: &Map<String, Value>, tw: f32, th: f32, out: &mut Vec<Quad>) -> R
             vertices[3] = vertices[2];
         }
         let len = dot(normal, normal).sqrt();
+        // Faces are drawn from the side their corners go round counterclockwise (as the cubes'
+        // faces are); a face whose corners go the other way round its normals is turned over.
+        if len > 0.0 && dot(cross(sub(vertices[1].pos, vertices[0].pos), sub(vertices[2].pos, vertices[0].pos)), normal) < 0.0 {
+            vertices = if poly.len() == 3 {
+                [vertices[0], vertices[2], vertices[1], vertices[1]]
+            } else {
+                [vertices[0], vertices[3], vertices[2], vertices[1]]
+            };
+        }
         out.push(Quad { vertices, normal: if len > 0.0 { scale(normal, 1.0 / len) } else { face_normal(&vertices) } });
     }
     Ok(())

@@ -117,6 +117,33 @@ impl EditAnim {
         }
     }
 
+    /// Adds a sound or a particle at `time`.
+    pub fn add_effect(&mut self, time: f32, kind: anim::EffectKind) {
+        let time = snap(time).clamp(0.0, self.length);
+        self.effects.push(Effect { time, kind });
+        self.effects.sort_by(|a, b| a.time.total_cmp(&b.time));
+    }
+
+    /// Removes every sound and particle at `time`; true if there were any.
+    pub fn remove_effects_at(&mut self, time: f32) -> bool {
+        let before = self.effects.len();
+        self.effects.retain(|e| !same(e.time, time) || matches!(e.kind, anim::EffectKind::Script(_)));
+        before != self.effects.len()
+    }
+
+    /// The effects at `time`, as short text for the editor.
+    pub fn effects_at(&self, time: f32) -> Vec<String> {
+        self.effects
+            .iter()
+            .filter(|e| same(e.time, time))
+            .filter_map(|e| match &e.kind {
+                anim::EffectKind::Sound(s) => Some(format!("sound {}", s.trim_start_matches("minecraft:"))),
+                anim::EffectKind::Particle(p, l) => Some(format!("particle {}{}", p.trim_start_matches("minecraft:"), l.as_ref().map(|l| format!(" @{l}")).unwrap_or_default())),
+                anim::EffectKind::Script(_) => None,
+            })
+            .collect()
+    }
+
     /// Every keyframe time of `bone` (any channel), for the timeline.
     pub fn times(&self, bone: &str) -> Vec<f32> {
         let mut t: Vec<f32> = self.track(bone).map(|t| t.channels.iter().flatten().map(|k| k.time).collect()).unwrap_or_default();
@@ -304,6 +331,18 @@ mod tests {
         assert_eq!(a.value_at("rightArm", 0, 0.9)[0], 0.0);
         assert!(a.remove_key("rightArm", 0, 1.0));
         assert_eq!(a.times("rightArm"), vec![0.0]);
+    }
+
+    #[test]
+    fn effects_round_trip() {
+        let mut a = EditAnim::new("animation.t.fx");
+        a.add_effect(0.52, anim::EffectKind::Sound("minecraft:entity.villager.yes".into()));
+        a.add_effect(1.0, anim::EffectKind::Particle("minecraft:heart".into(), Some("hand".into())));
+        assert_eq!(a.effects_at(0.5), vec!["sound entity.villager.yes"]);
+        let back = EditAnim::from_animation(&anim::parse(a.to_bedrock().as_bytes()).unwrap()[0]);
+        assert_eq!(back.effects_at(1.0), vec!["particle heart @hand"]);
+        assert!(a.remove_effects_at(0.5));
+        assert!(a.effects_at(0.5).is_empty());
     }
 
     #[test]

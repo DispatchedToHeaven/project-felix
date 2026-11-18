@@ -153,6 +153,7 @@ pub fn register(r: &mut dyn Registrar) {
     let mut handlers = r.payload_handlers();
     let mut reg = handlers.registrar("1");
     reg.play_to_client(mod_api::PayloadId(EDIT.into()), Some(std::sync::Arc::new(crate::editor::OpenHandler)));
+    reg.play_to_server(mod_api::PayloadId(crate::editor::SET_LOOK.into()), std::sync::Arc::new(SetLook));
 }
 
 /// Server level tick: reads the orders of NPCs the goals asked about, and points guards at the
@@ -300,6 +301,29 @@ pub fn open_editor(host: &mut dyn ServerHost, npc: EntityRef, player: mod_api::P
     let name = name.unwrap_or_else(|| format!("animation.{short}.custom"));
     let body = crate::serde_json::json!({ "npc": npc.id(), "name": name }).to_string();
     let _ = player.send_payload(host, &mod_api::PayloadId(EDIT.into()), mod_api::PayloadBytes(body.into_bytes()));
+}
+
+/// The editor's "Use on NPC": its owner (or anyone, for an NPC without one) gives it a model and texture.
+struct SetLook;
+
+impl mod_api::IPayloadHandler for SetLook {
+    fn handle(&self, payload: mod_api::PayloadBytes, context: &mut dyn mod_api::IPayloadContext) -> Result<(), String> {
+        let Ok(player) = context.player() else { return Ok(()) };
+        let Ok(host) = context.server_host() else { return Ok(()) };
+        let Ok(v) = crate::serde_json::from_slice::<crate::serde_json::Value>(&payload.0) else { return Ok(()) };
+        let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
+        let (Some(model), Some(texture)) = (s("model"), s("texture")) else { return Ok(()) };
+        let id = v.get("npc").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+        let Some(npc) = host.entity(id).filter(|e| is_npc(&*host, *e)) else { return Ok(()) };
+        let owner = LivingRef::new(npc).owner(&*host);
+        if owner.is_some() && owner != Some(player.uuid()) {
+            let _ = player.action_bar(host, Text::literal("Only its owner can change how this NPC looks."));
+            return Ok(());
+        }
+        let _ = LOOK.set(host, Holder::Entity(id), Some(Look { model: model.clone(), texture }));
+        let _ = player.action_bar(host, Text::literal(format!("The NPC now looks like {model}.")));
+        Ok(())
+    }
 }
 
 // ---- commands -----------------------------------------------------------------------------------
