@@ -41,6 +41,12 @@ impl EntityRenderer for NpcRenderer {
         if let Some((yaw, _)) = &court {
             living.body_rot = *yaw;
         }
+        // In the editor the NPC holds still, turned as the view asks, its head straight.
+        if let Some((_, _, turn)) = crate::editor::preview(entity.id, now) {
+            living.body_rot += turn;
+            living.y_rot = 0.0;
+            living.x_rot = 0.0;
+        }
         let pose = runtime::pose(entity.id, &look.model, &living, entity.age, now);
         let mut root = model.root.clone();
         apply(&mut root, &pose);

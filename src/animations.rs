@@ -11,10 +11,23 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
 
 static ANIMATIONS: LazyLock<RwLock<HashMap<String, Arc<Animation>>>> = LazyLock::new(Default::default);
+/// Animations the editor saved (`horizon-mod-data/projectfelix/animations/`): kept across
+/// resource reloads, and they win over a pack's of the same name.
+static SAVED: LazyLock<RwLock<HashMap<String, Arc<Animation>>>> = LazyLock::new(Default::default);
 
 /// The animation `name`, if one loaded.
 pub fn get(name: &str) -> Option<Arc<Animation>> {
+    if let Some(a) = SAVED.read().ok().and_then(|s| s.get(name).cloned()) {
+        return Some(a);
+    }
     ANIMATIONS.read().ok()?.get(name).cloned()
+}
+
+/// An animation the editor saved, playable at once.
+pub fn insert_saved(a: Animation) {
+    if let Ok(mut s) = SAVED.write() {
+        s.insert(a.name.clone(), Arc::new(a));
+    }
 }
 
 struct Listener;

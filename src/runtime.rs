@@ -297,6 +297,13 @@ pub fn pose(id: u32, model: &str, living: &LivingRenderState, age: f32, now: f64
     let Ok(mut state) = STATE.lock() else { return HashMap::new() };
     state.clock = now;
     let State { npcs, actions, scenes, .. } = &mut *state;
+    // The editor's preview: only the animation being made, at the editor's time.
+    if let Some((anim, t, _)) = crate::editor::preview(id, now) {
+        let (t, _) = anim.local_time(t);
+        let mut cx = MapContext::default();
+        cx.queries.insert("anim_time".into(), t);
+        return full_of(anim.sample(t, &mut cx)).into_iter().map(|(k, v)| (k.to_ascii_lowercase(), v)).collect();
+    }
     let npc = npcs.entry(id).or_default();
     npc.model = model.to_string();
     npc.body_rot = living.body_rot;

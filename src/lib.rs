@@ -14,8 +14,11 @@
 //!   them at an NPC's table on the server, `game_screen` is the board on the client.
 //! - `sports` are the ball games' rules (no mod API types); `matches` runs them on the server,
 //!   `sports_client` takes the keys and draws the HUD, the court and the ball.
+//! - `anim_edit` is an animation as the editor holds it (no mod API types); `editor` is the
+//!   animation editor in the world.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
+    ScreenKeyPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
     AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
     Host, HostSide, InteractionKeyMappingTriggeredEvent, InteractionResult, LevelTickPostEvent, RegisterCommandsEvent,
     RegisterEntityRenderersEvent, Registrar, RegistrationContext, RunModCommandEvent, ScreenMouseButtonPressedPreEvent,
@@ -25,11 +28,13 @@ use mod_api::{
 pub use mod_api::serde_json;
 
 pub mod anim;
+pub mod anim_edit;
 pub mod checkers;
 pub mod chess;
 pub mod animations;
 pub mod companion;
 pub mod dialog;
+pub mod editor;
 pub mod game_screen;
 pub mod games;
 pub mod geo;
@@ -120,21 +125,45 @@ impl Hooks for Felix {
     }
 
     fn screen_render_post(&self, host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
+        if editor::active() {
+            editor::render(host, e);
+            return;
+        }
         game_screen::render(host, e);
         menu::render(host, e);
     }
 
     fn screen_mouse_button_pressed_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
+        if editor::active() {
+            return editor::mouse_pressed(host, e);
+        }
         match game_screen::mouse_pressed(host, e) {
             Flow::Cancel => Flow::Cancel,
             _ => menu::mouse_pressed(host, e),
         }
     }
 
+    fn screen_mouse_dragged_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseDraggedPreEvent<'_>) -> Flow {
+        if editor::active() { editor::mouse_dragged(host, e) } else { Flow::Continue }
+    }
+
+    fn screen_mouse_button_released_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseButtonReleasedPreEvent<'_>) -> Flow {
+        if editor::active() { editor::mouse_released(host, e) } else { Flow::Continue }
+    }
+
+    fn screen_mouse_scrolled_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseScrolledPreEvent<'_>) -> Flow {
+        if editor::active() { editor::mouse_scrolled(host, e) } else { Flow::Continue }
+    }
+
+    fn screen_key_pressed_pre(&self, host: &dyn ClientHost, e: &mut ScreenKeyPressedPreEvent<'_>) -> Flow {
+        if editor::active() { editor::key_pressed(host, e) } else { Flow::Continue }
+    }
+
     fn client_tick_post(&self, host: &mut dyn ClientHost, _e: &mut ClientTickPostEvent) {
         runtime::tick(host);
         menu::tick(host);
         game_screen::tick(host);
+        editor::tick(host);
         sports_client::tick(host);
     }
 }

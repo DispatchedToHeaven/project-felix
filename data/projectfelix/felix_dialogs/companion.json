@@ -10,6 +10,7 @@
         { "text": "Who are you?", "goto": "about" },
         { "text": "Got anything for me?", "if": { "not": { "tag": "felix_gift" } }, "goto": "gift" },
         { "text": "Say hi!", "actions": [ { "animation": "animation.felix.wave" } ] },
+        { "text": "Hold still, I'll animate you.", "if": { "owner": true }, "actions": [ { "edit_animation": true } ] },
         { "text": "Show me a chess game.", "if": { "game": "none" }, "actions": [ { "scene": "projectfelix:chess" } ] },
         { "text": "Let's play.", "if": { "game": "none" }, "goto": "games" },
         { "text": "Fancy a ball game?", "if": { "game": "none" }, "goto": "sports" },

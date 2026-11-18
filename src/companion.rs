@@ -150,6 +150,9 @@ fn orders_of(id: u32) -> Option<Orders> {
 pub fn register(r: &mut dyn Registrar) {
     let _ = NPC_KEY.set(r.entity_type_key(NPC));
     r.entity_part(NPC, CompanionGoals);
+    let mut handlers = r.payload_handlers();
+    let mut reg = handlers.registrar("1");
+    reg.play_to_client(mod_api::PayloadId(EDIT.into()), Some(std::sync::Arc::new(crate::editor::OpenHandler)));
 }
 
 /// Server level tick: reads the orders of NPCs the goals asked about, and points guards at the
@@ -287,6 +290,18 @@ impl Goal for KeepPost {
     }
 }
 
+/// Client to server: nothing; server to client: open the editor on an NPC (JSON: npc, name).
+pub const EDIT: &str = "projectfelix:edit";
+
+/// Opens the animation editor for `player` on `npc`, with `name` or the model's `custom`.
+pub fn open_editor(host: &mut dyn ServerHost, npc: EntityRef, player: mod_api::PlayerRef, name: Option<String>) {
+    let model = LOOK.get(host, Holder::Entity(npc.id())).ok().flatten().map(|l| l.model).unwrap_or(DEFAULT_MODEL.into());
+    let short = model.rsplit(':').next().unwrap_or("felix").to_string();
+    let name = name.unwrap_or_else(|| format!("animation.{short}.custom"));
+    let body = crate::serde_json::json!({ "npc": npc.id(), "name": name }).to_string();
+    let _ = player.send_payload(host, &mod_api::PayloadId(EDIT.into()), mod_api::PayloadBytes(body.into_bytes()));
+}
+
 // ---- commands -----------------------------------------------------------------------------------
 
 pub fn register_commands(e: &mut RegisterCommandsEvent<'_>) {
@@ -295,6 +310,7 @@ pub fn register_commands(e: &mut RegisterCommandsEvent<'_>) {
     e.commands.push(Command::op("felix order <targets:entities> <order:word>", 2));
     e.commands.push(Command::op("felix dialog <targets:entities> <dialog:text>", 2));
     e.commands.push(Command::op("felix scene <targets:entities> <scene:text>", 2));
+    e.commands.push(Command::op("felix edit <target:entity> [name:word]", 2));
 }
 
 fn uuid_tag(uuid: u128) -> Tag {
@@ -387,6 +403,23 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
             }
             let note = if crate::talk::dialog_exists(&id) { "" } else { " (no such dialog is loaded yet)" };
             feedback(host, format!("{n} NPCs now speak {id}{note}"));
+        }
+        ["felix", "edit"] => {
+            let CommandSource::Player { player, .. } = e.source else {
+                feedback(host, "Only a player can edit.".into());
+                return Flow::Cancel;
+            };
+            let player = *player;
+            let target = e.command.arguments.iter().find(|a| a.name == "target").and_then(|a| match &a.value {
+                CommandArgumentValue::Entity(t) => Some(*t),
+                CommandArgumentValue::Entities(l) => l.first().copied(),
+                _ => None,
+            });
+            let Some(target) = target.filter(|t| is_npc(&*host, *t)) else {
+                feedback(host, "That is not an NPC.".into());
+                return Flow::Cancel;
+            };
+            open_editor(host, target, player, text_argument(e, "name"));
         }
         ["felix", "scene"] => {
             let id = text_argument(e, "scene").unwrap_or_default().trim().to_string();

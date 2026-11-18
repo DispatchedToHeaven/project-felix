@@ -25,7 +25,8 @@
 //! `animation` (played on the NPC), `order` (`follow`, `wait`, `guard`), `sound` (at the NPC),
 //! `scene` (a scene from `felix_scenes`, played by the NPC), `game` (`chess` or `checkers`, with
 //! `vs`: `npc` or `player`), `join_game` (take the free seat), `open_game` (the board, to play or watch),
-//! `sport` (`table_tennis`, `tennis` or `basketball`, against the NPC).
+//! `sport` (`table_tennis`, `tennis` or `basketball`, against the NPC), `edit_animation` (opens the
+//! animation editor on the NPC, with an animation name or `animation.<model>.custom`).
 //! `@player` is the player's name; `@npc` is the NPC's name in texts and its UUID in commands.
 //! No mod API types here.
 
@@ -80,6 +81,7 @@ pub enum Action {
     Scene(String),
     Game(String, bool),
     Sport(String),
+    EditAnimation(Option<String>),
     JoinGame,
     OpenGame,
 }
@@ -135,7 +137,7 @@ pub fn commands(action: &Action, player: &str, npc: &str) -> Vec<String> {
         Action::Tag(t) => vec![format!("tag {player} add {t}")],
         Action::Untag(t) => vec![format!("tag {player} remove {t}")],
         Action::Sound(s) => vec![format!("execute as {npc} at @s run playsound {s} neutral @a ~ ~ ~")],
-        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::JoinGame | Action::OpenGame => Vec::new(),
+        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame => Vec::new(),
     }
 }
 
@@ -257,6 +259,8 @@ pub fn read_actions(v: Option<&Value>) -> Result<Vec<Action>, String> {
                 Action::Game(g, m.get("vs").and_then(Value::as_str) != Some("player"))
             } else if let Some(sp) = s("sport") {
                 Action::Sport(sp)
+            } else if let Some(v) = m.get("edit_animation") {
+                Action::EditAnimation(v.as_str().map(str::to_string))
             } else if m.contains_key("join_game") {
                 Action::JoinGame
             } else if m.contains_key("open_game") {

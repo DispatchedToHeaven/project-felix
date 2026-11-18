@@ -305,6 +305,11 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
                     eprintln!("[projectfelix] sport: {e}");
                 }
             }
+            Action::EditAnimation(name) => {
+                if let Some(p) = player {
+                    crate::companion::open_editor(host, npc, p, name.clone());
+                }
+            }
             Action::JoinGame => {
                 if let Some(p) = player
                     && let Err(e) = crate::games::join(host, npc, p)
