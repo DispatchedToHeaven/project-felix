@@ -72,6 +72,14 @@ impl EntityRenderer for NpcRenderer {
         // Look where the head looks, on top of what the animations do. A texture the atlas
         // doesn't have: the model's usual one, then the default NPC's.
         let head = Some([living.y_rot, living.x_rot]);
+        // An NPC made in the game: its skin as texel quads, once the server has sent it.
+        if let Some(id) = look.texture.strip_prefix("felixnpc:")
+            && let Some(texels) = crate::skins::texels(&look.model, &model, id, now)
+            && models::draw_texels(draw, &model, &pose, head, &texels, tint)
+        {
+            draw.pop();
+            return Ok(());
+        }
         if !models::draw(draw, &model, &pose, head, &look.texture, tint) && !models::draw(draw, &model, &pose, head, &Look::of_model(&look.model).texture, tint) {
             models::draw(draw, &model, &pose, head, &Look::of_model(DEFAULT_MODEL).texture, tint);
         }

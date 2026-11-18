@@ -175,7 +175,7 @@ impl Editor {
     }
 }
 
-fn read_folder(host: &dyn ClientHost, folder: &str, mut each: impl FnMut(&str, Vec<u8>)) {
+pub(crate) fn read_folder(host: &dyn ClientHost, folder: &str, mut each: impl FnMut(&str, Vec<u8>)) {
     let files = host.data_files();
     let Ok(dir) = ConfigPath::new(folder) else { return };
     let mut after: Option<String> = None;

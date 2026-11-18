@@ -49,6 +49,14 @@ pub static DIALOG: AttachmentType<Option<String>> = AttachmentType {
 };
 
 static DIALOGS: LazyLock<Mutex<HashMap<String, Arc<Dialog>>>> = LazyLock::new(Default::default);
+/// Dialogs of NPCs made in the game (`felixnpc:<id>`), kept across data reloads.
+static EXTRA: LazyLock<Mutex<HashMap<String, Arc<Dialog>>>> = LazyLock::new(Default::default);
+
+pub fn set_extra_dialog(name: &str, d: Dialog) {
+    if let Ok(mut e) = EXTRA.lock() {
+        e.insert(name.to_string(), Arc::new(d));
+    }
+}
 
 /// A player's conversation: with whom, which dialog, where in it, and which options they see.
 struct Session {
@@ -94,7 +102,7 @@ pub fn add_listener(e: &mut AddServerReloadListenersEvent<'_>) {
 }
 
 pub fn dialog_exists(id: &str) -> bool {
-    DIALOGS.lock().is_ok_and(|d| d.contains_key(id))
+    DIALOGS.lock().is_ok_and(|d| d.contains_key(id)) || EXTRA.lock().is_ok_and(|d| d.contains_key(id))
 }
 
 struct OnServer(fn(&mut dyn ServerHost, PlayerRef, &[u8]));
@@ -214,7 +222,8 @@ fn talk(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
     let Some(id) = read_id(b) else { return };
     let Some(npc) = npc_near(host, player, id) else { return };
     let chosen = DIALOG.get(host, Holder::Entity(id)).ok().flatten().unwrap_or_else(|| DEFAULT_DIALOG.into());
-    let found = DIALOGS.lock().ok().and_then(|d| d.get(&chosen).or_else(|| d.get(DEFAULT_DIALOG)).cloned());
+    let extra = EXTRA.lock().ok().and_then(|e| e.get(&chosen).cloned());
+    let found = extra.or_else(|| DIALOGS.lock().ok().and_then(|d| d.get(&chosen).or_else(|| d.get(DEFAULT_DIALOG)).cloned()));
     let Some(dialog) = found else {
         eprintln!("[projectfelix] no dialog {chosen} and no {DEFAULT_DIALOG}");
         return;

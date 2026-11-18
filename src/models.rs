@@ -67,6 +67,13 @@ pub fn load(bytes: &[u8]) -> Result<LoadedModel, String> {
     Ok(build(m))
 }
 
+/// A model under the id `id` (an NPC's own: `npc:<id>`).
+pub fn insert_named(id: &str, m: LoadedModel) {
+    if let Ok(mut s) = SAVED.write() {
+        s.insert(id.to_string(), Arc::new(m));
+    }
+}
+
 /// A model of the player's own, `user:<name>`.
 pub fn insert_saved(name: &str, m: LoadedModel) {
     if let Ok(mut s) = SAVED.write() {
@@ -134,6 +141,56 @@ fn draw_bone(draw: &mut dyn BlockEntityDrawContext, m: &LoadedModel, i: usize, p
     }
     for &c in &b.children {
         draw_bone(draw, m, c, pose, look, texture, tint, ok);
+    }
+    draw.pop();
+}
+
+/// The white sprite texel quads are drawn with, tinted.
+pub const WHITE: &str = "projectfelix:entity/white";
+
+/// Draws `model` posed by `pose` as `draw` does, its faces as the coloured texel quads of a
+/// skin (`texels`, a list a bone in bone order) instead of a texture.
+pub fn draw_texels(draw: &mut dyn BlockEntityDrawContext, model: &LoadedModel, pose: &HashMap<String, Full>, look: Option<[f32; 2]>, texels: &[Vec<crate::skin::Texel>], light: u32) -> bool {
+    let mut ok = true;
+    for &r in &model.roots {
+        texel_bone(draw, model, r, pose, look, texels, light, &mut ok);
+    }
+    ok
+}
+
+#[allow(clippy::too_many_arguments)]
+fn texel_bone(draw: &mut dyn BlockEntityDrawContext, m: &LoadedModel, i: usize, pose: &HashMap<String, Full>, look: Option<[f32; 2]>, texels: &[Vec<crate::skin::Texel>], tint: u32, ok: &mut bool) {
+    let b = &m.bones[i];
+    let f = pose.get(&b.lower).copied().unwrap_or_default();
+    draw.push();
+    draw.translate([(b.offset[0] + f.position[0]) / 16.0, (b.offset[1] + f.position[1]) / 16.0, (b.offset[2] + f.position[2]) / 16.0]);
+    let mut r = [b.rest[0] + f.rotation[0], b.rest[1] + f.rotation[1], b.rest[2] + f.rotation[2]];
+    if let Some([yaw, pitch]) = look.filter(|_| b.lower == "head") {
+        r[1] += yaw.to_radians();
+        r[0] -= pitch.to_radians();
+    }
+    for (axis, angle) in [([0.0, 0.0, 1.0], r[2]), ([0.0, 1.0, 0.0], r[1]), ([1.0, 0.0, 0.0], r[0])] {
+        if angle != 0.0 {
+            draw.rotate_about(axis, angle.to_degrees(), [0.0; 3]);
+        }
+    }
+    if f.scale != [1.0; 3] {
+        draw.scale(f.scale);
+    }
+    // A hurt NPC is drawn redder: the tint multiplies each texel's colour.
+    let mul = |c: u32| {
+        let ch = |shift: u32| (((c >> shift) & 0xFF) * ((tint >> shift) & 0xFF) / 255) << shift;
+        ch(16) | ch(8) | ch(0)
+    };
+    for t in texels.get(i).map(|v| v.as_slice()).unwrap_or(&[]) {
+        let c = t.corners.map(|p| [p[0] / 16.0, p[1] / 16.0, p[2] / 16.0]);
+        if !draw.quad(WHITE, c, [0.0, 0.0, 1.0, 1.0], mul(t.rgb)) {
+            *ok = false;
+            break;
+        }
+    }
+    for &c in &b.children {
+        texel_bone(draw, m, c, pose, look, texels, tint, ok);
     }
     draw.pop();
 }

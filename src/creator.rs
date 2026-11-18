@@ -1,0 +1,532 @@
+//! The NPC maker, in the world (`/felix create`, or `/felix npc edit <id>` for one already made):
+//! a name, a model, a skin of the player's own, a greeting and up to four topics the player can
+//! ask about. Skins are PNG files in `horizon-mod-data/projectfelix/skins/` on the player's side;
+//! models of the player's own (`user:<name>`) go into the NPC's file, so everyone sees them.
+//!
+//! Click a field to type in it; Tab and Enter go to the next one, Ctrl+V pastes, Escape closes.
+use crate::companion::DEFAULT_MODEL;
+use crate::custom::SAVE;
+use crate::models;
+use crate::profile::{self, Profile};
+use mod_api::{
+    ClientHost, ConfigPath, DrawContext, Flow, IPayloadContext, IPayloadHandler, PayloadBytes, PayloadId,
+    ScreenCharTypedPreEvent, ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent, ScreenMouseScrolledPreEvent,
+    ScreenRenderPostEvent, SoundPlay,
+};
+use std::sync::{Arc, LazyLock, Mutex};
+
+const SCREEN: &str = "projectfelix";
+const SKINS: &str = "skins";
+const TOPICS: usize = 4;
+const FIELDS: usize = 2 + TOPICS * 2;
+/// A save's file must fit one packet to the server.
+const MAX_FILE: usize = 32_000;
+/// The model choice that keeps an NPC's own model (one it was imported with).
+const OWN_MODEL: &str = "(its own model)";
+/// The skin choice that keeps the skin the NPC has.
+const KEPT_SKIN: &str = "(the skin it has)";
+const NO_SKIN: &str = "(the model's texture)";
+const W: f32 = 330.0;
+const ROW: f32 = 14.0;
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Do {
+    Field(usize),
+    Model,
+    Skin,
+    Save(bool),
+    Close,
+}
+
+struct Skin {
+    name: String,
+    png: Vec<u8>,
+    image: Arc<(u32, u32, Vec<u8>)>,
+}
+
+struct Creator {
+    /// The id of the NPC being changed; a new one's id comes from its name.
+    editing: Option<String>,
+    fields: Vec<String>,
+    focus: Option<usize>,
+    models: Vec<String>,
+    model: usize,
+    own_model: Option<Vec<u8>>,
+    skins: Vec<Skin>,
+    /// 0: none (or the kept one, when `kept` is set); then `skins`.
+    skin: usize,
+    kept: Option<Skin>,
+    buttons: Vec<([f32; 4], Do)>,
+    status: String,
+    shown: bool,
+    close: bool,
+    outbox: Vec<Vec<u8>>,
+}
+
+static CREATOR: LazyLock<Mutex<Option<Creator>>> = LazyLock::new(Default::default);
+
+pub fn active() -> bool {
+    CREATOR.lock().is_ok_and(|c| c.is_some())
+}
+
+fn label(i: usize) -> String {
+    match i {
+        0 => "Name".into(),
+        1 => "Greeting".into(),
+        i if (i - 2) % 2 == 0 => format!("Ask {}", (i - 2) / 2 + 1),
+        _ => "Answer".into(),
+    }
+}
+
+fn max_len(i: usize) -> usize {
+    if i == 0 { 32 } else { 160 }
+}
+
+fn read_skins(host: &dyn ClientHost) -> Vec<Skin> {
+    let mut out = Vec::new();
+    crate::editor::read_folder(host, SKINS, |name, png| {
+        if !name.to_ascii_lowercase().ends_with(".png") {
+            return;
+        }
+        match crate::image::decode_png(&png) {
+            Ok(img) if img.0 <= 256 && img.1 <= 256 => out.push(Skin { name: name.to_string(), png, image: Arc::new(img) }),
+            Ok(_) => eprintln!("[projectfelix] skin {name} is over 256 x 256"),
+            Err(e) => eprintln!("[projectfelix] skin {name}: {e}"),
+        }
+    });
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// `npc_open` from the server: open the maker, blank or on an NPC's file.
+pub struct OpenHandler;
+
+impl IPayloadHandler for OpenHandler {
+    fn handle(&self, payload: PayloadBytes, context: &mut dyn IPayloadContext) -> Result<(), String> {
+        let Ok(host) = context.client_host() else { return Ok(()) };
+        crate::editor::load_saved(&*host);
+        let editing = if payload.0.is_empty() { None } else { Profile::unpack(&payload.0, &crate::image::inflate).ok() };
+        let mut models: Vec<String> = models::list().into_iter().filter(|m| !m.starts_with("npc:")).collect();
+        let mut fields = vec![String::new(); FIELDS];
+        fields[1] = "Hello, @player!".into();
+        let mut kept = None;
+        let mut own_model = None;
+        let mut model = models.iter().position(|m| m == DEFAULT_MODEL).unwrap_or(0);
+        if let Some(p) = &editing {
+            fields[0] = p.name.clone();
+            fields[1] = p.greeting.clone();
+            for (k, (ask, answer)) in p.topics.iter().take(TOPICS).enumerate() {
+                fields[2 + k * 2] = ask.clone();
+                fields[3 + k * 2] = answer.clone();
+            }
+            if let Ok(img) = crate::image::decode_png(&p.skin) {
+                kept = Some(Skin { name: KEPT_SKIN.into(), png: p.skin.clone(), image: Arc::new(img) });
+            }
+            if let Some(m) = &p.model_file {
+                own_model = Some(m.clone());
+                models.insert(0, OWN_MODEL.into());
+                model = 0;
+            } else if let Some(i) = models.iter().position(|m| *m == p.model) {
+                model = i;
+            }
+        }
+        crate::menu::yield_screen();
+        let shown = host.mod_screen() == Some(SCREEN) || host.mod_screen_open(SCREEN);
+        let skins = read_skins(&*host);
+        let status = if skins.is_empty() && kept.is_none() {
+            "Put PNG skins in horizon-mod-data/projectfelix/skins/".to_string()
+        } else {
+            format!("{} skins in horizon-mod-data/projectfelix/skins/", skins.len())
+        };
+        let c = Creator {
+            editing: editing.as_ref().map(|p| p.id.clone()),
+            fields,
+            focus: Some(0),
+            models,
+            model,
+            own_model,
+            skin: if kept.is_some() || skins.is_empty() { 0 } else { 1 },
+            skins,
+            kept,
+            buttons: Vec::new(),
+            status,
+            shown,
+            close: false,
+            outbox: Vec::new(),
+        };
+        if let Ok(mut lock) = CREATOR.lock() {
+            *lock = Some(c);
+        }
+        Ok(())
+    }
+}
+
+impl Creator {
+    fn skin(&self) -> Option<&Skin> {
+        if self.skin == 0 { self.kept.as_ref() } else { self.skins.get(self.skin - 1) }
+    }
+
+    fn skin_name(&self) -> &str {
+        match self.skin() {
+            Some(s) => &s.name,
+            None => NO_SKIN,
+        }
+    }
+
+    fn model_name(&self) -> &str {
+        self.models.get(self.model).map(String::as_str).unwrap_or(DEFAULT_MODEL)
+    }
+
+    fn profile(&self, host: &dyn ClientHost) -> Result<Profile, String> {
+        let name = self.fields[0].trim();
+        if name.is_empty() {
+            return Err("Give it a name".into());
+        }
+        let mut p = Profile::new(name);
+        if let Some(id) = &self.editing {
+            p.id = id.clone();
+        }
+        p.greeting = self.fields[1].trim().to_string();
+        p.topics = (0..TOPICS)
+            .map(|k| (self.fields[2 + k * 2].trim().to_string(), self.fields[3 + k * 2].trim().to_string()))
+            .filter(|(ask, _)| !ask.is_empty())
+            .map(|(ask, answer)| (ask, if answer.is_empty() { "...".into() } else { answer }))
+            .collect();
+        let model = self.model_name();
+        if model == OWN_MODEL {
+            p.model_file = self.own_model.clone();
+        } else if let Some(user) = model.strip_prefix("user:") {
+            // The player's own model goes into the file: the server and the others lack it.
+            let file = ConfigPath::new(&format!("models/{user}.geo.json")).map_err(|e| format!("{e:?}"))?;
+            p.model_file = Some(host.data_files().read(&file).map_err(|e| format!("model {user}: {e:?}"))?);
+        } else {
+            p.model = model.to_string();
+        }
+        if let Some(s) = self.skin() {
+            p.skin = s.png.clone();
+        }
+        Ok(p)
+    }
+
+    fn save(&mut self, host: &dyn ClientHost, spawn: bool) {
+        match self.profile(host) {
+            Ok(p) => {
+                let file = p.pack(&crate::image::crc32);
+                if file.len() > MAX_FILE {
+                    self.status = format!("Too big: {} KB of {} KB (a smaller skin or model)", file.len() / 1024, MAX_FILE / 1024);
+                    return;
+                }
+                let mut bytes = vec![u8::from(spawn)];
+                bytes.extend(file);
+                self.outbox.push(bytes);
+                self.status = format!("Sent {} ({})", p.name, p.id);
+                self.editing = Some(p.id);
+                if spawn {
+                    self.close = true;
+                }
+            }
+            Err(e) => self.status = e,
+        }
+    }
+}
+
+/// The client tick: sends what was saved, and forgets the maker once its screen is closed.
+pub fn tick(host: &mut dyn ClientHost) {
+    let (out, close) = {
+        let Ok(mut lock) = CREATOR.lock() else { return };
+        let Some(c) = lock.as_mut() else { return };
+        let out = std::mem::take(&mut c.outbox);
+        let close = c.close;
+        if close || (c.shown && host.mod_screen() != Some(SCREEN)) {
+            *lock = None;
+        } else if !c.shown && host.mod_screen() == Some(SCREEN) {
+            c.shown = true;
+        }
+        (out, close)
+    };
+    for bytes in out {
+        let _ = host.send_payload_to_server(&PayloadId(SAVE.into()), PayloadBytes(bytes));
+    }
+    if close {
+        host.mod_screen_close(SCREEN);
+    }
+}
+
+fn inside(r: [f32; 4], at: [f32; 2]) -> bool {
+    at[0] >= r[0] && at[0] < r[0] + r[2] && at[1] >= r[1] && at[1] < r[1] + r[3]
+}
+
+/// The end of `text` that fits `width` (the end is where the typing is).
+fn tail(draw: &dyn DrawContext, text: &str, width: f32) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    for start in 0..=chars.len() {
+        let s: String = chars[start..].iter().collect();
+        if draw.text_width(&s) <= width {
+            return s;
+        }
+    }
+    String::new()
+}
+
+/// The start of `text` that fits `width`, with an ellipsis when cut.
+fn head(draw: &dyn DrawContext, text: &str, width: f32) -> String {
+    if draw.text_width(text) <= width {
+        return text.to_string();
+    }
+    let mut s: String = text.chars().collect();
+    while !s.is_empty() && draw.text_width(&format!("{s}…")) > width {
+        s.pop();
+    }
+    format!("{s}…")
+}
+
+fn button(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, r: [f32; 4], text: &str, what: Do, mouse: [f32; 2]) {
+    draw.fill(r, if inside(r, mouse) { 0xE050_5868 } else { 0xD028_2C38 });
+    draw.fill([r[0], r[1] + r[3] - 1.0, r[2], 1.0], 0xFF10_1018);
+    let tw = draw.text_width(text);
+    draw.text(text, [r[0] + (r[2] - tw) / 2.0, r[1] + (r[3] - 8.0) / 2.0], 0xFFF0_F0F0, false);
+    buttons.push((r, what));
+}
+
+/// A field: its label to the left, its text, and the cursor when it has the focus.
+#[allow(clippy::too_many_arguments)]
+fn field(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, r: [f32; 4], text: &str, focus: bool, what: Do, mouse: [f32; 2], blink: bool) {
+    draw.fill(r, if focus { 0xF018_1820 } else if inside(r, mouse) { 0xE038_3C4C } else { 0xC020_2430 });
+    draw.fill([r[0], r[1] + r[3] - 1.0, r[2], 1.0], if focus { 0xFFFF_D86A } else { 0xFF50_5060 });
+    // The end where the typing is; the start otherwise.
+    let shown = if focus { tail(draw, text, r[2] - 8.0) } else { head(draw, text, r[2] - 8.0) };
+    draw.text(&shown, [r[0] + 3.0, r[1] + 3.0], 0xFFFF_FFFF, false);
+    if focus && blink {
+        let x = r[0] + 3.0 + draw.text_width(&shown);
+        draw.fill([x, r[1] + 2.0, 1.0, 9.0], 0xFFFF_FFFF);
+    }
+    buttons.push((r, what));
+}
+
+/// A picker: a click takes the next choice, the wheel moves either way.
+#[allow(clippy::too_many_arguments)]
+fn picker(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, r: [f32; 4], value: &str, what: Do, mouse: [f32; 2]) {
+    draw.fill(r, if inside(r, mouse) { 0xE040_4458 } else { 0xC030_3040 });
+    let v = tail(draw, value, r[2] - 18.0);
+    draw.text(&v, [r[0] + 3.0, r[1] + 3.0], 0xFFFF_FFFF, false);
+    draw.text(">", [r[0] + r[2] - 9.0, r[1] + 3.0], 0xFFA0_A0A0, false);
+    buttons.push((r, what));
+}
+
+/// The skin as a picture, in `r`, runs of one colour drawn as one rectangle.
+fn draw_skin(draw: &mut dyn DrawContext, r: [f32; 4], img: &(u32, u32, Vec<u8>)) {
+    let (w, h, px) = (img.0, img.1, &img.2);
+    if w == 0 || h == 0 {
+        return;
+    }
+    let s = (r[2] / w as f32).min(r[3] / h as f32);
+    // A checker behind it, for the transparent parts.
+    draw.fill([r[0], r[1], w as f32 * s, h as f32 * s], 0xFF30_3038);
+    for y in 0..h {
+        let mut x = 0;
+        while x < w {
+            let i = ((y * w + x) * 4) as usize;
+            let c = [px[i], px[i + 1], px[i + 2], px[i + 3]];
+            let mut end = x + 1;
+            while end < w && px[((y * w + end) * 4) as usize..][..4] == c {
+                end += 1;
+            }
+            if c[3] >= 128 {
+                let argb = 0xFF00_0000 | (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32;
+                draw.fill([r[0] + x as f32 * s, r[1] + y as f32 * s, (end - x) as f32 * s, s], argb);
+            }
+            x = end;
+        }
+    }
+}
+
+/// `screen_render_post`: the maker's panel.
+pub fn render(host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
+    if host.mod_screen() != Some(SCREEN) {
+        return;
+    }
+    let Ok(mut lock) = CREATOR.lock() else { return };
+    let Some(c) = lock.as_mut() else { return };
+    let draw = &mut *e.draw;
+    let mouse = e.screen.mouse;
+    let [sw, sh] = draw.size();
+    let height = ROW * (5.0 + TOPICS as f32) + 44.0;
+    let (x0, y0) = (((sw - W) / 2.0).max(0.0), ((sh - height) / 2.0).max(0.0));
+    let blink = (crate::runtime::clock() as i64 / 6) % 2 == 0;
+    let mut buttons = Vec::new();
+    draw.fill([x0 - 6.0, y0 - 6.0, W + 12.0, height + 12.0], 0xE010_1018);
+    let title = match &c.editing {
+        Some(id) => format!("NPC {id}"),
+        None => format!("New NPC: {}", profile::make_id(c.fields[0].trim())),
+    };
+    draw.text(&title, [x0, y0], 0xFFFF_D86A, false);
+    let lab = 52.0;
+    let preview = 96.0;
+    let fw = W - lab - preview - 8.0;
+    let mut y = y0 + ROW;
+    for (i, what, value) in [(0, Do::Field(0), None), (usize::MAX, Do::Model, Some(c.model_name().to_string())), (usize::MAX, Do::Skin, Some(c.skin_name().to_string())), (1, Do::Field(1), None)] {
+        let text = match what {
+            Do::Model => "Model".to_string(),
+            Do::Skin => "Skin".to_string(),
+            _ => label(i),
+        };
+        draw.text(&text, [x0, y + 3.0], 0xFFA0_A0A0, false);
+        let r = [x0 + lab, y, fw, ROW - 2.0];
+        match value {
+            Some(v) => picker(draw, &mut buttons, r, &v, what, mouse),
+            None => field(draw, &mut buttons, r, &c.fields[i], c.focus == Some(i), what, mouse, blink),
+        }
+        y += ROW;
+    }
+    // Topics: what the player asks, and the answer, side by side.
+    y += 4.0;
+    draw.text("Topics: what the player asks, and the answer", [x0, y], 0xFFA0_A0A0, false);
+    y += 10.0;
+    let half = (W - preview - 8.0 - 4.0) / 2.0;
+    for k in 0..TOPICS {
+        for (j, i) in [2 + k * 2, 3 + k * 2].into_iter().enumerate() {
+            let r = [x0 + j as f32 * (half + 4.0), y, half, ROW - 2.0];
+            field(draw, &mut buttons, r, &c.fields[i], c.focus == Some(i), Do::Field(i), mouse, blink);
+            if c.fields[i].is_empty() && c.focus != Some(i) {
+                draw.text(&label(i), [r[0] + 3.0, r[1] + 3.0], 0xFF60_6070, false);
+            }
+        }
+        y += ROW;
+    }
+    // The skin, beside the fields.
+    let pr = [x0 + W - preview, y0 + ROW, preview, preview];
+    draw.fill(pr, 0xC020_2430);
+    match c.skin() {
+        Some(s) => {
+            let img = s.image.clone();
+            draw_skin(draw, pr, &img);
+            draw.text(&format!("{} x {}", img.0, img.1), [pr[0], pr[1] + preview + 2.0], 0xFF80_8090, false);
+        }
+        None => draw.text("no skin", [pr[0] + 4.0, pr[1] + 4.0], 0xFF80_8090, false),
+    }
+    // Buttons and the status line.
+    y += 6.0;
+    let bw = 76.0;
+    button(draw, &mut buttons, [x0, y, bw, 16.0], "Save", Do::Save(false), mouse);
+    button(draw, &mut buttons, [x0 + bw + 4.0, y, bw, 16.0], "Save & spawn", Do::Save(true), mouse);
+    button(draw, &mut buttons, [x0 + W - 50.0, y, 50.0, 16.0], "Close", Do::Close, mouse);
+    y += 20.0;
+    let status = tail(draw, &c.status, W);
+    draw.text(&status, [x0, y], 0xFFC0_C0C8, false);
+    c.buttons = buttons;
+}
+
+fn cycle(i: usize, by: i32, n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    (i as i64 + by as i64).rem_euclid(n as i64) as usize
+}
+
+fn act(host: &dyn ClientHost, c: &mut Creator, what: Do, by: i32) {
+    match what {
+        Do::Field(i) => c.focus = Some(i),
+        Do::Model => c.model = cycle(c.model, by, c.models.len()),
+        Do::Skin => {
+            // The folder read again each time, so a skin just put there shows.
+            if c.skin > 0 {
+                let name = c.skins.get(c.skin - 1).map(|s| s.name.clone());
+                c.skins = read_skins(host);
+                c.skin = name.and_then(|n| c.skins.iter().position(|s| s.name == n)).map_or(0, |i| i + 1);
+            } else {
+                c.skins = read_skins(host);
+            }
+            c.skin = cycle(c.skin, by, c.skins.len() + 1);
+        }
+        Do::Save(spawn) => c.save(host, spawn),
+        Do::Close => c.close = true,
+    }
+}
+
+pub fn mouse_pressed(host: &dyn ClientHost, e: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
+    if host.mod_screen() != Some(SCREEN) {
+        return Flow::Continue;
+    }
+    let Ok(mut lock) = CREATOR.lock() else { return Flow::Continue };
+    let Some(c) = lock.as_mut() else { return Flow::Continue };
+    let mouse = e.screen.mouse;
+    match c.buttons.iter().rev().find(|(r, _)| inside(*r, mouse)).map(|(_, w)| *w) {
+        Some(what) => {
+            if !matches!(what, Do::Field(_)) {
+                host.play_local_sound(&SoundPlay::ui("minecraft:ui.button.click"), 0);
+            }
+            act(host, c, what, if e.button == 1 { -1 } else { 1 });
+        }
+        None => c.focus = None,
+    }
+    Flow::Cancel
+}
+
+pub fn mouse_scrolled(host: &dyn ClientHost, e: &mut ScreenMouseScrolledPreEvent<'_>) -> Flow {
+    if host.mod_screen() != Some(SCREEN) {
+        return Flow::Continue;
+    }
+    let Ok(mut lock) = CREATOR.lock() else { return Flow::Continue };
+    let Some(c) = lock.as_mut() else { return Flow::Continue };
+    let mouse = e.screen.mouse;
+    if let Some(what) = c.buttons.iter().find(|(r, w)| inside(*r, mouse) && matches!(w, Do::Model | Do::Skin)).map(|(_, w)| *w) {
+        act(host, c, what, if e.scroll[1] > 0.0 { -1 } else { 1 });
+    }
+    Flow::Cancel
+}
+
+fn type_text(c: &mut Creator, text: &str) {
+    let Some(i) = c.focus else { return };
+    for ch in text.chars().filter(|ch| !ch.is_control()) {
+        if c.fields[i].chars().count() >= max_len(i) {
+            break;
+        }
+        c.fields[i].push(ch);
+    }
+}
+
+pub fn char_typed(host: &dyn ClientHost, e: &mut ScreenCharTypedPreEvent<'_>) -> Flow {
+    if host.mod_screen() != Some(SCREEN) {
+        return Flow::Continue;
+    }
+    let Ok(mut lock) = CREATOR.lock() else { return Flow::Continue };
+    let Some(c) = lock.as_mut() else { return Flow::Continue };
+    type_text(c, &e.c.to_string());
+    Flow::Cancel
+}
+
+pub fn key_pressed(host: &dyn ClientHost, e: &mut ScreenKeyPressedPreEvent<'_>) -> Flow {
+    if host.mod_screen() != Some(SCREEN) {
+        return Flow::Continue;
+    }
+    let Ok(mut lock) = CREATOR.lock() else { return Flow::Continue };
+    let Some(c) = lock.as_mut() else { return Flow::Continue };
+    let ctrl = e.modifiers & 2 != 0;
+    let shift = e.modifiers & 1 != 0;
+    match e.key {
+        // Escape goes to the screen, which closes.
+        "key.keyboard.escape" => return Flow::Continue,
+        "key.keyboard.backspace" => {
+            if let Some(i) = c.focus {
+                if ctrl {
+                    c.fields[i].clear();
+                } else {
+                    c.fields[i].pop();
+                }
+            }
+        }
+        "key.keyboard.tab" | "key.keyboard.enter" | "key.keyboard.keypad.enter" => {
+            let by = if shift { FIELDS - 1 } else { 1 };
+            c.focus = Some(c.focus.map_or(0, |i| (i + by) % FIELDS));
+        }
+        "key.keyboard.v" if ctrl => {
+            if let Some(text) = host.clipboard_text() {
+                type_text(c, &text);
+            }
+        }
+        "key.keyboard.s" if ctrl => c.save(host, false),
+        _ => {}
+    }
+    // Every other key belongs to the typing (no hotbar keys, no inventory).
+    Flow::Cancel
+}
