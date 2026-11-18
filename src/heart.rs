@@ -824,6 +824,10 @@ fn gossip(host: &mut dyn ServerHost, now: i64, only: Option<&[u32]>) -> usize {
 
 /// NPCs `a` and `b` talk, if either counts the other a friend.
 fn talk(host: &mut dyn ServerHost, a: u32, b: u32, now: i64) -> bool {
+    // Sleepers don't talk.
+    if crate::routines::asleep(a) || crate::routines::asleep(b) {
+        return false;
+    }
     let coin = random();
     let plan = {
         let Ok(s) = STATE.lock() else { return false };

@@ -154,6 +154,11 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         {
             crate::heart::set_character(host, e, Some(&p.character));
         }
+        if !p.routine.is_empty()
+            && let Some(e) = host.entity(entity)
+        {
+            crate::routines::set_routine(host, e, Some(&p.routine));
+        }
     }
     if let Ok(mut s) = SERVER.lock() {
         s.dress.extend(later.into_iter().take(64));

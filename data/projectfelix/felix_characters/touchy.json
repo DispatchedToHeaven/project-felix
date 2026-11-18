@@ -21,7 +21,8 @@
     "praise": 2,
     "scold": -10,
     "quest_done": 6,
-    "quest_failed": -10
+    "quest_failed": -10,
+    "woken": -5
   },
   "moods": {
     "calm": {
@@ -50,7 +51,8 @@
         "praise": "happy",
         "rumor_bad": "upset",
         "quest_done": "happy",
-        "quest_failed": "upset"
+        "quest_failed": "upset",
+        "woken": "upset"
       },
       "chatter": [
         "Nice day, isn't it, @listener?",

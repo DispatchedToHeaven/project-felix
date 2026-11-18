@@ -1,0 +1,8 @@
+{
+  "day": [
+    { "at": "8:00", "do": "sleep", "say": "Time for bed. The sun is up." },
+    { "at": "16:00", "do": "meet", "say": "Good evening!" },
+    { "at": "19:00", "do": "follow" },
+    { "at": "2:00", "do": "home", "animation": "animation.felix.wave" }
+  ]
+}

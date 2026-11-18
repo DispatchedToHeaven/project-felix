@@ -1,0 +1,9 @@
+{
+  "day": [
+    { "at": "6:00", "do": "work", "say": [ "Off to work!", "Another day, another job." ], "animation": "animation.felix.swing" },
+    { "at": "12:00", "do": "meet", "say": "Lunch time!" },
+    { "at": "13:00", "do": "work", "animation": "animation.felix.swing" },
+    { "at": "18:00", "do": "home", "say": "That's enough for today." },
+    { "at": "21:00", "do": "sleep", "say": "Good night." }
+  ]
+}

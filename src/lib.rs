@@ -24,6 +24,8 @@
 //! - `character` reads characters (a graph of moods, relations; no mod API types); `heart` keeps
 //!   each NPC's mood and relations on the server and makes it obey worse when upset.
 //! - `quest` reads quests (no mod API types); `quests` runs them on the server: boards, logs, kills.
+//! - `routine` reads days (what an NPC does from what hour; no mod API types); `routines` has NPCs
+//!   live by them on the server: work, meet, home, sleep, guard, follow.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
     ScreenKeyPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
@@ -59,6 +61,8 @@ pub mod quest;
 pub mod quests;
 pub mod molang;
 pub mod npc;
+pub mod routine;
+pub mod routines;
 pub mod rulebook;
 pub mod rules;
 pub mod runtime;
@@ -101,6 +105,7 @@ impl Hooks for Felix {
         rulebook::add_listener(e);
         heart::add_listener(e);
         quests::add_listener(e);
+        routines::add_listener(e);
     }
 
     fn register_gui_layers(&self, _cx: &RegistrationContext, e: &mut RegisterGuiLayersEvent<'_>) {
@@ -122,10 +127,14 @@ impl Hooks for Felix {
         rulebook::register_commands(e);
         heart::register_commands(e);
         quests::register_commands(e);
+        routines::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = routines::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = quests::run_command(host, e) {
@@ -158,6 +167,7 @@ impl Hooks for Felix {
         if let ServerTickPhase::ServerTickEnd { world_running: true } = e.phase {
             heart::tick(host);
             quests::tick(host);
+            routines::tick(host);
             rulebook::tick(host);
         }
     }
@@ -165,6 +175,7 @@ impl Hooks for Felix {
     fn living_damage_post(&self, _level: &mut dyn LevelRandomHost, e: &mut LivingDamagePostEvent<'_>) {
         rulebook::on_hurt(e.entity, e.source.causing);
         heart::on_hurt(e.entity, e.source.causing);
+        routines::on_hurt(e.entity);
     }
 
     fn living_death(&self, host: &mut dyn ServerHost, e: &mut LivingDeathEvent<'_>) -> Flow {

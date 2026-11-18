@@ -30,6 +30,8 @@ pub struct Profile {
     pub character: String,
     /// The quests it gives (`quests.json`, see `quest`).
     pub quests: Option<String>,
+    /// Its day (`projectfelix:villager`…; empty: none, it follows its owner).
+    pub routine: String,
 }
 
 /// An id from a name: lower case letters, digits and `_`, at most 32.
@@ -65,6 +67,7 @@ impl Profile {
             rules: None,
             character: String::new(),
             quests: None,
+            routine: String::new(),
         }
     }
 
@@ -91,6 +94,11 @@ impl Profile {
                 json!({ "text": answer, "options": [ { "text": "Something else...", "goto": "hello" }, { "text": "Bye." } ] }),
             );
         }
+        if !self.routine.is_empty() {
+            options.push(json!({ "text": "Go about your day.", "if": { "all": [ { "owner": true }, { "not": { "mode": "live" } } ] }, "actions": [ { "order": "live" } ] }));
+            options.push(json!({ "text": "Live here.", "if": { "owner": true }, "actions": [ { "place": "home" } ] }));
+            options.push(json!({ "text": "Work here.", "if": { "owner": true }, "actions": [ { "place": "work" } ] }));
+        }
         if self.quests.is_some() {
             options.push(json!({ "text": "Need any help?", "actions": [ { "quests": true } ] }));
         }
@@ -111,6 +119,7 @@ impl Profile {
             "name": self.name,
             "model": self.model,
             "character": self.character,
+            "routine": self.routine,
             "greeting": self.greeting,
             "topics": topics,
             "own_dialog": self.own_dialog.is_some(),
@@ -176,6 +185,7 @@ impl Profile {
             rules,
             character: s("character"),
             quests,
+            routine: s("routine"),
         })
     }
 }

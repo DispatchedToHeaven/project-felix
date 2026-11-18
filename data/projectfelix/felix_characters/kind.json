@@ -21,7 +21,8 @@
     "praise": 3,
     "scold": -5,
     "quest_done": 10,
-    "quest_failed": -4
+    "quest_failed": -4,
+    "woken": -1
   },
   "moods": {
     "calm": {

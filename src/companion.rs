@@ -26,6 +26,8 @@ pub enum Mode {
     Follow,
     Wait,
     Guard,
+    /// Lives by its routine (see `routines`).
+    Live,
 }
 
 impl Mode {
@@ -34,12 +36,14 @@ impl Mode {
             Mode::Follow => 0,
             Mode::Wait => 1,
             Mode::Guard => 2,
+            Mode::Live => 3,
         }
     }
     pub fn from_byte(b: u8) -> Mode {
         match b {
             1 => Mode::Wait,
             2 => Mode::Guard,
+            3 => Mode::Live,
             _ => Mode::Follow,
         }
     }
@@ -133,6 +137,36 @@ pub static LOOK: AttachmentType<Option<Look>> = AttachmentType {
 struct Server {
     orders: HashMap<u32, Orders>,
     unknown: Vec<u32>,
+    /// What NPCs living by their day do at their post now.
+    live: HashMap<u32, LiveDo>,
+}
+
+/// What a living NPC does at its post: goes with its owner instead, stays and walks about, rests
+/// still (sleeps), or guards it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum LiveDo {
+    Follow,
+    #[default]
+    Stay,
+    Rest,
+    Guard,
+}
+
+fn live_of(id: u32) -> LiveDo {
+    SERVER.lock().ok().and_then(|s| s.live.get(&id).copied()).unwrap_or_default()
+}
+
+/// Has NPC `npc` live by its day: at `post`, doing `what`.
+pub fn set_live(host: &mut dyn ServerHost, npc: EntityRef, post: [f64; 3], what: LiveDo) -> bool {
+    let o = Orders { mode: Mode::Live, post };
+    if ORDERS.set(host, Holder::Entity(npc.id()), o).is_err() {
+        return false;
+    }
+    if let Ok(mut s) = SERVER.lock() {
+        s.orders.insert(npc.id(), o);
+        s.live.insert(npc.id(), what);
+    }
+    true
 }
 
 static SERVER: LazyLock<Mutex<Server>> = LazyLock::new(Default::default);
@@ -170,7 +204,12 @@ pub fn register(r: &mut dyn Registrar) {
 /// monsters near their posts (each tick); the wolf's own attack goals do the fighting.
 pub fn level_tick(host: &mut dyn ServerHost) {
     let guards: Vec<(u32, [f64; 3])> = match SERVER.lock() {
-        Ok(s) => s.orders.iter().filter(|(_, o)| o.mode == Mode::Guard).map(|(id, o)| (*id, o.post)).collect(),
+        Ok(s) => s
+            .orders
+            .iter()
+            .filter(|(id, o)| o.mode == Mode::Guard || (o.mode == Mode::Live && s.live.get(id) == Some(&LiveDo::Guard)))
+            .map(|(id, o)| (*id, o.post))
+            .collect(),
         Err(_) => Vec::new(),
     };
     for (id, post) in guards {
@@ -236,6 +275,7 @@ impl EntityPart for CompanionGoals {
         goals.add_goal(0, Present);
         goals.add_goal(1, Wait);
         goals.add_goal(1, KeepPost);
+        goals.add_goal(1, Live { t: 0 });
     }
 }
 
@@ -313,6 +353,58 @@ impl Goal for KeepPost {
     }
     fn name(&self) -> &'static str {
         "projectfelix:keep_post"
+    }
+}
+
+/// Living by its day: holds the movement (no following), keeps to its post and walks about it
+/// now and then; guarding, it leaves the fighting to the wolf's goals.
+struct Live {
+    t: u32,
+}
+
+impl Goal for Live {
+    fn flags(&self) -> GoalFlags {
+        GoalFlags::MOVE.union(GoalFlags::JUMP)
+    }
+    fn can_use(&mut self, cx: &mut GoalContext<'_>) -> bool {
+        let id = cx.mob().entity().id();
+        let Some(o) = orders_of(id).filter(|o| o.mode == Mode::Live) else { return false };
+        match live_of(id) {
+            LiveDo::Follow => false,
+            LiveDo::Guard => {
+                cx.mob().target(cx.host()).is_none() && cx.mob().entity().position(cx.host()).is_some_and(|at| distance_sq(at, o.post) > 2.5 * 2.5)
+            }
+            LiveDo::Stay | LiveDo::Rest => true,
+        }
+    }
+    fn can_continue(&mut self, cx: &mut GoalContext<'_>) -> bool {
+        self.can_use(cx)
+    }
+    fn start(&mut self, cx: &mut GoalContext<'_>) {
+        cx.stop_navigation();
+    }
+    fn tick(&mut self, cx: &mut GoalContext<'_>) {
+        self.t = self.t.wrapping_add(1);
+        let id = cx.mob().entity().id();
+        let Some(o) = orders_of(id) else { return };
+        let Some(at) = cx.mob().entity().position(cx.host()) else { return };
+        let far = distance_sq(at, o.post) > 2.5 * 2.5;
+        if far && self.t % 10 == 1 {
+            cx.move_to(o.post, 1.0);
+        } else if !far && live_of(id) == LiveDo::Stay && self.t % 200 == 0 {
+            // A few steps about its post.
+            let h = (id as u64).wrapping_mul(0x9E37_79B9).wrapping_add(self.t as u64 * 7919);
+            let off = |k: u64| ((h >> k) % 7) as f64 - 3.0;
+            cx.move_to([o.post[0] + off(3), o.post[1], o.post[2] + off(11)], 0.6);
+        } else if !far && live_of(id) == LiveDo::Rest && self.t % 20 == 0 {
+            cx.stop_navigation();
+        }
+    }
+    fn stop(&mut self, cx: &mut GoalContext<'_>) {
+        cx.stop_navigation();
+    }
+    fn name(&self) -> &'static str {
+        "projectfelix:live"
     }
 }
 
@@ -429,8 +521,9 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
                 Some("follow") => Mode::Follow,
                 Some("wait") => Mode::Wait,
                 Some("guard") => Mode::Guard,
+                Some("live") => Mode::Live,
                 _ => {
-                    feedback(host, "Orders: follow, wait, guard".into());
+                    feedback(host, "Orders: follow, wait, guard, live".into());
                     return Flow::Cancel;
                 }
             };

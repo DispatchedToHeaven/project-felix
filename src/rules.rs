@@ -19,13 +19,15 @@
 //! `dawn`, `dusk`, `rain`, `low_health` (below a third), `friend_hurt` / `friend_killed` (a player
 //! hurt or killed an NPC it is friends with: the player is the event's), `{ "feels": "<mood>" }` (its
 //! mood turns to that, see `character`), `hears_rumor` (a friend told it what a player did: the
-//! player is the event's), `quest_done` / `quest_failed` (a player did, or failed, a quest it gave).
+//! player is the event's), `quest_done` / `quest_failed` (a player did, or failed, a quest it gave), `{ "starts": "<doing>" }`
+//! (its day has it start that: `work`, `sleep`…).
 //!
 //! If (optional; `not`, `all`, `any` combine them): `time` (`day` or `night`), `raining`, `mode`
 //! (`follow`, `wait`, `guard`), `health_below` (a fraction), `owner_near` (blocks), `owner` (the player
 //! of the event is its owner), `chance` (0 to 1), `target` (an entity type, or `monster`, `animal`,
 //! `player`), `tag` (the NPC has it), `player_tag`, `item` (+ `count`, the player has it), `mood`,
-//! `relation_above` / `relation_below` (how much it likes the player of the event).
+//! `relation_above` / `relation_below` (how much it likes the player of the event), `doing` (what its
+//! day has it do now).
 //!
 //! Then and else: `say` (a chat line to the players near the NPC), `tell` (to the player of the
 //! event only), `attack` (what it saw or what hurt), `look` (at it), `talk` (start its dialog with
@@ -58,6 +60,7 @@ pub enum When {
     HearsRumor,
     QuestDone,
     QuestFailed,
+    Starts(String),
 }
 
 impl When {
@@ -95,6 +98,7 @@ pub enum Cond {
     Mood(String),
     RelationAbove(i32),
     RelationBelow(i32),
+    Doing(String),
     Not(Box<Cond>),
     All(Vec<Cond>),
     Any(Vec<Cond>),
@@ -145,6 +149,9 @@ pub trait Facts {
     fn relation(&self) -> Option<i32> {
         None
     }
+    fn doing(&self) -> &str {
+        ""
+    }
 }
 
 impl Cond {
@@ -164,6 +171,7 @@ impl Cond {
             Cond::Mood(m) => f.mood() == m,
             Cond::RelationAbove(v) => f.relation().is_some_and(|r| r > *v),
             Cond::RelationBelow(v) => f.relation().is_some_and(|r| r < *v),
+            Cond::Doing(d) => f.doing() == d,
             Cond::Not(c) => !c.holds(f),
             Cond::All(list) => list.iter().all(|c| c.holds(f)),
             Cond::Any(list) => list.iter().any(|c| c.holds(f)),
@@ -243,6 +251,8 @@ fn read_when(v: &Value) -> Result<When, String> {
             return Err("\"hears\" needs a word".into());
         }
         Ok(When::Hears(w.trim().to_lowercase()))
+    } else if let Some(d) = m.get("starts").and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty()) {
+        Ok(When::Starts(d.to_string()))
     } else if let Some(f) = m.get("feels").and_then(Value::as_str) {
         if f.trim().is_empty() {
             return Err("\"feels\" needs a mood".into());
@@ -291,6 +301,8 @@ fn read_cond(v: &Value) -> Result<Cond, String> {
         Cond::RelationAbove(v as i32)
     } else if let Some(v) = m.get("relation_below").and_then(Value::as_f64) {
         Cond::RelationBelow(v as i32)
+    } else if let Some(d) = s("doing") {
+        Cond::Doing(d)
     } else if let Some(c) = m.get("not") {
         Cond::Not(Box::new(read_cond(c)?))
     } else if m.contains_key("all") {
@@ -356,6 +368,7 @@ pub const WHENS: &[(&str, Option<&str>)] = &[
     ("hears a rumor", None),
     ("a quest is done", None),
     ("a quest failed", None),
+    ("starts...", Some("work, sleep...")),
 ];
 
 fn when_json(i: usize, arg: &str) -> Value {
@@ -379,7 +392,8 @@ fn when_json(i: usize, arg: &str) -> Value {
         16 => json!({ "feels": arg.trim() }),
         17 => json!("hears_rumor"),
         18 => json!("quest_done"),
-        _ => json!("quest_failed"),
+        19 => json!("quest_failed"),
+        _ => json!({ "starts": arg.trim() }),
     }
 }
 
@@ -403,6 +417,8 @@ pub const CONDS: &[&str] = &[
     "if angry",
     "if likes player",
     "if dislikes player",
+    "if at work",
+    "if asleep",
 ];
 
 fn cond_json(i: usize) -> Option<Value> {
@@ -424,6 +440,8 @@ fn cond_json(i: usize) -> Option<Value> {
         15 => json!({ "mood": "angry" }),
         16 => json!({ "relation_above": 10 }),
         17 => json!({ "relation_below": -10 }),
+        18 => json!({ "doing": "work" }),
+        19 => json!({ "doing": "sleep" }),
         _ => return None,
     })
 }

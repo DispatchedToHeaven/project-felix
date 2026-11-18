@@ -65,6 +65,29 @@
           ]
         },
         {
+          "text": "Go about your day.",
+          "if": {
+            "all": [
+              {
+                "owner": true
+              },
+              {
+                "routine": true
+              },
+              {
+                "not": {
+                  "mode": "live"
+                }
+              }
+            ]
+          },
+          "actions": [
+            {
+              "order": "live"
+            }
+          ]
+        },
+        {
           "text": "How are you?",
           "if": {
             "any": [
@@ -441,8 +464,56 @@
           "goto": "sports"
         },
         {
+          "text": "Live here.",
+          "if": {
+            "owner": true
+          },
+          "actions": [
+            {
+              "place": "home"
+            }
+          ],
+          "goto": "placed"
+        },
+        {
+          "text": "Work here.",
+          "if": {
+            "owner": true
+          },
+          "actions": [
+            {
+              "place": "work"
+            }
+          ],
+          "goto": "placed"
+        },
+        {
+          "text": "Let's meet here.",
+          "if": {
+            "owner": true
+          },
+          "actions": [
+            {
+              "place": "meet"
+            }
+          ],
+          "goto": "placed"
+        },
+        {
           "text": "Never mind.",
           "goto": "main"
+        }
+      ]
+    },
+    "placed": {
+      "text": "Got it. I'll remember this place.",
+      "options": [
+        {
+          "text": "Something else...",
+          "goto": "main"
+        },
+        {
+          "text": "Bye."
         }
       ]
     }

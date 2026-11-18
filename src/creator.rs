@@ -44,6 +44,8 @@ pub const MAX_QUESTS: usize = 3;
 pub const MAX_RULES: usize = 4;
 /// The characters the maker offers (a file may bring another).
 const CHARACTERS: &[&str] = &["projectfelix:kind", "projectfelix:touchy", "projectfelix:stoic"];
+/// The days the maker offers (none: it follows its owner).
+const ROUTINES: &[&str] = &["", "projectfelix:villager", "projectfelix:guard", "projectfelix:night_owl"];
 const W: f32 = 330.0;
 const ROW: f32 = 14.0;
 
@@ -53,6 +55,7 @@ enum Do {
     Model,
     Skin,
     Character,
+    Day,
     Save(bool),
     Close,
     /// 1: rules, 2: quests (again: back to the topics).
@@ -95,6 +98,8 @@ struct Creator {
     page: u8,
     characters: Vec<String>,
     character: usize,
+    routines: Vec<String>,
+    routine: usize,
     buttons: Vec<([f32; 4], Do)>,
     status: String,
     shown: bool,
@@ -154,6 +159,14 @@ impl IPayloadHandler for OpenHandler {
         let (mut rows, mut kept_rules) = (Vec::new(), Vec::new());
         let mut characters: Vec<String> = CHARACTERS.iter().map(|s| s.to_string()).collect();
         let mut character = 0;
+        let mut routines: Vec<String> = ROUTINES.iter().map(|s| s.to_string()).collect();
+        let mut routine = 0;
+        if let Some(r) = editing.as_ref().map(|p| p.routine.clone()).filter(|r| !r.is_empty()) {
+            routine = routines.iter().position(|x| *x == r).unwrap_or_else(|| {
+                routines.push(r);
+                routines.len() - 1
+            });
+        }
         if let Some(ch) = editing.as_ref().map(|p| p.character.clone()).filter(|c| !c.is_empty()) {
             character = characters.iter().position(|c| *c == ch).unwrap_or_else(|| {
                 characters.push(ch);
@@ -220,6 +233,8 @@ impl IPayloadHandler for OpenHandler {
             page: 0,
             characters,
             character,
+            routines,
+            routine,
             buttons: Vec::new(),
             status,
             shown,
@@ -234,6 +249,13 @@ impl IPayloadHandler for OpenHandler {
 }
 
 impl Creator {
+    fn routine_name(&self) -> String {
+        match self.routines.get(self.routine).map(String::as_str).unwrap_or("") {
+            "" => "(none: it follows its owner)".into(),
+            id => id.strip_prefix("projectfelix:").unwrap_or(id).replace('_', " "),
+        }
+    }
+
     fn character_name(&self) -> String {
         let id = self.characters.get(self.character).map(String::as_str).unwrap_or("projectfelix:kind");
         id.strip_prefix("projectfelix:").unwrap_or(id).to_string()
@@ -339,6 +361,7 @@ impl Creator {
             p.skin = s.png.clone();
         }
         p.character = self.characters.get(self.character).cloned().unwrap_or_default();
+        p.routine = self.routines.get(self.routine).cloned().unwrap_or_default();
         for (n, r) in self.rules.iter().enumerate() {
             if let Some(what) = WHENS[r.when].1.filter(|_| r.when_arg.trim().is_empty()) {
                 return Err(format!("Rule {}: \"{}\" needs the {what}", n + 1, WHENS[r.when].0));
@@ -506,7 +529,7 @@ pub fn render(host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
     let draw = &mut *e.draw;
     let mouse = e.screen.mouse;
     let [sw, sh] = draw.size();
-    let height = ROW * (6.0 + TOPICS as f32) + 44.0;
+    let height = ROW * (7.0 + TOPICS as f32) + 44.0;
     let (x0, y0) = (((sw - W) / 2.0).max(0.0), ((sh - height) / 2.0).max(0.0));
     let blink = (crate::runtime::clock() as i64 / 6) % 2 == 0;
     let mut buttons = Vec::new();
@@ -532,11 +555,12 @@ pub fn render(host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
     let preview = 96.0;
     let fw = W - lab - preview - 8.0;
     let mut y = y0 + ROW;
-    for (i, what, value) in [(0, Do::Field(0), None), (usize::MAX, Do::Model, Some(c.model_name().to_string())), (usize::MAX, Do::Skin, Some(c.skin_name().to_string())), (usize::MAX, Do::Character, Some(c.character_name())), (1, Do::Field(1), None)] {
+    for (i, what, value) in [(0, Do::Field(0), None), (usize::MAX, Do::Model, Some(c.model_name().to_string())), (usize::MAX, Do::Skin, Some(c.skin_name().to_string())), (usize::MAX, Do::Character, Some(c.character_name())), (usize::MAX, Do::Day, Some(c.routine_name())), (1, Do::Field(1), None)] {
         let text = match what {
             Do::Model => "Model".to_string(),
             Do::Skin => "Skin".to_string(),
             Do::Character => "Character".to_string(),
+            Do::Day => "Day".to_string(),
             _ => label(i),
         };
         draw.text(&text, [x0, y + 3.0], 0xFFA0_A0A0, false);
@@ -692,6 +716,7 @@ fn act(host: &dyn ClientHost, c: &mut Creator, what: Do, by: i32) {
         Do::Field(i) => c.focus = Some(i),
         Do::Model => c.model = cycle(c.model, by, c.models.len()),
         Do::Character => c.character = cycle(c.character, by, c.characters.len()),
+        Do::Day => c.routine = cycle(c.routine, by, c.routines.len()),
         Do::Skin => {
             // The folder read again each time, so a skin just put there shows.
             if c.skin > 0 {
@@ -787,7 +812,7 @@ pub fn mouse_scrolled(host: &dyn ClientHost, e: &mut ScreenMouseScrolledPreEvent
     let Ok(mut lock) = CREATOR.lock() else { return Flow::Continue };
     let Some(c) = lock.as_mut() else { return Flow::Continue };
     let mouse = e.screen.mouse;
-    if let Some(what) = c.buttons.iter().find(|(r, w)| inside(*r, mouse) && matches!(w, Do::Model | Do::Skin | Do::Character | Do::Kind(_) | Do::When(_) | Do::If(_) | Do::Then(_) | Do::Else(_))).map(|(_, w)| *w) {
+    if let Some(what) = c.buttons.iter().find(|(r, w)| inside(*r, mouse) && matches!(w, Do::Model | Do::Skin | Do::Character | Do::Day | Do::Kind(_) | Do::When(_) | Do::If(_) | Do::Then(_) | Do::Else(_))).map(|(_, w)| *w) {
         act(host, c, what, if e.scroll[1] > 0.0 { -1 } else { 1 });
     }
     Flow::Cancel

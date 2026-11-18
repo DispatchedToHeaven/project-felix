@@ -200,6 +200,7 @@ struct Facts<'a> {
     player_items: HashMap<String, u32>,
     mood: String,
     relation: Option<i32>,
+    doing: String,
 }
 
 impl rules::Facts for Facts<'_> {
@@ -208,6 +209,9 @@ impl rules::Facts for Facts<'_> {
     }
     fn relation(&self) -> Option<i32> {
         self.relation
+    }
+    fn doing(&self) -> &str {
+        &self.doing
     }
     fn is_day(&self) -> bool {
         self.day
@@ -270,6 +274,7 @@ fn here(host: &dyn mod_api::Host, me: EntityRef) -> Option<Here> {
         Mode::Follow => "follow",
         Mode::Wait => "wait",
         Mode::Guard => "guard",
+        Mode::Live => "live",
     };
     Some(Here { me, at, day: !(12500..23500).contains(&time), rain: level.is_raining(host).unwrap_or(false), mode, health, owner, owner_at, players })
 }
@@ -314,6 +319,7 @@ fn fire(host: &mut dyn ServerHost, h: &Here, rule: &Rule, i: usize, ev: &Event, 
         player_items,
         mood: crate::heart::mood_of(h.me.id()),
         relation: ev.player.map(|p| crate::heart::relation_of(h.me.id(), p.uuid())),
+        doing: crate::routines::doing(h.me.id()),
     };
     let dos = rule.decide(&facts).to_vec();
     run(host, h, ev, &dos);
@@ -528,7 +534,7 @@ fn look(host: &mut dyn ServerHost, h: &Here, rules: &[Rule], mind: &mut Mind, no
                     events.push(None);
                 }
             }
-            When::FriendHurt | When::FriendKilled | When::Feels(_) | When::HearsRumor | When::QuestDone | When::QuestFailed => {
+            When::FriendHurt | When::FriendKilled | When::Feels(_) | When::HearsRumor | When::QuestDone | When::QuestFailed | When::Starts(_) => {
                 let key = match &rule.when {
                     When::FriendHurt => "friend_hurt".to_string(),
                     When::FriendKilled => "friend_killed".to_string(),
@@ -536,6 +542,7 @@ fn look(host: &mut dyn ServerHost, h: &Here, rules: &[Rule], mind: &mut Mind, no
                     When::HearsRumor => "rumor".to_string(),
                     When::QuestDone => "quest_done".to_string(),
                     When::QuestFailed => "quest_failed".to_string(),
+                    When::Starts(d) => format!("starts:{d}"),
                     _ => String::new(),
                 };
                 for hd in heard {

@@ -21,7 +21,8 @@
 //! to its `goto` node, or ends without one. Options whose `if` fails are not shown. Conditions:
 //! `tag`, `item` (+ `count`), `owner`, `mode` (`follow`, `wait`, `guard`), `game` (the NPC's table:
 //! `none`, `waiting`, `playing`, `over`), `in_game` (the player sits at it), `mood` (the NPC's, as
-//! `upset`), `relation_above` / `relation_below` (how much it likes the player), `not`, `all`, `any`.
+//! `upset`), `relation_above` / `relation_below` (how much it likes the player), `doing` (what its
+//! day has it do: `work`, `sleep`…), `routine` (it has one), `not`, `all`, `any`.
 //! Actions: `command` (run as the server console), `give` / `take` (+ `count`), `tag`, `untag`,
 //! `animation` (played on the NPC), `order` (`follow`, `wait`, `guard`), `sound` (at the NPC),
 //! `scene` (a scene from `felix_scenes`, played by the NPC), `game` (`chess` or `checkers`, with
@@ -30,7 +31,8 @@
 //! animation editor on the NPC, with an animation name or `animation.<model>.custom`), `feel` (an
 //! event for its character: `gift`, `apology`, `praise`, `scold`…), `relation` (+/- how much it likes the player), `news` (it tells, aloud, the newest
 //! thing it saw or heard a player do), `quests` (its quest board: a list of quest ids, or `true`
-//! for its own), `quest` (the player takes that quest), `hand_in`, `give_up` (the quest for this NPC).
+//! for its own), `quest` (the player takes that quest), `hand_in`, `give_up` (the quest for this NPC),
+//! `place` (its place of that name, `home`, `work`…, is where the player stands).
 //! `@player` is the player's name; `@npc` is the NPC's name in texts and its UUID in commands.
 //! No mod API types here.
 
@@ -70,6 +72,8 @@ pub enum Cond {
     Mood(String),
     RelationAbove(i32),
     RelationBelow(i32),
+    Doing(String),
+    Routine(bool),
     Not(Box<Cond>),
     All(Vec<Cond>),
     Any(Vec<Cond>),
@@ -98,6 +102,7 @@ pub enum Action {
     Quest(String),
     HandIn,
     GiveUp,
+    Place(String),
 }
 
 /// What conditions ask about the player and the NPC.
@@ -121,6 +126,13 @@ pub trait Facts {
     fn relation(&self) -> i32 {
         0
     }
+    /// What its day has it do.
+    fn doing(&self) -> &str {
+        ""
+    }
+    fn has_routine(&self) -> bool {
+        false
+    }
 }
 
 impl Cond {
@@ -135,6 +147,8 @@ impl Cond {
             Cond::Mood(m) => f.mood() == m,
             Cond::RelationAbove(v) => f.relation() > *v,
             Cond::RelationBelow(v) => f.relation() < *v,
+            Cond::Doing(d) => f.doing() == d,
+            Cond::Routine(want) => f.has_routine() == *want,
             Cond::Not(c) => !c.holds(f),
             Cond::All(list) => list.iter().all(|c| c.holds(f)),
             Cond::Any(list) => list.iter().any(|c| c.holds(f)),
@@ -162,7 +176,7 @@ pub fn commands(action: &Action, player: &str, npc: &str) -> Vec<String> {
         Action::Tag(t) => vec![format!("tag {player} add {t}")],
         Action::Untag(t) => vec![format!("tag {player} remove {t}")],
         Action::Sound(s) => vec![format!("execute as {npc} at @s run playsound {s} neutral @a ~ ~ ~")],
-        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp => Vec::new(),
+        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Place(_) => Vec::new(),
     }
 }
 
@@ -249,6 +263,10 @@ fn read_cond(v: &Value) -> Result<Cond, String> {
         Ok(Cond::RelationAbove(v as i32))
     } else if let Some(v) = m.get("relation_below").and_then(Value::as_f64) {
         Ok(Cond::RelationBelow(v as i32))
+    } else if let Some(d) = s("doing") {
+        Ok(Cond::Doing(d))
+    } else if let Some(b) = m.get("routine").and_then(Value::as_bool) {
+        Ok(Cond::Routine(b))
     } else if let Some(n) = m.get("not") {
         Ok(Cond::Not(Box::new(read_cond(n)?)))
     } else if let Some(all) = list("all")? {
@@ -300,6 +318,8 @@ pub fn read_actions(v: Option<&Value>) -> Result<Vec<Action>, String> {
                 Action::Quests(q.as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default())
             } else if let Some(q) = s("quest") {
                 Action::Quest(q)
+            } else if let Some(p) = s("place") {
+                Action::Place(p)
             } else if m.contains_key("hand_in") {
                 Action::HandIn
             } else if m.contains_key("give_up") {

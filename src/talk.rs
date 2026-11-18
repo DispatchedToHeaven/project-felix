@@ -163,6 +163,8 @@ struct PlayerFacts {
     mode: &'static str,
     mood: String,
     relation: i32,
+    doing: String,
+    routine: bool,
 }
 
 impl Facts for PlayerFacts {
@@ -190,6 +192,12 @@ impl Facts for PlayerFacts {
     fn relation(&self) -> i32 {
         self.relation
     }
+    fn doing(&self) -> &str {
+        &self.doing
+    }
+    fn has_routine(&self) -> bool {
+        self.routine
+    }
 }
 
 fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> PlayerFacts {
@@ -203,12 +211,15 @@ fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> Player
     let mode = match ORDERS.get(host, Holder::Entity(npc.id())).map(|o| o.mode) {
         Ok(Mode::Wait) => "wait",
         Ok(Mode::Guard) => "guard",
+        Ok(Mode::Live) => "live",
         _ => "follow",
     };
     let (game, in_game) = crate::games::state_for(npc.id(), player);
     let mood = crate::heart::mood_of(npc.id());
     let relation = crate::heart::relation_of(npc.id(), player.uuid());
-    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation }
+    let doing = crate::routines::doing(npc.id());
+    let routine = crate::routines::has_routine(npc.id());
+    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine }
 }
 
 /// A UUID written with dashes, as commands take it.
@@ -236,7 +247,8 @@ pub fn start(host: &mut dyn ServerHost, player: PlayerRef, npc: u32) {
 fn talk(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
     let Some(id) = read_id(b) else { return };
     let Some(npc) = npc_near(host, player, id) else { return };
-    // One that hates the player won't talk at all.
+    // A sleeper wakes first; one that hates the player won't talk at all.
+    crate::routines::wake(host, npc, Some(player));
     if !crate::heart::talks_to(host, npc, player) {
         return;
     }
@@ -329,6 +341,7 @@ fn mode_named(o: &str) -> Mode {
     match o {
         "wait" => Mode::Wait,
         "guard" => Mode::Guard,
+        "live" => Mode::Live,
         _ => Mode::Follow,
     }
 }
@@ -350,6 +363,12 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
             Action::News => {
                 if let Some(p) = player {
                     crate::heart::tell_news(host, npc, p);
+                }
+            }
+            Action::Place(name) => {
+                let at = player.and_then(|p| p.entity().position(&*host)).or_else(|| npc.position(&*host));
+                if let Some(at) = at {
+                    crate::routines::set_place(host, npc, name, at);
                 }
             }
             Action::Quests(list) => {

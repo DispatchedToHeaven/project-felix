@@ -1200,6 +1200,89 @@
 					"effect": "minecraft:entity.villager.no"
 				}
 			}
+		},
+		"animation.felix.sleep": {
+			"loop": true,
+			"animation_length": 4,
+			"bones": {
+				"root": {
+					"rotation": {
+						"0.0": [
+							-90,
+							0,
+							0
+						]
+					},
+					"position": {
+						"0.0": [
+							0,
+							2,
+							0
+						]
+					}
+				},
+				"head": {
+					"rotation": {
+						"0.0": [
+							0,
+							0,
+							0
+						],
+						"2.0": [
+							0,
+							0,
+							4
+						],
+						"4.0": [
+							0,
+							0,
+							0
+						]
+					}
+				},
+				"body": {
+					"scale": {
+						"0.0": [
+							1,
+							1,
+							1
+						],
+						"2.0": [
+							1.03,
+							1,
+							1.03
+						],
+						"4.0": [
+							1,
+							1,
+							1
+						]
+					}
+				},
+				"rightArm": {
+					"rotation": {
+						"0.0": [
+							0,
+							0,
+							6
+						]
+					}
+				},
+				"leftArm": {
+					"rotation": {
+						"0.0": [
+							0,
+							0,
+							-6
+						]
+					}
+				}
+			},
+			"particle_effects": {
+				"1.0": {
+					"effect": "minecraft:cloud"
+				}
+			}
 		}
 	}
 }

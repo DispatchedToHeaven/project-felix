@@ -1,0 +1,8 @@
+{
+  "day": [
+    { "at": "6:00", "do": "sleep" },
+    { "at": "11:00", "do": "meet", "say": "Morning, everyone." },
+    { "at": "14:00", "do": "home" },
+    { "at": "18:00", "do": "guard", "say": "On watch till dawn." }
+  ]
+}
