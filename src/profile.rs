@@ -2,7 +2,7 @@
 //! `<id>.felixnpc` (a zip: `npc.json`, `skin.png`, `dialog.json`, `rules.json` when it has rules,
 //! and `model.geo.json` when it brings its own model). No mod API types here.
 //!
-//! `npc.json`: `{ "format": 1, "id", "name", "model", "greeting", "topics": [{ "ask", "answer" }] }`.
+//! `npc.json`: `{ "format": 1, "id", "name", "model", "character", "greeting", "topics": [{ "ask", "answer" }] }`.
 //! The dialog is built from the greeting and the topics, with a companion's orders for its owner,
 //! unless the file brings a `dialog.json` of its own (`"own_dialog": true`).
 
@@ -25,6 +25,8 @@ pub struct Profile {
     pub model_file: Option<Vec<u8>>,
     /// Its rules (`rules.json`, see `rules`).
     pub rules: Option<String>,
+    /// Its character (`projectfelix:kind`…; empty: the default).
+    pub character: String,
 }
 
 /// An id from a name: lower case letters, digits and `_`, at most 32.
@@ -58,6 +60,7 @@ impl Profile {
             skin: Vec::new(),
             model_file: None,
             rules: None,
+            character: String::new(),
         }
     }
 
@@ -84,6 +87,9 @@ impl Profile {
                 json!({ "text": answer, "options": [ { "text": "Something else...", "goto": "hello" }, { "text": "Bye." } ] }),
             );
         }
+        let (more, more_nodes) = social("hello");
+        options.extend(more);
+        nodes.extend(more_nodes);
         options.push(json!({ "text": "Bye." }));
         nodes.insert("hello".into(), json!({ "text": self.greeting, "options": options }));
         crate::serde_json::to_string_pretty(&json!({ "start": "hello", "nodes": Value::Object(nodes) })).unwrap_or_default()
@@ -97,6 +103,7 @@ impl Profile {
             "id": self.id,
             "name": self.name,
             "model": self.model,
+            "character": self.character,
             "greeting": self.greeting,
             "topics": topics,
             "own_dialog": self.own_dialog.is_some(),
@@ -152,8 +159,28 @@ impl Profile {
             skin: get("skin.png").unwrap_or_default(),
             model_file: get("model.geo.json"),
             rules,
+            character: s("character"),
         })
     }
+}
+
+/// What anyone may say to any NPC about how it feels: options for the node `back`, and their nodes.
+pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
+    let fine = json!({ "any": [ { "mood": "calm" }, { "mood": "happy" } ] });
+    let options = vec![
+        json!({ "text": "How are you?", "if": fine, "goto": "feel_fine" }),
+        json!({ "text": "How are you?", "if": { "not": fine }, "goto": "feel_bad" }),
+        json!({ "text": "Have an apple.", "if": { "item": "minecraft:apple" }, "actions": [ { "take": "minecraft:apple" }, { "feel": "gift" } ], "goto": "thanks" }),
+        json!({ "text": "I'm sorry.", "if": { "not": fine }, "actions": [ { "feel": "apology" } ], "goto": "sorry" }),
+    ];
+    let again = json!([ { "text": "Something else...", "goto": back }, { "text": "Bye." } ]);
+    let nodes = vec![
+        ("feel_fine".to_string(), json!({ "text": "I'm fine, thanks for asking.", "options": again })),
+        ("feel_bad".to_string(), json!({ "text": "Not great, @player. Not great at all.", "options": again })),
+        ("thanks".to_string(), json!({ "text": "For me? Thank you!", "options": again })),
+        ("sorry".to_string(), json!({ "text": "...All right. Let's forget it.", "options": again })),
+    ];
+    (options, nodes)
 }
 
 fn serde_json_map() -> crate::serde_json::Map<String, Value> {

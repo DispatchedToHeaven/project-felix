@@ -62,6 +62,8 @@ enum Heard {
     Hurt { victim: u32, by: u32 },
     Killed { killer: u32, kind: String, category: &'static str, name: String },
     Chat { player: u32, text: String },
+    /// What its character felt (`friend_hurt`, `friend_killed`, `mood:<name>`), about whom.
+    Felt { npc: u32, what: String, other: Option<u32> },
 }
 
 /// What an NPC remembers between looks.
@@ -109,6 +111,11 @@ pub fn on_death(host: &dyn mod_api::Host, victim: u32, killer: i32) {
     let (kind, category) = kind_of(host, e);
     let name = e.name(host).unwrap_or_else(|| kind.clone());
     hear(Heard::Killed { killer: killer as u32, kind, category, name });
+}
+
+/// What NPC `npc`'s character felt (see `heart`), for the rules that wait for it.
+pub fn notice(npc: u32, what: &str, other: Option<u32>) {
+    hear(Heard::Felt { npc, what: what.to_string(), other });
 }
 
 /// `server_chat`: what a player said.
@@ -191,9 +198,17 @@ struct Facts<'a> {
     npc_tags: Vec<String>,
     player_tags: Vec<String>,
     player_items: HashMap<String, u32>,
+    mood: String,
+    relation: Option<i32>,
 }
 
 impl rules::Facts for Facts<'_> {
+    fn mood(&self) -> &str {
+        &self.mood
+    }
+    fn relation(&self) -> Option<i32> {
+        self.relation
+    }
     fn is_day(&self) -> bool {
         self.day
     }
@@ -297,6 +312,8 @@ fn fire(host: &mut dyn ServerHost, h: &Here, rule: &Rule, i: usize, ev: &Event, 
         npc_tags: h.me.tags(&*host).unwrap_or_default(),
         player_tags,
         player_items,
+        mood: crate::heart::mood_of(h.me.id()),
+        relation: ev.player.map(|p| crate::heart::relation_of(h.me.id(), p.uuid())),
     };
     let dos = rule.decide(&facts).to_vec();
     run(host, h, ev, &dos);
@@ -509,6 +526,23 @@ fn look(host: &mut dyn ServerHost, h: &Here, rules: &[Rule], mind: &mut Mind, no
                     // Every: the cooldown is the period.
                     mind.fired.remove(&i);
                     events.push(None);
+                }
+            }
+            When::FriendHurt | When::FriendKilled | When::Feels(_) => {
+                let key = match &rule.when {
+                    When::FriendHurt => "friend_hurt".to_string(),
+                    When::FriendKilled => "friend_killed".to_string(),
+                    When::Feels(m) => format!("mood:{m}"),
+                    _ => String::new(),
+                };
+                for hd in heard {
+                    if let Heard::Felt { npc, what, other } = hd
+                        && *npc == me
+                        && *what == key
+                    {
+                        events.push(other.and_then(|o| host.entity(o)));
+                        break;
+                    }
                 }
             }
             When::Dawn if dawn => events.push(None),

@@ -1,0 +1,62 @@
+{
+  "start": "calm",
+  "friend_at": 30,
+  "hate_at": -70,
+  "owner": 50,
+  "forgive": 4,
+  "bond": 1,
+  "bond_max": 60,
+  "shun": [
+    "We have nothing to talk about, @player."
+  ],
+  "relations": {
+    "hurt_by_player": -4,
+    "friend_hurt": -8,
+    "friend_killed": -30,
+    "owner_hurt": -5,
+    "talk": 1,
+    "gift": 4,
+    "apology": 4,
+    "praise": 1,
+    "scold": -1
+  },
+  "moods": {
+    "calm": {
+      "on": {
+        "hurt_by_player": [
+          {
+            "to": "upset",
+            "below": -30
+          }
+        ],
+        "friend_hurt": [
+          {
+            "to": "upset",
+            "below": -30
+          }
+        ],
+        "friend_killed": "upset"
+      }
+    },
+    "upset": {
+      "obey": 0.85,
+      "speed": 0.9,
+      "delay": 1,
+      "animation": "animation.felix.sad",
+      "say": [
+        "I will remember this, @player."
+      ],
+      "refuse": [
+        "No."
+      ],
+      "grumble": [
+        "Very well."
+      ],
+      "on": {
+        "after:120": "calm",
+        "apology": "calm",
+        "gift": "calm"
+      }
+    }
+  }
+}

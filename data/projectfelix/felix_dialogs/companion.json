@@ -4,50 +4,427 @@
     "main": {
       "text": "What is it, @player?",
       "options": [
-        { "text": "Follow me.", "if": { "all": [ { "owner": true }, { "not": { "mode": "follow" } } ] }, "actions": [ { "order": "follow" } ] },
-        { "text": "Wait here.", "if": { "all": [ { "owner": true }, { "not": { "mode": "wait" } } ] }, "actions": [ { "order": "wait" } ] },
-        { "text": "Guard this place.", "if": { "all": [ { "owner": true }, { "not": { "mode": "guard" } } ] }, "actions": [ { "order": "guard" } ] },
-        { "text": "Who are you?", "goto": "about" },
-        { "text": "Got anything for me?", "if": { "not": { "tag": "felix_gift" } }, "goto": "gift" },
-        { "text": "Say hi!", "actions": [ { "animation": "animation.felix.wave" } ] },
-        { "text": "Hold still, I'll animate you.", "if": { "owner": true }, "actions": [ { "edit_animation": true } ] },
-        { "text": "Show me a chess game.", "if": { "game": "none" }, "actions": [ { "scene": "projectfelix:chess" } ] },
-        { "text": "Let's play.", "if": { "game": "none" }, "goto": "games" },
-        { "text": "Fancy a ball game?", "if": { "game": "none" }, "goto": "sports" },
-        { "text": "Back to the board.", "if": { "in_game": true }, "actions": [ { "open_game": true } ] },
-        { "text": "Take the other seat.", "if": { "all": [ { "game": "waiting" }, { "in_game": false } ] }, "actions": [ { "join_game": true } ] },
-        { "text": "Let me watch.", "if": { "all": [ { "game": "playing" }, { "in_game": false } ] }, "actions": [ { "open_game": true } ] },
-        { "text": "Bye." }
+        {
+          "text": "Follow me.",
+          "if": {
+            "all": [
+              {
+                "owner": true
+              },
+              {
+                "not": {
+                  "mode": "follow"
+                }
+              }
+            ]
+          },
+          "actions": [
+            {
+              "order": "follow"
+            }
+          ]
+        },
+        {
+          "text": "Wait here.",
+          "if": {
+            "all": [
+              {
+                "owner": true
+              },
+              {
+                "not": {
+                  "mode": "wait"
+                }
+              }
+            ]
+          },
+          "actions": [
+            {
+              "order": "wait"
+            }
+          ]
+        },
+        {
+          "text": "Guard this place.",
+          "if": {
+            "all": [
+              {
+                "owner": true
+              },
+              {
+                "not": {
+                  "mode": "guard"
+                }
+              }
+            ]
+          },
+          "actions": [
+            {
+              "order": "guard"
+            }
+          ]
+        },
+        {
+          "text": "How are you?",
+          "if": {
+            "any": [
+              {
+                "mood": "calm"
+              },
+              {
+                "mood": "happy"
+              }
+            ]
+          },
+          "goto": "feel_fine"
+        },
+        {
+          "text": "How are you?",
+          "if": {
+            "not": {
+              "any": [
+                {
+                  "mood": "calm"
+                },
+                {
+                  "mood": "happy"
+                }
+              ]
+            }
+          },
+          "goto": "feel_bad"
+        },
+        {
+          "text": "Have an apple.",
+          "if": {
+            "item": "minecraft:apple"
+          },
+          "actions": [
+            {
+              "take": "minecraft:apple"
+            },
+            {
+              "feel": "gift"
+            }
+          ],
+          "goto": "thanks"
+        },
+        {
+          "text": "I'm sorry.",
+          "if": {
+            "not": {
+              "any": [
+                {
+                  "mood": "calm"
+                },
+                {
+                  "mood": "happy"
+                }
+              ]
+            }
+          },
+          "actions": [
+            {
+              "feel": "apology"
+            }
+          ],
+          "goto": "sorry"
+        },
+        {
+          "text": "Well done, @npc!",
+          "if": {
+            "owner": true
+          },
+          "actions": [
+            {
+              "feel": "praise"
+            }
+          ]
+        },
+        {
+          "text": "Something else...",
+          "goto": "more"
+        },
+        {
+          "text": "Back to the board.",
+          "if": {
+            "in_game": true
+          },
+          "actions": [
+            {
+              "open_game": true
+            }
+          ]
+        },
+        {
+          "text": "Take the other seat.",
+          "if": {
+            "all": [
+              {
+                "game": "waiting"
+              },
+              {
+                "in_game": false
+              }
+            ]
+          },
+          "actions": [
+            {
+              "join_game": true
+            }
+          ]
+        },
+        {
+          "text": "Let me watch.",
+          "if": {
+            "all": [
+              {
+                "game": "playing"
+              },
+              {
+                "in_game": false
+              }
+            ]
+          },
+          "actions": [
+            {
+              "open_game": true
+            }
+          ]
+        },
+        {
+          "text": "Bye."
+        }
       ]
     },
     "games": {
       "text": "What shall we play? I can play myself, or keep the board for you and a friend.",
       "options": [
-        { "text": "Chess, against you.", "actions": [ { "game": "chess", "vs": "npc" } ] },
-        { "text": "Draughts, against you.", "actions": [ { "game": "checkers", "vs": "npc" } ] },
-        { "text": "Chess, with a friend.", "actions": [ { "game": "chess", "vs": "player" } ] },
-        { "text": "Draughts, with a friend.", "actions": [ { "game": "checkers", "vs": "player" } ] },
-        { "text": "Not now.", "goto": "main" }
+        {
+          "text": "Chess, against you.",
+          "actions": [
+            {
+              "game": "chess",
+              "vs": "npc"
+            }
+          ]
+        },
+        {
+          "text": "Draughts, against you.",
+          "actions": [
+            {
+              "game": "checkers",
+              "vs": "npc"
+            }
+          ]
+        },
+        {
+          "text": "Chess, with a friend.",
+          "actions": [
+            {
+              "game": "chess",
+              "vs": "player"
+            }
+          ]
+        },
+        {
+          "text": "Draughts, with a friend.",
+          "actions": [
+            {
+              "game": "checkers",
+              "vs": "player"
+            }
+          ]
+        },
+        {
+          "text": "Not now.",
+          "goto": "main"
+        }
       ]
     },
     "sports": {
       "text": "Sure! Stand where I put you and watch the ball. Left, right, or smash it when it comes high.",
       "options": [
-        { "text": "Table tennis.", "actions": [ { "sport": "table_tennis" } ] },
-        { "text": "Tennis.", "actions": [ { "sport": "tennis" } ] },
-        { "text": "Basketball.", "actions": [ { "sport": "basketball" } ] },
-        { "text": "Not now.", "goto": "main" }
+        {
+          "text": "Table tennis.",
+          "actions": [
+            {
+              "sport": "table_tennis"
+            }
+          ]
+        },
+        {
+          "text": "Tennis.",
+          "actions": [
+            {
+              "sport": "tennis"
+            }
+          ]
+        },
+        {
+          "text": "Basketball.",
+          "actions": [
+            {
+              "sport": "basketball"
+            }
+          ]
+        },
+        {
+          "text": "Not now.",
+          "goto": "main"
+        }
       ]
     },
     "about": {
-      "text": [ "I'm @npc. I walk where you walk and wait where you tell me to.", "Ask me to guard a place and nothing hostile gets near it." ],
-      "options": [ { "text": "Good to know.", "goto": "main" } ]
+      "text": [
+        "I'm @npc. I walk where you walk and wait where you tell me to.",
+        "Ask me to guard a place and nothing hostile gets near it."
+      ],
+      "options": [
+        {
+          "text": "Good to know.",
+          "goto": "more"
+        }
+      ]
     },
     "gift": {
       "text": "Here, take these. I picked them on the way.",
       "animation": "animation.felix.wave",
-      "actions": [ { "give": "minecraft:apple", "count": 3 }, { "tag": "felix_gift" }, { "sound": "minecraft:entity.item.pickup" } ],
-      "options": [ { "text": "Thanks!", "goto": "main" } ]
+      "actions": [
+        {
+          "give": "minecraft:apple",
+          "count": 3
+        },
+        {
+          "tag": "felix_gift"
+        },
+        {
+          "sound": "minecraft:entity.item.pickup"
+        }
+      ],
+      "options": [
+        {
+          "text": "Thanks!",
+          "goto": "more"
+        }
+      ]
+    },
+    "feel_fine": {
+      "text": "I'm fine, thanks for asking.",
+      "options": [
+        {
+          "text": "Something else...",
+          "goto": "main"
+        },
+        {
+          "text": "Bye."
+        }
+      ]
+    },
+    "feel_bad": {
+      "text": [
+        "Not great, @player. Not great at all.",
+        "Someone hurt a friend of mine. Or me."
+      ],
+      "options": [
+        {
+          "text": "Something else...",
+          "goto": "main"
+        },
+        {
+          "text": "Bye."
+        }
+      ]
+    },
+    "thanks": {
+      "text": "For me? Thank you!",
+      "options": [
+        {
+          "text": "Something else...",
+          "goto": "main"
+        },
+        {
+          "text": "Bye."
+        }
+      ]
+    },
+    "sorry": {
+      "text": "...All right. Let's forget it.",
+      "options": [
+        {
+          "text": "Something else...",
+          "goto": "main"
+        },
+        {
+          "text": "Bye."
+        }
+      ]
+    },
+    "more": {
+      "text": "Sure, @player. What is it?",
+      "options": [
+        {
+          "text": "Who are you?",
+          "goto": "about"
+        },
+        {
+          "text": "Got anything for me?",
+          "if": {
+            "not": {
+              "tag": "felix_gift"
+            }
+          },
+          "goto": "gift"
+        },
+        {
+          "text": "Say hi!",
+          "actions": [
+            {
+              "animation": "animation.felix.wave"
+            }
+          ]
+        },
+        {
+          "text": "Hold still, I'll animate you.",
+          "if": {
+            "owner": true
+          },
+          "actions": [
+            {
+              "edit_animation": true
+            }
+          ]
+        },
+        {
+          "text": "Show me a chess game.",
+          "if": {
+            "game": "none"
+          },
+          "actions": [
+            {
+              "scene": "projectfelix:chess"
+            }
+          ]
+        },
+        {
+          "text": "Let's play.",
+          "if": {
+            "game": "none"
+          },
+          "goto": "games"
+        },
+        {
+          "text": "Fancy a ball game?",
+          "if": {
+            "game": "none"
+          },
+          "goto": "sports"
+        },
+        {
+          "text": "Never mind.",
+          "goto": "main"
+        }
+      ]
     }
   }
 }

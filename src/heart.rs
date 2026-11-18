@@ -1,0 +1,849 @@
+//! Characters at work on the server (see `character`): an NPC's mood moves along its graph as
+//! things happen to it and to its friends, its relations with players and other NPCs rise and fall,
+//! and it does what it is told worse when it is upset or dislikes who tells it.
+//!
+//! - A player who hits an NPC falls in its eyes; one who hits (or kills) an NPC it is friends with
+//!   falls in that one's eyes too, the more the closer the friends, if it saw it or stood near.
+//! - Upset, it walks slower, takes its time over orders or refuses them; it won't talk at all to a
+//!   player it hates. Gifts, apologies and praise in its dialog mend things, and so does time.
+//! - NPCs that spend time near each other grow friends; NPCs of one owner start as friends.
+//!
+//! An NPC's character is `projectfelix:kind` unless `/felix character` (or its file) says otherwise.
+use crate::character::{self, Bond, Character, Heart};
+use crate::companion::{self, Mode};
+use mod_api::{
+    AddServerReloadListenersEvent, AttachmentCodec, AttachmentError, AttachmentType, Command, CommandArgumentValue,
+    CommandSource, Compound, EntityRef, FileToIdConverter, Flow, Holder, Identifier, LivingRef, PlayerRef,
+    RegisterCommandsEvent, ReloadApply, ReloadResourceError, RunModCommandEvent, ServerHost, ServerReloadContext,
+    ServerReloadListener, Tag, Text,
+};
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
+
+pub const DEFAULT: &str = "projectfelix:kind";
+/// Ticks between looks.
+const SCAN: i64 = 10;
+/// How far an NPC notices a friend being hurt (when it sees it), and how near it always does.
+const NOTICE: f64 = 24.0;
+const CLOSE: f64 = 8.0;
+/// How far its words carry.
+const VOICE: f64 = 24.0;
+/// How near NPCs must be to grow friends.
+const TOGETHER: f64 = 8.0;
+const MINUTE: i64 = 1200;
+/// A kind word raises a relation once a minute at most (talk: once in two); gifts always.
+const KIND_REST: i64 = 1200;
+/// Ticks between a mood's particles.
+const PUFF: i64 = 40;
+
+// ---- saved -----------------------------------------------------------------------------------------------
+
+fn uuid_tag(u: u128) -> Tag {
+    Tag::IntArray(vec![(u >> 96) as i32, (u >> 64) as i32, (u >> 32) as i32, u as i32])
+}
+
+fn tag_uuid(t: Option<&Tag>) -> Option<u128> {
+    match t {
+        Some(Tag::IntArray(v)) if v.len() == 4 => Some(v.iter().fold(0u128, |acc, x| (acc << 32) | (*x as u32 as u128))),
+        _ => None,
+    }
+}
+
+fn encode(h: &Option<Heart>) -> Result<Compound, AttachmentError> {
+    let mut c = Compound::new();
+    let Some(h) = h else { return Ok(c) };
+    if let Some(ch) = &h.character {
+        c.insert("character".into(), Tag::String(ch.as_str().into()));
+    }
+    c.insert("mood".into(), Tag::String(h.mood.as_str().into()));
+    c.insert("since".into(), Tag::Long(h.since));
+    let bonds = h
+        .bonds
+        .iter()
+        .map(|b| {
+            let mut x = Compound::new();
+            x.insert("who".into(), uuid_tag(b.who));
+            x.insert("name".into(), Tag::String(b.name.as_str().into()));
+            x.insert("npc".into(), Tag::Byte(b.npc as i8));
+            x.insert("value".into(), Tag::Double(f64::from(b.value).to_bits()));
+            x.insert("base".into(), Tag::Int(b.base));
+            Tag::Compound(x)
+        })
+        .collect();
+    c.insert("bonds".into(), Tag::List(bonds));
+    Ok(c)
+}
+
+fn decode(c: &Compound) -> Result<Option<Heart>, AttachmentError> {
+    let text = |c: &Compound, k: &str| match c.get(&k.into()) {
+        Some(Tag::String(s)) => Some(s.to_string_lossy()),
+        _ => None,
+    };
+    let Some(mood) = text(c, "mood") else { return Ok(None) };
+    let since = match c.get(&"since".into()) {
+        Some(Tag::Long(t)) => *t,
+        _ => 0,
+    };
+    let mut bonds = Vec::new();
+    if let Some(Tag::List(list)) = c.get(&"bonds".into()) {
+        for t in list {
+            let Tag::Compound(x) = t else { return Err(AttachmentError::Decode) };
+            let Some(who) = tag_uuid(x.get(&"who".into())) else { continue };
+            let value = match x.get(&"value".into()) {
+                Some(Tag::Double(v)) => f64::from_bits(*v) as f32,
+                _ => 0.0,
+            };
+            let base = match x.get(&"base".into()) {
+                Some(Tag::Int(v)) => *v,
+                _ => 0,
+            };
+            let npc = matches!(x.get(&"npc".into()), Some(Tag::Byte(1)));
+            bonds.push(Bond { who, name: text(x, "name").unwrap_or_default(), npc, value, base });
+        }
+    }
+    Ok(Some(Heart { character: text(c, "character"), mood, since, bonds }))
+}
+
+pub static HEART: AttachmentType<Option<Heart>> = AttachmentType {
+    namespace: "projectfelix",
+    name: "heart",
+    default: || None,
+    codec: Some(AttachmentCodec { encode, decode }),
+    copy_on_death: false,
+    sync: false,
+};
+
+// ---- characters from data packs -------------------------------------------------------------------------
+
+static LOADED: LazyLock<Mutex<HashMap<String, Arc<Character>>>> = LazyLock::new(Default::default);
+static BUILT_IN: LazyLock<Arc<Character>> = LazyLock::new(|| {
+    Arc::new(character::parse(include_bytes!("../data/projectfelix/felix_characters/kind.json")).expect("kind.json reads"))
+});
+
+fn character_named(id: &str) -> Arc<Character> {
+    let loaded = LOADED.lock().ok().and_then(|l| l.get(id).or_else(|| l.get(DEFAULT)).cloned());
+    loaded.unwrap_or_else(|| BUILT_IN.clone())
+}
+
+pub fn character_exists(id: &str) -> bool {
+    id == DEFAULT || LOADED.lock().is_ok_and(|l| l.contains_key(id))
+}
+
+struct Listener;
+
+impl ServerReloadListener for Listener {
+    fn prepare(&self, cx: &ServerReloadContext) -> Result<Box<dyn ReloadApply>, ReloadResourceError> {
+        let mut next = HashMap::new();
+        for id in cx.list() {
+            let Some(bytes) = cx.read(id) else { continue };
+            match character::parse(bytes) {
+                Ok(c) => {
+                    next.insert(id.to_string(), Arc::new(c));
+                }
+                Err(e) => eprintln!("[projectfelix] character {id} not loaded: {e}"),
+            }
+        }
+        Ok(<dyn ReloadApply>::new(move || {
+            if let Ok(mut live) = LOADED.lock() {
+                *live = next;
+            }
+        }))
+    }
+}
+
+pub fn add_listener(e: &mut AddServerReloadListenersEvent<'_>) {
+    let (Ok(id), Ok(converter)) = (Identifier::parse("projectfelix:characters"), FileToIdConverter::json("felix_characters")) else {
+        return;
+    };
+    if let Err(err) = e.listeners.add_listener(id, converter, Arc::new(Listener)) {
+        eprintln!("[projectfelix] characters listener not added: {err:?}");
+    }
+}
+
+// ---- live hearts ------------------------------------------------------------------------------------------
+
+/// A loaded NPC's heart, and what it takes to read it.
+struct Live {
+    heart: Heart,
+    uuid: u128,
+    name: String,
+    owner: Option<u128>,
+    dirty: bool,
+}
+
+impl Live {
+    fn character(&self) -> Arc<Character> {
+        character_named(self.heart.character.as_deref().unwrap_or(DEFAULT))
+    }
+}
+
+enum Heard {
+    Hurt { victim: u32, by: u32 },
+    Died { victim: u32, uuid: u128, name: String, at: [f64; 3], killer: u32 },
+}
+
+/// An order it will carry out, when it has taken its time.
+struct Later {
+    npc: u32,
+    mode: Mode,
+    at: i64,
+}
+
+#[derive(Default)]
+struct State {
+    last: i64,
+    minute: i64,
+    live: HashMap<u32, Live>,
+    heard: Vec<Heard>,
+    later: Vec<Later>,
+    /// When a kind event last raised a relation: (NPC, player, event).
+    kind: HashMap<(u32, u128, String), i64>,
+    seed: u64,
+}
+
+static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
+
+fn random() -> f32 {
+    let Ok(mut s) = STATE.lock() else { return 0.5 };
+    let mut x = s.seed | 1;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    s.seed = x;
+    (x >> 40) as f32 / (1u64 << 24) as f32
+}
+
+fn pick(lines: &[String]) -> Option<&String> {
+    if lines.is_empty() { None } else { lines.get(((random() * lines.len() as f32) as usize).min(lines.len() - 1)) }
+}
+
+fn dist(a: [f64; 3], b: [f64; 3]) -> f64 {
+    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+}
+
+fn now_of(host: &dyn mod_api::Host, e: EntityRef) -> i64 {
+    e.level(host).and_then(|l| l.game_time(host)).unwrap_or(0)
+}
+
+/// Reads NPC `e`'s heart into the live ones, if it isn't there yet.
+fn load(host: &mut dyn ServerHost, e: EntityRef) -> bool {
+    if STATE.lock().is_ok_and(|s| s.live.contains_key(&e.id())) {
+        return true;
+    }
+    if !companion::is_npc(&*host, e) {
+        return false;
+    }
+    let Some(uuid) = e.uuid(host) else { return false };
+    let saved = HEART.get(host, Holder::Entity(e.id())).ok().flatten();
+    let now = now_of(&*host, e);
+    let heart = saved.unwrap_or_else(|| Heart { character: None, mood: character_named(DEFAULT).start.clone(), since: now, bonds: Vec::new() });
+    let live = Live { heart, uuid, name: e.name(&*host).unwrap_or_else(|| "NPC".into()), owner: LivingRef::new(e).owner(&*host), dirty: false };
+    if let Ok(mut s) = STATE.lock() {
+        s.live.entry(e.id()).or_insert(live);
+    }
+    true
+}
+
+/// The mood an NPC is in (for rules and dialogs), as last known.
+pub fn mood_of(id: u32) -> String {
+    STATE.lock().ok().and_then(|s| s.live.get(&id).map(|l| l.heart.mood.clone())).unwrap_or_else(|| "calm".into())
+}
+
+/// How much NPC `id` likes the player or NPC `who`, as last known.
+pub fn relation_of(id: u32, who: u128) -> i32 {
+    let Ok(s) = STATE.lock() else { return 0 };
+    let Some(l) = s.live.get(&id) else { return 0 };
+    l.heart.value(who).unwrap_or_else(|| base_for(l, &l.character(), who, None))
+}
+
+/// Where the relation with `who` begins: its owner high; NPCs of its owner as friends.
+fn base_for(l: &Live, c: &Character, who: u128, their_owner: Option<u128>) -> i32 {
+    if Some(who) == l.owner {
+        c.owner
+    } else if their_owner.is_some() && their_owner == l.owner {
+        c.friend_at
+    } else {
+        0
+    }
+}
+
+fn player_from(host: &dyn mod_api::Host, e: EntityRef) -> Option<PlayerRef> {
+    e.level(host)?.online_players(host)?.into_iter().find(|p| p.entity().id() == e.id())
+}
+
+/// Says `line` aloud: to every player near the NPC.
+fn say(host: &mut dyn ServerHost, me: EntityRef, name: &str, line: &str) {
+    let Some(at) = me.position(&*host) else { return };
+    let players = me.level(&*host).and_then(|l| l.online_players(&*host)).unwrap_or_default();
+    for p in players {
+        if p.entity().position(&*host).is_some_and(|x| dist(x, at) <= VOICE) {
+            let _ = p.tell(host, Text::literal(format!("<{name}> {line}")));
+        }
+    }
+}
+
+fn fill(line: &str, player: &str, npc: &str, about: &str) -> String {
+    crate::rules::fill(line, player, npc, about)
+}
+
+// ---- what happens to it ------------------------------------------------------------------------------------
+
+/// Event `event` for NPC `id`, about `player` (if any): moves the relation with them (times
+/// `scale`) and the mood along the graph. `about` is who it concerns (`@target`), as a friend hurt.
+fn feel_at(host: &mut dyn ServerHost, id: u32, event: &str, player: Option<PlayerRef>, scale: f32, about: &str) {
+    let Some(me) = host.entity(id) else { return };
+    if !load(host, me) {
+        return;
+    }
+    let now = now_of(&*host, me);
+    let who = player.map(|p| (p.uuid(), p.name(&*host).unwrap_or_default()));
+    let (c, labels, next, name) = {
+        let Ok(mut s) = STATE.lock() else { return };
+        let gate = match &who {
+            Some((u, _)) => {
+                let delta = s.live.get(&id).map_or(0, |l| l.character().delta(event));
+                let key = (id, *u, event.to_string());
+                let rest = if event == "talk" { KIND_REST * 2 } else { KIND_REST };
+                // Kind words count once in a while; hurts and gifts always.
+                let open = delta <= 0 || event == "gift" || s.kind.get(&key).is_none_or(|t| now - t >= rest || now < *t);
+                if open && delta > 0 {
+                    s.kind.insert(key, now);
+                }
+                open
+            }
+            None => true,
+        };
+        let Some(l) = s.live.get_mut(&id) else { return };
+        let c = l.character();
+        let mut labels = None;
+        let relation = match &who {
+            Some((u, n)) => {
+                let base = base_for(l, &c, *u, None);
+                let before = l.heart.value(*u).unwrap_or(base);
+                let delta = c.delta(event) as f32 * scale;
+                let after = if gate && delta != 0.0 { l.heart.change(*u, n, false, base, delta) } else { before };
+                if c.label(before) != c.label(after) {
+                    labels = Some((c.label(after), after < before));
+                }
+                l.dirty = true;
+                after
+            }
+            None => 0,
+        };
+        let next = c.next(&l.heart.mood, event, relation).map(str::to_string);
+        (c, labels, next, l.name.clone())
+    };
+    if let (Some(p), Some((label, worse))) = (player, labels) {
+        let line = match (label, worse) {
+            ("friend", _) => format!("{name} counts you a friend now."),
+            ("hates", _) => format!("{name} hates you now."),
+            ("dislikes", true) => format!("{name} dislikes you now."),
+            (_, true) => format!("{name} likes you less."),
+            (_, false) => format!("{name} likes you more."),
+        };
+        let _ = p.action_bar(host, Text::literal(line));
+    }
+    if let Some(next) = next {
+        enter(host, me, &c, &next, player, about, now);
+    }
+}
+
+/// NPC `me` comes into `mood`: says so, shows it, walks as it does in it.
+fn enter(host: &mut dyn ServerHost, me: EntityRef, c: &Character, mood: &str, player: Option<PlayerRef>, about: &str, now: i64) {
+    let (uuid, name) = {
+        let Ok(mut s) = STATE.lock() else { return };
+        let Some(l) = s.live.get_mut(&me.id()) else { return };
+        l.heart.mood = mood.to_string();
+        l.heart.since = now;
+        l.dirty = true;
+        (l.uuid, l.name.clone())
+    };
+    let m = c.mood(mood).clone();
+    let player_name = player.and_then(|p| p.name(&*host)).unwrap_or_default();
+    if let Some(line) = pick(&m.say) {
+        say(host, me, &name, &fill(line, &player_name, &name, about));
+    }
+    if let Some(a) = &m.animation {
+        crate::talk::run_for(host, None, me, &[crate::dialog::Action::Animation(a.clone())]);
+    }
+    let id = crate::talk::uuid_text(uuid);
+    if let Some(p) = &m.particle {
+        crate::talk::queue(format!("execute at {id} run particle {p} ~ ~2.2 ~ 0.3 0.2 0.3 0 6"));
+    }
+    set_speed(&id, m.speed);
+    crate::rulebook::notice(me.id(), &format!("mood:{mood}"), player.map(|p| p.entity().id()));
+}
+
+fn set_speed(uuid: &str, speed: f32) {
+    crate::talk::queue(format!("attribute {uuid} minecraft:movement_speed modifier remove projectfelix:mood"));
+    if (speed - 1.0).abs() > 0.01 {
+        crate::talk::queue(format!("attribute {uuid} minecraft:movement_speed modifier add projectfelix:mood {:.2} add_multiplied_total", speed - 1.0));
+    }
+}
+
+/// `living_damage_post`.
+pub fn on_hurt(victim: i32, by: i32) {
+    if victim > 0 && by > 0
+        && let Ok(mut s) = STATE.lock()
+        && s.heard.len() < 256
+    {
+        s.heard.push(Heard::Hurt { victim: victim as u32, by: by as u32 });
+    }
+}
+
+/// `living_death`: an NPC killed (by a player, its friends will know).
+pub fn on_death(host: &mut dyn ServerHost, victim: u32, killer: i32) {
+    if killer <= 0 || !STATE.lock().is_ok_and(|s| s.live.contains_key(&victim)) {
+        return;
+    }
+    let Some(e) = host.entity(victim) else { return };
+    let Some(uuid) = e.uuid(host) else { return };
+    let name = e.name(&*host).unwrap_or_else(|| "NPC".into());
+    let at = e.position(&*host).unwrap_or([0.0; 3]);
+    if let Ok(mut s) = STATE.lock() {
+        s.heard.push(Heard::Died { victim, uuid, name, at, killer: killer as u32 });
+    }
+}
+
+/// A dialog or a rule makes NPC `npc` feel `event` (a gift, an apology), about `player`.
+pub fn feel(host: &mut dyn ServerHost, npc: EntityRef, player: Option<PlayerRef>, event: &str) {
+    feel_at(host, npc.id(), event, player, 1.0, "");
+}
+
+/// Moves NPC `npc`'s relation with `player` by `delta`.
+pub fn befriend(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef, delta: i32) {
+    if !load(host, npc) {
+        return;
+    }
+    let name = player.name(&*host).unwrap_or_default();
+    if let Ok(mut s) = STATE.lock()
+        && let Some(l) = s.live.get_mut(&npc.id())
+    {
+        let base = base_for(l, &l.character(), player.uuid(), None);
+        l.heart.change(player.uuid(), &name, false, base, delta as f32);
+        l.dirty = true;
+    }
+}
+
+/// A player wants to talk: false (and it says why) if the NPC won't, for it hates them.
+pub fn talks_to(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) -> bool {
+    if !load(host, npc) {
+        return true;
+    }
+    let (c, value, name) = {
+        let Ok(s) = STATE.lock() else { return true };
+        let Some(l) = s.live.get(&npc.id()) else { return true };
+        let c = l.character();
+        let value = l.heart.value(player.uuid()).unwrap_or_else(|| base_for(l, &c, player.uuid(), None));
+        (c, value, l.name.clone())
+    };
+    if value > c.hate_at {
+        feel(host, npc, Some(player), "talk");
+        return true;
+    }
+    let player_name = player.name(&*host).unwrap_or_default();
+    let line = pick(&c.shun).cloned().unwrap_or_else(|| "...".into());
+    say(host, npc, &name, &fill(&line, &player_name, &name, ""));
+    false
+}
+
+/// `player` tells NPC `npc` to `mode`: it does (maybe after a while, grumbling), or refuses.
+/// False if it refused.
+pub fn order(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef, mode: Mode) -> bool {
+    if !load(host, npc) {
+        companion::set_orders(host, npc, mode);
+        return true;
+    }
+    let (c, mood, value, name) = {
+        let Ok(s) = STATE.lock() else { return true };
+        let Some(l) = s.live.get(&npc.id()) else { return true };
+        let c = l.character();
+        let value = l.heart.value(player.uuid()).unwrap_or_else(|| base_for(l, &c, player.uuid(), None));
+        (c, l.heart.mood.clone(), value, l.name.clone())
+    };
+    let player_name = player.name(&*host).unwrap_or_default();
+    let m = c.mood(&mood).clone();
+    if random() >= c.obey_chance(&mood, value) {
+        let line = pick(&m.refuse).cloned().unwrap_or_else(|| "No.".into());
+        say(host, npc, &name, &fill(&line, &player_name, &name, ""));
+        if let Some(a) = &m.animation {
+            crate::talk::run_for(host, None, npc, &[crate::dialog::Action::Animation(a.clone())]);
+        }
+        feel(host, npc, Some(player), "refused");
+        return false;
+    }
+    if m.delay > 0.0 {
+        if let Some(line) = pick(&m.grumble) {
+            say(host, npc, &name, &fill(line, &player_name, &name, ""));
+        }
+        let at = now_of(&*host, npc) + (m.delay * 20.0) as i64;
+        if let Ok(mut s) = STATE.lock() {
+            s.later.retain(|l| l.npc != npc.id());
+            s.later.push(Later { npc: npc.id(), mode, at });
+        }
+    } else {
+        companion::set_orders(host, npc, mode);
+    }
+    true
+}
+
+/// Gives NPC `npc` the character `id` (none: the default), starting calm again.
+pub fn set_character(host: &mut dyn ServerHost, npc: EntityRef, id: Option<&str>) -> bool {
+    if !load(host, npc) {
+        return false;
+    }
+    let c = character_named(id.unwrap_or(DEFAULT));
+    let now = now_of(&*host, npc);
+    let uuid = {
+        let Ok(mut s) = STATE.lock() else { return false };
+        let Some(l) = s.live.get_mut(&npc.id()) else { return false };
+        l.heart.character = id.map(str::to_string);
+        l.heart.mood = c.start.clone();
+        l.heart.since = now;
+        l.dirty = true;
+        l.uuid
+    };
+    set_speed(&crate::talk::uuid_text(uuid), c.mood(&c.start).speed);
+    true
+}
+
+// ---- the tick -----------------------------------------------------------------------------------------------
+
+pub fn tick(host: &mut dyn ServerHost) {
+    let npcs = companion::npcs();
+    let Some(now) = npcs.iter().find_map(|id| host.entity(*id).map(|e| now_of(&*host, e))) else { return };
+    let (heard, later, minute) = {
+        let Ok(mut s) = STATE.lock() else { return };
+        if now - s.last < SCAN && now >= s.last {
+            return;
+        }
+        s.last = now;
+        s.seed ^= (now as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let minute = now - s.minute >= MINUTE || now < s.minute;
+        if minute {
+            s.minute = now;
+            s.kind.retain(|_, t| now - *t < KIND_REST * 2);
+        }
+        let (due, wait): (Vec<Later>, Vec<Later>) = std::mem::take(&mut s.later).into_iter().partition(|l| l.at <= now);
+        s.later = wait;
+        (std::mem::take(&mut s.heard), due, minute)
+    };
+    for id in &npcs {
+        if let Some(e) = host.entity(*id)
+            && load(host, e)
+        {
+            // Names and owners change (a name tag, a new owner).
+            let name = e.name(&*host).unwrap_or_else(|| "NPC".into());
+            let owner = LivingRef::new(e).owner(&*host);
+            if let Ok(mut s) = STATE.lock()
+                && let Some(l) = s.live.get_mut(id)
+            {
+                l.name = name;
+                l.owner = owner;
+            }
+        }
+    }
+    for l in later {
+        if let Some(e) = host.entity(l.npc) {
+            companion::set_orders(host, e, l.mode);
+        }
+    }
+    for h in heard {
+        match h {
+            Heard::Hurt { victim, by } => hurt(host, victim, by),
+            Heard::Died { victim, uuid, name, at, killer } => died(host, victim, uuid, &name, at, killer),
+        }
+    }
+    // Moods that pass with time.
+    let timed: Vec<(u32, Arc<Character>, String)> = match STATE.lock() {
+        Ok(s) => s
+            .live
+            .iter()
+            .filter_map(|(id, l)| {
+                let c = l.character();
+                let next = c.timed(&l.heart.mood, (now - l.heart.since) as f32 / 20.0)?.to_string();
+                Some((*id, c, next))
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    for (id, c, next) in timed {
+        if let Some(e) = host.entity(id) {
+            enter(host, e, &c, &next, None, "", now);
+        }
+    }
+    // Particles while in a mood that has them.
+    if now % PUFF < SCAN {
+        let puffs: Vec<(u128, String)> = match STATE.lock() {
+            Ok(s) => s.live.values().filter_map(|l| Some((l.uuid, l.character().mood(&l.heart.mood).particle.clone()?))).collect(),
+            Err(_) => Vec::new(),
+        };
+        for (u, p) in puffs {
+            crate::talk::queue(format!("execute at {} run particle {p} ~ ~2.2 ~ 0.25 0.1 0.25 0 2", crate::talk::uuid_text(u)));
+        }
+    }
+    if minute {
+        a_minute(host);
+    }
+    // Saved, and the unloaded let go.
+    let dirty: Vec<(u32, Heart)> = match STATE.lock() {
+        Ok(mut s) => {
+            let dirty = s
+                .live
+                .iter_mut()
+                .filter(|(_, l)| l.dirty)
+                .map(|(id, l)| {
+                    l.dirty = false;
+                    (*id, l.heart.clone())
+                })
+                .collect();
+            s.live.retain(|id, _| npcs.contains(id));
+            dirty
+        }
+        Err(_) => Vec::new(),
+    };
+    for (id, h) in dirty {
+        let _ = HEART.set(host, Holder::Entity(id), Some(h));
+    }
+}
+
+/// Whether NPC `id` noticed what happened to `victim` (it saw it, or stood near).
+fn noticed(host: &dyn mod_api::Host, id: u32, victim: EntityRef, at: [f64; 3]) -> bool {
+    let Some(me) = host.entity(id) else { return false };
+    let Some(mine) = me.position(host) else { return false };
+    let d = dist(mine, at);
+    d <= CLOSE || (d <= NOTICE && LivingRef::new(me).has_line_of_sight(host, victim) == Some(true))
+}
+
+/// The NPCs that count `friend` (by UUID; `friend_owner` theirs) a friend, and how close.
+fn friends_of(friend: u128, friend_owner: Option<u128>, except: u32) -> Vec<(u32, i32)> {
+    let Ok(s) = STATE.lock() else { return Vec::new() };
+    s.live
+        .iter()
+        .filter(|(id, _)| **id != except)
+        .filter_map(|(id, l)| {
+            let c = l.character();
+            let v = l.heart.value(friend).unwrap_or_else(|| base_for(l, &c, friend, friend_owner));
+            (v >= c.friend_at).then_some((*id, v))
+        })
+        .collect()
+}
+
+fn hurt(host: &mut dyn ServerHost, victim: u32, by: u32) {
+    let (Some(v), Some(b)) = (host.entity(victim), host.entity(by)) else { return };
+    let attacker = player_from(&*host, b);
+    let npc = STATE.lock().ok().and_then(|s| s.live.get(&victim).map(|l| (l.uuid, l.owner, l.name.clone())));
+    match (npc, attacker) {
+        // An NPC hit by a player: it and its friends who saw.
+        (Some((uuid, owner, name)), Some(p)) => {
+            feel_at(host, victim, "hurt_by_player", Some(p), 1.0, "");
+            let at = v.position(&*host).unwrap_or([0.0; 3]);
+            for (friend, closeness) in friends_of(uuid, owner, victim) {
+                if noticed(&*host, friend, v, at) {
+                    feel_at(host, friend, "friend_hurt", Some(p), character::friend_scale(closeness), &name);
+                    crate::rulebook::notice(friend, "friend_hurt", Some(by));
+                }
+            }
+        }
+        (Some(_), None) => feel_at(host, victim, "hurt", None, 1.0, ""),
+        // A player hit by another: the NPCs whose owner it is.
+        (None, Some(p)) => {
+            let Some(owner) = player_from(&*host, v).map(|o| o.uuid()) else { return };
+            if owner == p.uuid() {
+                return;
+            }
+            let at = v.position(&*host).unwrap_or([0.0; 3]);
+            let theirs: Vec<u32> = STATE.lock().map(|s| s.live.iter().filter(|(_, l)| l.owner == Some(owner)).map(|(id, _)| *id).collect()).unwrap_or_default();
+            let owner_name = v.name(&*host).unwrap_or_default();
+            for id in theirs {
+                if noticed(&*host, id, v, at) {
+                    feel_at(host, id, "owner_hurt", Some(p), 1.0, &owner_name);
+                }
+            }
+        }
+        (None, None) => {}
+    }
+}
+
+fn died(host: &mut dyn ServerHost, victim: u32, uuid: u128, name: &str, at: [f64; 3], killer: u32) {
+    let owner = STATE.lock().ok().and_then(|s| s.live.get(&victim).and_then(|l| l.owner));
+    if let Ok(mut s) = STATE.lock() {
+        s.live.remove(&victim);
+    }
+    let Some(p) = host.entity(killer).and_then(|k| player_from(&*host, k)) else { return };
+    for (friend, closeness) in friends_of(uuid, owner, victim) {
+        let near = host.entity(friend).and_then(|e| e.position(&*host)).is_some_and(|x| dist(x, at) <= NOTICE + 8.0);
+        if near {
+            feel_at(host, friend, "friend_killed", Some(p), character::friend_scale(closeness), name);
+            crate::rulebook::notice(friend, "friend_killed", Some(killer));
+        }
+    }
+}
+
+/// Once a minute: hurts are forgiven a little, and NPCs near each other grow friends.
+fn a_minute(host: &mut dyn ServerHost) {
+    let ids: Vec<u32> = STATE.lock().map(|s| s.live.keys().copied().collect()).unwrap_or_default();
+    let at: Vec<(u32, [f64; 3])> = ids.iter().filter_map(|id| Some((*id, host.entity(*id)?.position(&*host)?))).take(64).collect();
+    let Ok(mut s) = STATE.lock() else { return };
+    let info: HashMap<u32, (u128, String, Option<u128>)> = s.live.iter().map(|(id, l)| (*id, (l.uuid, l.name.clone(), l.owner))).collect();
+    for (id, l) in s.live.iter_mut() {
+        let c = l.character();
+        l.heart.forgive(1.0, c.forgive);
+        let Some(mine) = at.iter().find(|x| x.0 == *id).map(|x| x.1) else { continue };
+        for (other, there) in &at {
+            if other == id || dist(mine, *there) > TOGETHER {
+                continue;
+            }
+            let Some((u, name, owner)) = info.get(other) else { continue };
+            let base = base_for(l, &c, *u, *owner);
+            let now = l.heart.value(*u).unwrap_or(base);
+            if now < c.bond_max {
+                l.heart.change(*u, name, true, base, c.bond.min((c.bond_max - now) as f32));
+            }
+        }
+        l.dirty = true;
+    }
+}
+
+// ---- commands -------------------------------------------------------------------------------------------------
+
+pub fn register_commands(e: &mut RegisterCommandsEvent<'_>) {
+    e.commands.push(Command::op("felix character <targets:entities> <character:text>", 2));
+    e.commands.push(Command::op("felix feel <targets:entities> <event:word>", 2));
+    e.commands.push(Command::op("felix relation <target:entity> <who:entities> <value:integer>", 2));
+    e.commands.push(Command::op("felix friends <targets:entities>", 2));
+    e.commands.push(Command::op("felix heart <target:entity>", 2));
+}
+
+fn entities(e: &RunModCommandEvent<'_>, name: &str) -> Vec<EntityRef> {
+    e.command
+        .arguments
+        .iter()
+        .find(|a| a.name == name)
+        .map(|a| match &a.value {
+            CommandArgumentValue::Entities(list) => list.clone(),
+            CommandArgumentValue::Entity(one) => vec![*one],
+            _ => Vec::new(),
+        })
+        .unwrap_or_default()
+}
+
+pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
+    let lit: Vec<&str> = e.command.literals.iter().map(String::as_str).collect();
+    let feedback = |host: &mut dyn ServerHost, line: String| {
+        let _ = host.commands().feedback(Text::literal(line));
+    };
+    let source = match e.source {
+        CommandSource::Player { player, .. } => Some(*player),
+        _ => None,
+    };
+    match lit.as_slice() {
+        ["felix", "character"] => {
+            let id = companion::text_argument(e, "character").unwrap_or_default().trim().to_string();
+            let npcs: Vec<EntityRef> = entities(e, "targets").into_iter().filter(|t| companion::is_npc(&*host, *t)).collect();
+            let n = npcs.iter().filter(|t| set_character(host, **t, Some(&id))).count();
+            let note = if character_exists(&id) { "" } else { " (no such character is loaded: they act as projectfelix:kind)" };
+            feedback(host, format!("{n} NPCs now have the character {id}{note}"));
+        }
+        ["felix", "feel"] => {
+            let event = companion::text_argument(e, "event").unwrap_or_default();
+            let npcs: Vec<EntityRef> = entities(e, "targets").into_iter().filter(|t| companion::is_npc(&*host, *t)).collect();
+            for t in &npcs {
+                feel(host, *t, source, &event);
+            }
+            feedback(host, format!("{} NPCs felt {event}", npcs.len()));
+        }
+        ["felix", "relation"] => {
+            let value = e.command.arguments.iter().find(|a| a.name == "value").and_then(|a| match a.value {
+                CommandArgumentValue::Integer(v) => Some(v.clamp(character::LOWEST, character::HIGHEST)),
+                _ => None,
+            });
+            let Some(npc) = entities(e, "target").into_iter().find(|t| companion::is_npc(&*host, *t)) else {
+                feedback(host, "That is not an NPC.".into());
+                return Flow::Cancel;
+            };
+            let (Some(value), true) = (value, load(host, npc)) else { return Flow::Cancel };
+            let mut n = 0;
+            for w in entities(e, "who") {
+                if w.id() == npc.id() {
+                    continue;
+                }
+                let Some(u) = w.uuid(host) else { continue };
+                let name = w.name(&*host).unwrap_or_default();
+                let is_npc = companion::is_npc(&*host, w);
+                if let Ok(mut s) = STATE.lock()
+                    && let Some(l) = s.live.get_mut(&npc.id())
+                {
+                    l.heart.set(u, &name, is_npc, value);
+                    l.dirty = true;
+                    n += 1;
+                }
+            }
+            feedback(host, format!("Set {n} relations to {value}"));
+        }
+        ["felix", "friends"] => {
+            let npcs: Vec<EntityRef> = entities(e, "targets").into_iter().filter(|t| companion::is_npc(&*host, *t)).collect();
+            let mut who = Vec::new();
+            for t in &npcs {
+                if load(host, *t) {
+                    who.push((t.id(), t.uuid(host).unwrap_or(0), t.name(&*host).unwrap_or_default()));
+                }
+            }
+            if let Ok(mut s) = STATE.lock() {
+                for (a, _, _) in &who {
+                    let Some(l) = s.live.get_mut(a) else { continue };
+                    let value = l.character().bond_max.max(l.character().friend_at);
+                    for (b, u, name) in &who {
+                        if a != b {
+                            let now = l.heart.value(*u).unwrap_or(0);
+                            l.heart.set(*u, name, true, value.max(now));
+                        }
+                    }
+                    l.dirty = true;
+                }
+            }
+            feedback(host, format!("{} NPCs are friends now", who.len()));
+        }
+        ["felix", "heart"] => {
+            let Some(npc) = entities(e, "target").into_iter().find(|t| companion::is_npc(&*host, *t)) else {
+                feedback(host, "That is not an NPC.".into());
+                return Flow::Cancel;
+            };
+            if !load(host, npc) {
+                return Flow::Cancel;
+            }
+            let now = now_of(&*host, npc);
+            let lines = {
+                let Ok(s) = STATE.lock() else { return Flow::Cancel };
+                let Some(l) = s.live.get(&npc.id()) else { return Flow::Cancel };
+                let c = l.character();
+                let mood = &l.heart.mood;
+                let m = c.mood(mood);
+                let mut lines = vec![
+                    format!("{}: {} ({})", l.name, mood, l.heart.character.as_deref().unwrap_or(DEFAULT)),
+                    format!("  for {} s; obeys {:.0}%, walks at {:.0}%", (now - l.heart.since) / 20, m.obey * 100.0, m.speed * 100.0),
+                ];
+                let next: Vec<String> = c.leads_to(mood).iter().map(|(on, to)| format!("{on} > {to}")).collect();
+                if !next.is_empty() {
+                    lines.push(format!("  next: {}", next.join(", ")));
+                }
+                let mut bonds = l.heart.bonds.clone();
+                bonds.sort_by(|a, b| b.value.total_cmp(&a.value));
+                for b in bonds.iter().take(12) {
+                    let v = b.value.round() as i32;
+                    let what = if b.npc { "NPC" } else { "player" };
+                    lines.push(format!("  {} ({what}): {v}, {}", if b.name.is_empty() { "?" } else { &b.name }, c.label(v)));
+                }
+                if bonds.is_empty() {
+                    lines.push("  knows nobody yet".into());
+                }
+                lines
+            };
+            for line in lines {
+                feedback(host, line);
+            }
+        }
+        _ => return Flow::Continue,
+    }
+    Flow::Cancel
+}

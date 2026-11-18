@@ -161,6 +161,8 @@ struct PlayerFacts {
     items: HashMap<String, u32>,
     owner: bool,
     mode: &'static str,
+    mood: String,
+    relation: i32,
 }
 
 impl Facts for PlayerFacts {
@@ -182,6 +184,12 @@ impl Facts for PlayerFacts {
     fn in_game(&self) -> bool {
         self.in_game
     }
+    fn mood(&self) -> &str {
+        &self.mood
+    }
+    fn relation(&self) -> i32 {
+        self.relation
+    }
 }
 
 fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> PlayerFacts {
@@ -198,7 +206,9 @@ fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> Player
         _ => "follow",
     };
     let (game, in_game) = crate::games::state_for(npc.id(), player);
-    PlayerFacts { game, in_game, tags, items, owner, mode }
+    let mood = crate::heart::mood_of(npc.id());
+    let relation = crate::heart::relation_of(npc.id(), player.uuid());
+    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation }
 }
 
 /// A UUID written with dashes, as commands take it.
@@ -226,6 +236,10 @@ pub fn start(host: &mut dyn ServerHost, player: PlayerRef, npc: u32) {
 fn talk(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
     let Some(id) = read_id(b) else { return };
     let Some(npc) = npc_near(host, player, id) else { return };
+    // One that hates the player won't talk at all.
+    if !crate::heart::talks_to(host, npc, player) {
+        return;
+    }
     let chosen = DIALOG.get(host, Holder::Entity(id)).ok().flatten().unwrap_or_else(|| DEFAULT_DIALOG.into());
     let extra = EXTRA.lock().ok().and_then(|e| e.get(&chosen).cloned());
     let found = extra.or_else(|| DIALOGS.lock().ok().and_then(|d| d.get(&chosen).or_else(|| d.get(DEFAULT_DIALOG)).cloned()));
@@ -254,7 +268,21 @@ fn choose(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
         enter(host, player, npc, session.dialog, &node);
         return;
     }
-    run_for(host, Some(player), npc, &choice.actions);
+    // Orders go through its character: it may take its time, or refuse.
+    let mut actions = choice.actions.clone();
+    let mut refused = false;
+    actions.retain(|a| match a {
+        Action::Order(o) => {
+            refused |= !crate::heart::order(host, npc, player, mode_named(o));
+            false
+        }
+        _ => true,
+    });
+    if refused {
+        send_close(host, player);
+        return;
+    }
+    run_for(host, Some(player), npc, &actions);
     match &choice.goto {
         Some(next) => enter(host, player, npc, session.dialog, next),
         None => send_close(host, player),
@@ -289,6 +317,14 @@ fn send_close(host: &mut dyn ServerHost, player: PlayerRef) {
     let _ = player.send_payload(host, &PayloadId(CLOSE.into()), PayloadBytes(Vec::new()));
 }
 
+fn mode_named(o: &str) -> Mode {
+    match o {
+        "wait" => Mode::Wait,
+        "guard" => Mode::Guard,
+        _ => Mode::Follow,
+    }
+}
+
 /// Runs dialog actions for `npc`; `player` (the one talking, if any) fills `@player`.
 pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: EntityRef, actions: &[Action]) {
     let name = player.and_then(|p| p.name(&*host)).unwrap_or_default();
@@ -300,12 +336,13 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
                 let _ = ACTION.set(host, Holder::Entity(npc.id()), Some(Play { animation: anim.clone(), start: time }));
             }
             Action::Order(o) => {
-                let mode = match o.as_str() {
-                    "wait" => Mode::Wait,
-                    "guard" => Mode::Guard,
-                    _ => Mode::Follow,
-                };
-                companion::set_orders(host, npc, mode);
+                companion::set_orders(host, npc, mode_named(o));
+            }
+            Action::Feel(event) => crate::heart::feel(host, npc, player, event),
+            Action::Relation(delta) => {
+                if let Some(p) = player {
+                    crate::heart::befriend(host, npc, p, *delta);
+                }
             }
             Action::Game(kind, vs_npc) => {
                 let (Some(p), Some(kind)) = (player, crate::games::GameKind::parse(kind)) else { continue };

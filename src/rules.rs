@@ -16,12 +16,15 @@
 //! When: `sees_monster`, `sees_player`, `sees_animal`, `{ "sees": "<entity type>" }` (each one that
 //! comes into sight, within `radius`), `hurt`, `hurt_by_player`, `owner_hurt`, `kills`,
 //! `{ "hears": "<word>" }` (a player says it in chat, within `radius`), `{ "every": <seconds> }`,
-//! `dawn`, `dusk`, `rain`, `low_health` (below a third).
+//! `dawn`, `dusk`, `rain`, `low_health` (below a third), `friend_hurt` / `friend_killed` (a player
+//! hurt or killed an NPC it is friends with: the player is the event's), `{ "feels": "<mood>" }` (its
+//! mood turns to that, see `character`).
 //!
 //! If (optional; `not`, `all`, `any` combine them): `time` (`day` or `night`), `raining`, `mode`
 //! (`follow`, `wait`, `guard`), `health_below` (a fraction), `owner_near` (blocks), `owner` (the player
 //! of the event is its owner), `chance` (0 to 1), `target` (an entity type, or `monster`, `animal`,
-//! `player`), `tag` (the NPC has it), `player_tag`, `item` (+ `count`, the player has it).
+//! `player`), `tag` (the NPC has it), `player_tag`, `item` (+ `count`, the player has it), `mood`,
+//! `relation_above` / `relation_below` (how much it likes the player of the event).
 //!
 //! Then and else: `say` (a chat line to the players near the NPC), `tell` (to the player of the
 //! event only), `attack` (what it saw or what hurt), `look` (at it), `talk` (start its dialog with
@@ -48,6 +51,9 @@ pub enum When {
     Dusk,
     Rain,
     LowHealth,
+    FriendHurt,
+    FriendKilled,
+    Feels(String),
 }
 
 impl When {
@@ -82,6 +88,9 @@ pub enum Cond {
     Tag(String),
     PlayerTag(String),
     Item(String, u32),
+    Mood(String),
+    RelationAbove(i32),
+    RelationBelow(i32),
     Not(Box<Cond>),
     All(Vec<Cond>),
     Any(Vec<Cond>),
@@ -125,6 +134,13 @@ pub trait Facts {
     fn npc_tag(&self, tag: &str) -> bool;
     fn player_tag(&self, tag: &str) -> bool;
     fn player_items(&self, item: &str) -> u32;
+    fn mood(&self) -> &str {
+        "calm"
+    }
+    /// How much the NPC likes the player of the event (none: there is none).
+    fn relation(&self) -> Option<i32> {
+        None
+    }
 }
 
 impl Cond {
@@ -141,6 +157,9 @@ impl Cond {
             Cond::Tag(t) => f.npc_tag(t),
             Cond::PlayerTag(t) => f.player_tag(t),
             Cond::Item(item, n) => f.player_items(item) >= *n,
+            Cond::Mood(m) => f.mood() == m,
+            Cond::RelationAbove(v) => f.relation().is_some_and(|r| r > *v),
+            Cond::RelationBelow(v) => f.relation().is_some_and(|r| r < *v),
             Cond::Not(c) => !c.holds(f),
             Cond::All(list) => list.iter().all(|c| c.holds(f)),
             Cond::Any(list) => list.iter().any(|c| c.holds(f)),
@@ -199,6 +218,8 @@ fn read_when(v: &Value) -> Result<When, String> {
             "dusk" => When::Dusk,
             "rain" => When::Rain,
             "low_health" => When::LowHealth,
+            "friend_hurt" => When::FriendHurt,
+            "friend_killed" => When::FriendKilled,
             _ => return Err(format!("unknown \"when\": {s}")),
         });
     }
@@ -215,6 +236,11 @@ fn read_when(v: &Value) -> Result<When, String> {
             return Err("\"hears\" needs a word".into());
         }
         Ok(When::Hears(w.trim().to_lowercase()))
+    } else if let Some(f) = m.get("feels").and_then(Value::as_str) {
+        if f.trim().is_empty() {
+            return Err("\"feels\" needs a mood".into());
+        }
+        Ok(When::Feels(f.trim().to_string()))
     } else if let Some(s) = m.get("every").and_then(Value::as_f64) {
         Ok(When::Every((s as f32).max(1.0)))
     } else {
@@ -252,6 +278,12 @@ fn read_cond(v: &Value) -> Result<Cond, String> {
         Cond::PlayerTag(t)
     } else if let Some(i) = s("item") {
         Cond::Item(i, m.get("count").and_then(Value::as_u64).unwrap_or(1) as u32)
+    } else if let Some(mood) = s("mood") {
+        Cond::Mood(mood)
+    } else if let Some(v) = m.get("relation_above").and_then(Value::as_f64) {
+        Cond::RelationAbove(v as i32)
+    } else if let Some(v) = m.get("relation_below").and_then(Value::as_f64) {
+        Cond::RelationBelow(v as i32)
     } else if let Some(c) = m.get("not") {
         Cond::Not(Box::new(read_cond(c)?))
     } else if m.contains_key("all") {
@@ -311,6 +343,9 @@ pub const WHENS: &[(&str, Option<&str>)] = &[
     ("at dusk", None),
     ("when rain starts", None),
     ("is badly hurt", None),
+    ("a friend is hurt", None),
+    ("a friend is killed", None),
+    ("feels...", Some("mood")),
 ];
 
 fn when_json(i: usize, arg: &str) -> Value {
@@ -328,7 +363,10 @@ fn when_json(i: usize, arg: &str) -> Value {
         10 => json!("dawn"),
         11 => json!("dusk"),
         12 => json!("rain"),
-        _ => json!("low_health"),
+        13 => json!("low_health"),
+        14 => json!("friend_hurt"),
+        15 => json!("friend_killed"),
+        _ => json!({ "feels": arg.trim() }),
     }
 }
 
@@ -347,6 +385,11 @@ pub const CONDS: &[&str] = &[
     "if player is owner",
     "if player not owner",
     "half the time",
+    "if calm",
+    "if upset",
+    "if angry",
+    "if likes player",
+    "if dislikes player",
 ];
 
 fn cond_json(i: usize) -> Option<Value> {
@@ -363,6 +406,11 @@ fn cond_json(i: usize) -> Option<Value> {
         10 => json!({ "owner": true }),
         11 => json!({ "owner": false }),
         12 => json!({ "chance": 0.5 }),
+        13 => json!({ "mood": "calm" }),
+        14 => json!({ "mood": "upset" }),
+        15 => json!({ "mood": "angry" }),
+        16 => json!({ "relation_above": 10 }),
+        17 => json!({ "relation_below": -10 }),
         _ => return None,
     })
 }
@@ -379,6 +427,7 @@ pub const DOS: &[(&str, &str, bool)] = &[
     ("order", "order", true),
     ("sound", "sound", true),
     ("command", "command", true),
+    ("feels...", "feel", true),
 ];
 
 fn do_json(i: usize, arg: &str) -> Option<Value> {
@@ -547,6 +596,9 @@ mod tests {
             Row { when: 8, when_arg: "hello".into(), cond: 0, then: 2, then_arg: "Hi".into(), ..Row::default() },
             Row { when: 9, when_arg: "30".into(), cond: 12, then: 6, then_arg: "animation.felix.wave".into(), ..Row::default() },
             Row { when: 3, when_arg: "minecraft:cow".into(), cond: 0, then: 0, ..Row::default() },
+            Row { when: 14, cond: 17, then: 1, then_arg: "Stop it, @player!".into(), otherwise: 10, otherwise_arg: "scold".into(), ..Row::default() },
+            Row { when: 16, when_arg: "upset".into(), cond: 0, then: 6, then_arg: "animation.felix.sad".into(), ..Row::default() },
+            Row { when: 13, cond: 15, then: 1, then_arg: "Ow".into(), ..Row::default() },
         ];
         for row in rows {
             let v = row.to_json();

@@ -1,0 +1,144 @@
+{
+  "start": "calm",
+  "friend_at": 30,
+  "hate_at": -35,
+  "owner": 50,
+  "forgive": 0.5,
+  "bond": 0.5,
+  "bond_max": 60,
+  "shun": [
+    "I don't want to talk to you, @player.",
+    "Go away, @player."
+  ],
+  "relations": {
+    "hurt_by_player": -15,
+    "friend_hurt": -20,
+    "friend_killed": -60,
+    "owner_hurt": -15,
+    "talk": 1,
+    "gift": 5,
+    "apology": 2,
+    "praise": 2,
+    "scold": -10
+  },
+  "moods": {
+    "calm": {
+      "on": {
+        "hurt_by_player": [
+          {
+            "to": "angry",
+            "below": 20
+          },
+          {
+            "to": "upset"
+          }
+        ],
+        "friend_hurt": [
+          {
+            "to": "angry",
+            "below": 20
+          },
+          {
+            "to": "upset"
+          }
+        ],
+        "friend_killed": "grieving",
+        "scold": "upset",
+        "gift": "happy",
+        "praise": "happy"
+      }
+    },
+    "happy": {
+      "speed": 1.15,
+      "say": [
+        "Thank you, @player!",
+        "You're the best, @player."
+      ],
+      "animation": "animation.felix.cheer",
+      "particle": "minecraft:happy_villager",
+      "on": {
+        "after:120": "calm",
+        "hurt_by_player": "upset",
+        "friend_hurt": "upset",
+        "friend_killed": "grieving",
+        "scold": "calm"
+      }
+    },
+    "upset": {
+      "obey": 0.4,
+      "speed": 0.75,
+      "delay": 3,
+      "animation": "animation.felix.sad",
+      "particle": "minecraft:falling_water",
+      "say": [
+        "Why would you do that, @player?",
+        "That was not nice, @player."
+      ],
+      "refuse": [
+        "Not now, @player.",
+        "Ask me later.",
+        "I don't feel like it."
+      ],
+      "grumble": [
+        "Fine...",
+        "If I must."
+      ],
+      "on": {
+        "apology": "calm",
+        "gift": "calm",
+        "friend_killed": "grieving",
+        "hurt_by_player": "angry",
+        "friend_hurt": "angry",
+        "after:300": "calm"
+      }
+    },
+    "angry": {
+      "obey": 0.1,
+      "speed": 0.6,
+      "delay": 5,
+      "animation": "animation.felix.angry",
+      "particle": "minecraft:angry_villager",
+      "say": [
+        "Leave me alone, @player!",
+        "Enough, @player!"
+      ],
+      "refuse": [
+        "No.",
+        "Do it yourself, @player.",
+        "After what you did? No."
+      ],
+      "grumble": [
+        "Hmph.",
+        "...fine."
+      ],
+      "on": {
+        "gift": "upset",
+        "friend_killed": "grieving",
+        "after:420": "upset"
+      }
+    },
+    "grieving": {
+      "obey": 0.4,
+      "speed": 0.6,
+      "delay": 4,
+      "animation": "animation.felix.sad",
+      "particle": "minecraft:falling_water",
+      "say": [
+        "No... not @target.",
+        "How could you, @player?"
+      ],
+      "refuse": [
+        "Leave me be.",
+        "Not now."
+      ],
+      "grumble": [
+        "...",
+        "All right."
+      ],
+      "on": {
+        "after:300": "upset",
+        "apology": "upset"
+      }
+    }
+  }
+}

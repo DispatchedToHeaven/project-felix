@@ -144,6 +144,11 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         let texture = if p.skin.is_empty() { Look::of_model(&p.model_id()).texture } else { texture_of(&p.id) };
         let _ = LOOK.set(host, Holder::Entity(entity), Some(Look { model: p.model_id(), texture }));
         let _ = DIALOG.set(host, Holder::Entity(entity), Some(dialog_of(&p.id)));
+        if !p.character.is_empty()
+            && let Some(e) = host.entity(entity)
+        {
+            crate::heart::set_character(host, e, Some(&p.character));
+        }
     }
     if let Ok(mut s) = SERVER.lock() {
         s.dress.extend(later.into_iter().take(64));
