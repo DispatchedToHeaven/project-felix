@@ -372,7 +372,7 @@ fn run(host: &mut dyn ServerHost, h: &Here, ev: &Event, dos: &[Do]) {
             Do::Act(a) => {
                 use crate::dialog::Action;
                 // What needs a player waits for one.
-                let needs_player = matches!(a, Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Give(..) | Action::Take(..) | Action::Tag(_) | Action::Untag(_) | Action::Game(..) | Action::Sport(_) | Action::JoinGame | Action::OpenGame | Action::EditAnimation(_));
+                let needs_player = matches!(a, Action::Shop(_) | Action::Trade(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Give(..) | Action::Take(..) | Action::Tag(_) | Action::Untag(_) | Action::Game(..) | Action::Sport(_) | Action::JoinGame | Action::OpenGame | Action::EditAnimation(_));
                 if needs_player && ev.player.is_none() {
                     continue;
                 }

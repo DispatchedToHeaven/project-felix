@@ -1,0 +1,16 @@
+{
+  "currency": "minecraft:emerald",
+  "restock": 10,
+  "hours": "work",
+  "sells": [
+    { "item": "minecraft:bread", "count": 3, "price": 1, "stock": 10 },
+    { "item": "minecraft:cookie", "count": 6, "price": 1, "stock": 6 },
+    { "item": "minecraft:cake", "count": 1, "price": 3, "stock": 2 },
+    { "item": "minecraft:pumpkin_pie", "count": 2, "price": 2, "stock": 4 }
+  ],
+  "buys": [
+    { "item": "minecraft:wheat", "count": 12, "price": 1, "stock": 16 },
+    { "item": "minecraft:sugar_cane", "count": 10, "price": 1, "stock": 8 },
+    { "item": "minecraft:egg", "count": 8, "price": 1, "stock": 8 }
+  ]
+}

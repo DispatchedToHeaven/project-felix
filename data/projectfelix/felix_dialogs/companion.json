@@ -500,6 +500,14 @@
           "goto": "placed"
         },
         {
+          "text": "Do you sell anything?",
+          "actions": [
+            {
+              "shop": true
+            }
+          ]
+        },
+        {
           "text": "Never mind.",
           "goto": "main"
         }

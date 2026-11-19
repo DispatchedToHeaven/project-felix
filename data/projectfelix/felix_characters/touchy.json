@@ -22,7 +22,8 @@
     "scold": -10,
     "quest_done": 6,
     "quest_failed": -10,
-    "woken": -5
+    "woken": -5,
+    "trade": 2
   },
   "moods": {
     "calm": {

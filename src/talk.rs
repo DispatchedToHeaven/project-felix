@@ -295,7 +295,7 @@ fn choose(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
         return;
     }
     // A quest board opens in place of this dialog.
-    let board = actions.iter().any(|a| matches!(a, Action::Quests(_)));
+    let board = actions.iter().any(|a| matches!(a, Action::Quests(_) | Action::Shop(_) | Action::Trade(_)));
     run_for(host, Some(player), npc, &actions);
     match &choice.goto {
         Some(next) => enter(host, player, npc, session.dialog, next),
@@ -369,6 +369,16 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
                 let at = player.and_then(|p| p.entity().position(&*host)).or_else(|| npc.position(&*host));
                 if let Some(at) = at {
                     crate::routines::set_place(host, npc, name, at);
+                }
+            }
+            Action::Shop(id) => {
+                if let Some(p) = player {
+                    crate::shops::board(host, p, npc, id);
+                }
+            }
+            Action::Trade(n) => {
+                if let Some(p) = player {
+                    crate::shops::trade(host, p, npc, *n);
                 }
             }
             Action::Quests(list) => {

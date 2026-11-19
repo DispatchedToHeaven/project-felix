@@ -356,6 +356,7 @@ impl News {
             "scold" => "scold",
             "quest_done" => "helped",
             "quest_failed" => "let_down",
+            "trade" => "traded",
             _ => return None,
         })
     }
@@ -401,6 +402,7 @@ impl News {
             "scold" => format!("{player} shouted at {victim}"),
             "helped" => format!("{player} helped {victim}"),
             "let_down" => format!("{player} let {victim} down"),
+            "traded" => format!("{player} traded with {victim}"),
             k => format!("{player} and {victim}: {k}"),
         };
         let lead = if self.hops > 0 {

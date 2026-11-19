@@ -78,6 +78,14 @@ fn admit(file: Vec<u8>) -> Result<Arc<Profile>, String> {
         None => Vec::new(),
     };
     crate::quests::set_extra(&dialog_of(&p.id), quests);
+    let shop = match &p.shop {
+        Some(s) => Some(crate::shop::parse(s.as_bytes()).map_err(|e| format!("shop.json: {e}"))?),
+        None => None,
+    };
+    crate::shops::set_extra(&dialog_of(&p.id), shop);
+    if let Some(c) = &p.character_file {
+        crate::heart::adopt(&p.character, c);
+    }
     let p = Arc::new(p);
     if let Ok(mut s) = SERVER.lock() {
         s.profiles.insert(p.id.clone(), (p.clone(), Arc::new(file)));
@@ -201,8 +209,22 @@ impl IPayloadHandler for OnSave {
             return Ok(());
         }
         match admit(file.to_vec()) {
-            Ok(p) => {
-                let written = path(NPCS, &format!("{}{EXT}", p.id)).map(|f| host.data_files().write(&f, file));
+            Ok(mut p) => {
+                // A character made here goes into the file, so the NPC takes it along.
+                let mut file = file.to_vec();
+                if p.character.starts_with("felixchar:")
+                    && p.character_file.is_none()
+                    && let Some(v) = crate::heart::made_json(&p.character)
+                {
+                    let mut q = (*p).clone();
+                    q.character_file = Some(crate::serde_json::to_string_pretty(&v).unwrap_or_default());
+                    let packed = q.pack(&crate::image::crc32);
+                    if let Ok(again) = admit(packed.clone()) {
+                        p = again;
+                        file = packed;
+                    }
+                }
+                let written = path(NPCS, &format!("{}{EXT}", p.id)).map(|f| host.data_files().write(&f, &file));
                 match written {
                     Some(Ok(())) => {
                         tell(host, player, format!("{} is kept as npcs/{}{EXT}", p.name, p.id));

@@ -10,6 +10,8 @@
 //! Its quests (the Quests page): bring an item, kill some of a mob, go to a place, or walk it some
 //! blocks away; what it says when it asks, and an item as the reward. Up to [`MAX_QUESTS`].
 //!
+//! Its shop (the Shop page): what it sells and buys, how many at a time, for how many emeralds.
+//!
 //! Click a field to type in it; Tab and Enter go to the next one, Ctrl+V pastes, Escape closes.
 use crate::companion::DEFAULT_MODEL;
 use crate::custom::SAVE;
@@ -17,6 +19,7 @@ use crate::models;
 use crate::profile::{self, Profile};
 use crate::rules::{self, CONDS, DOS, Row, WHENS};
 use crate::quest::{self, KINDS};
+use crate::shop;
 use crate::serde_json::{Value, json};
 use mod_api::{
     ClientHost, ConfigPath, DrawContext, Flow, IPayloadContext, IPayloadHandler, PayloadBytes, PayloadId,
@@ -41,6 +44,9 @@ const RULE_TEXT: usize = 100;
 /// Quest `n`'s fields: its word, count, offer, reward.
 const QUEST_TEXT: usize = 200;
 pub const MAX_QUESTS: usize = 3;
+/// Offer `n`'s fields: item, count, price.
+const SHOP_TEXT: usize = 300;
+pub const MAX_OFFERS: usize = 6;
 pub const MAX_RULES: usize = 4;
 /// The characters the maker offers (a file may bring another).
 const CHARACTERS: &[&str] = &["projectfelix:kind", "projectfelix:touchy", "projectfelix:stoic"];
@@ -63,6 +69,9 @@ enum Do {
     Kind(usize),
     DelQuest(usize),
     AddQuest,
+    SellBuy(usize),
+    DelOffer(usize),
+    AddOffer,
     When(usize),
     If(usize),
     Then(usize),
@@ -94,6 +103,9 @@ struct Creator {
     kept_rules: Vec<Value>,
     quests: Vec<quest::Row>,
     kept_quests: Vec<Value>,
+    offers: Vec<shop::Row>,
+    /// A shop file rows can't show, kept as it is.
+    kept_shop: Option<Value>,
     /// 0: name and topics, 1: rules, 2: quests.
     page: u8,
     characters: Vec<String>,
@@ -186,6 +198,13 @@ impl IPayloadHandler for OpenHandler {
                 }
             }
         }
+        let (mut offers, mut kept_shop) = (Vec::new(), None);
+        if let Some(v) = editing.as_ref().and_then(|p| p.shop.as_ref()).and_then(|r| crate::serde_json::from_str::<Value>(r).ok()) {
+            match shop::rows_from_json(&v).filter(|r| r.len() <= MAX_OFFERS) {
+                Some(r) => offers = r,
+                None => kept_shop = Some(v),
+            }
+        }
         let (mut qrows, mut kept_quests) = (Vec::new(), Vec::new());
         if let Some(v) = editing.as_ref().and_then(|p| p.quests.as_ref()).and_then(|r| crate::serde_json::from_str::<Value>(r).ok()) {
             for q in v.get("quests").unwrap_or(&v).as_array().cloned().unwrap_or_default() {
@@ -234,6 +253,8 @@ impl IPayloadHandler for OpenHandler {
             rules: rows,
             kept_rules,
             quests: qrows,
+            offers,
+            kept_shop,
             kept_quests,
             page: 0,
             characters,
@@ -271,6 +292,14 @@ impl Creator {
         if i < FIELDS {
             return self.fields.get_mut(i);
         }
+        if let Some(j) = i.checked_sub(SHOP_TEXT) {
+            let o = self.offers.get_mut(j / 3)?;
+            return Some(match j % 3 {
+                0 => &mut o.item,
+                1 => &mut o.count,
+                _ => &mut o.price,
+            });
+        }
         if let Some(j) = i.checked_sub(QUEST_TEXT) {
             let q = self.quests.get_mut(j / 4)?;
             return Some(match j % 4 {
@@ -293,6 +322,9 @@ impl Creator {
     fn order(&self) -> Vec<usize> {
         if self.page == 0 {
             return (0..FIELDS).collect();
+        }
+        if self.page == 3 {
+            return (0..self.offers.len()).flat_map(|n| [SHOP_TEXT + n * 3, SHOP_TEXT + n * 3 + 1, SHOP_TEXT + n * 3 + 2]).collect();
         }
         if self.page == 2 {
             let mut o = Vec::new();
@@ -379,6 +411,10 @@ impl Creator {
             rules::read(&v).map_err(|e| format!("Rules: {e}"))?;
             p.rules = Some(crate::serde_json::to_string_pretty(&v).unwrap_or_default());
         }
+        p.shop = match shop::rows_to_json(&self.offers).map_err(|e| format!("Shop: {e}"))? {
+            Some(v) => Some(crate::serde_json::to_string_pretty(&v).unwrap_or_default()),
+            None => self.kept_shop.as_ref().map(|v| crate::serde_json::to_string_pretty(v).unwrap_or_default()),
+        };
         let mut list = Vec::new();
         for (n, q) in self.quests.iter().enumerate() {
             list.push(q.to_json().map_err(|e| format!("Quest {}: {e}", n + 1))?);
@@ -544,6 +580,12 @@ pub fn render(host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
         None => format!("New NPC: {}", profile::make_id(c.fields[0].trim())),
     };
     draw.text(&title, [x0, y0], 0xFFFF_D86A, false);
+    if c.page == 3 {
+        draw_shop(draw, &mut buttons, c, [x0, y0 + ROW], mouse, blink);
+        bottom(draw, &mut buttons, c, [x0, y0 + height - 26.0], mouse);
+        c.buttons = buttons;
+        return;
+    }
     if c.page == 2 {
         draw_quests(draw, &mut buttons, c, [x0, y0 + ROW], mouse, blink);
         bottom(draw, &mut buttons, c, [x0, y0 + height - 26.0], mouse);
@@ -610,13 +652,15 @@ pub fn render(host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
 /// The buttons below either page, and the status line.
 fn bottom(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, c: &Creator, at: [f32; 2], mouse: [f32; 2]) {
     let [x0, y] = at;
-    button(draw, buttons, [x0, y, 56.0, 16.0], "Save", Do::Save(false), mouse);
-    button(draw, buttons, [x0 + 60.0, y, 76.0, 16.0], "Save & spawn", Do::Save(true), mouse);
+    button(draw, buttons, [x0, y, 44.0, 16.0], "Save", Do::Save(false), mouse);
+    button(draw, buttons, [x0 + 48.0, y, 72.0, 16.0], "Save & spawn", Do::Save(true), mouse);
     let rules = if c.page == 1 { "Topics".to_string() } else { format!("Rules ({})", c.rules.len() + c.kept_rules.len()) };
-    button(draw, buttons, [x0 + 140.0, y, 64.0, 16.0], &rules, Do::Page(1), mouse);
+    button(draw, buttons, [x0 + 124.0, y, 54.0, 16.0], &rules, Do::Page(1), mouse);
     let quests = if c.page == 2 { "Topics".to_string() } else { format!("Quests ({})", c.quests.len() + c.kept_quests.len()) };
-    button(draw, buttons, [x0 + 208.0, y, 68.0, 16.0], &quests, Do::Page(2), mouse);
-    button(draw, buttons, [x0 + W - 50.0, y, 50.0, 16.0], "Close", Do::Close, mouse);
+    button(draw, buttons, [x0 + 182.0, y, 58.0, 16.0], &quests, Do::Page(2), mouse);
+    let shop = if c.page == 3 { "Topics".to_string() } else if c.offers.is_empty() && c.kept_shop.is_none() { "Shop".to_string() } else { "Shop *".to_string() };
+    button(draw, buttons, [x0 + 244.0, y, 42.0, 16.0], &shop, Do::Page(3), mouse);
+    button(draw, buttons, [x0 + W - 40.0, y, 40.0, 16.0], "Close", Do::Close, mouse);
     let status = tail(draw, &c.status, W);
     draw.text(&status, [x0, y + 20.0], 0xFFC0_C0C8, false);
 }
@@ -672,6 +716,33 @@ fn draw_rules(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, c: 
     }
     if c.rules.len() < MAX_RULES {
         button(draw, buttons, [x0, y, 64.0, 14.0], "+ Rule", Do::AddRule, mouse);
+    }
+}
+
+/// The shop page: a line an offer. [sells/buys] [item] [count] for [price] emeralds x.
+fn draw_shop(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, c: &Creator, at: [f32; 2], mouse: [f32; 2], blink: bool) {
+    let [x0, mut y] = at;
+    let grey = 0xFFA0_A0A0;
+    let note = if c.kept_shop.is_some() && c.offers.is_empty() {
+        "Its file has a shop the page can't show: kept as it is".to_string()
+    } else {
+        "What it sells and buys, for emeralds (dearer for those it dislikes)".to_string()
+    };
+    draw.text(&note, [x0, y], grey, false);
+    y += 12.0;
+    let h = ROW - 2.0;
+    for (n, o) in c.offers.iter().enumerate() {
+        let base = SHOP_TEXT + n * 3;
+        picker(draw, buttons, [x0, y, 48.0, h], if o.buys { "buys" } else { "sells" }, Do::SellBuy(n), mouse);
+        hint_field(draw, buttons, [x0 + 51.0, y, 142.0, h], &o.item, "minecraft:bread", c.focus == Some(base), Do::Field(base), mouse, blink);
+        hint_field(draw, buttons, [x0 + 196.0, y, 34.0, h], &o.count, "count", c.focus == Some(base + 1), Do::Field(base + 1), mouse, blink);
+        draw.text("for", [x0 + 234.0, y + 3.0], grey, false);
+        hint_field(draw, buttons, [x0 + 252.0, y, 34.0, h], &o.price, "price", c.focus == Some(base + 2), Do::Field(base + 2), mouse, blink);
+        button(draw, buttons, [x0 + W - 12.0, y, 12.0, h], "x", Do::DelOffer(n), mouse);
+        y += ROW;
+    }
+    if c.offers.len() < MAX_OFFERS {
+        button(draw, buttons, [x0, y + 2.0, 64.0, 14.0], "+ Offer", Do::AddOffer, mouse);
     }
 }
 
@@ -751,6 +822,22 @@ fn act(host: &dyn ClientHost, c: &mut Creator, what: Do, by: i32) {
                 c.focus = None;
             }
         }
+        Do::SellBuy(n) => {
+            if let Some(o) = c.offers.get_mut(n) {
+                o.buys = !o.buys;
+            }
+        }
+        Do::DelOffer(n) => {
+            if n < c.offers.len() {
+                c.offers.remove(n);
+                c.focus = None;
+            }
+        }
+        Do::AddOffer => {
+            if c.offers.len() < MAX_OFFERS {
+                c.offers.push(shop::Row { buys: false, item: "minecraft:bread".into(), count: "3".into(), price: "1".into() });
+            }
+        }
         Do::AddQuest => {
             if c.quests.len() < MAX_QUESTS {
                 c.quests.push(quest::Row { what: "minecraft:apple".into(), count: "3".into(), reward: "minecraft:emerald 1".into(), ..quest::Row::default() });
@@ -817,7 +904,7 @@ pub fn mouse_scrolled(host: &dyn ClientHost, e: &mut ScreenMouseScrolledPreEvent
     let Ok(mut lock) = CREATOR.lock() else { return Flow::Continue };
     let Some(c) = lock.as_mut() else { return Flow::Continue };
     let mouse = e.screen.mouse;
-    if let Some(what) = c.buttons.iter().find(|(r, w)| inside(*r, mouse) && matches!(w, Do::Model | Do::Skin | Do::Character | Do::Day | Do::Kind(_) | Do::When(_) | Do::If(_) | Do::Then(_) | Do::Else(_))).map(|(_, w)| *w) {
+    if let Some(what) = c.buttons.iter().find(|(r, w)| inside(*r, mouse) && matches!(w, Do::Model | Do::Skin | Do::Character | Do::Day | Do::SellBuy(_) | Do::Kind(_) | Do::When(_) | Do::If(_) | Do::Then(_) | Do::Else(_))).map(|(_, w)| *w) {
         act(host, c, what, if e.scroll[1] > 0.0 { -1 } else { 1 });
     }
     Flow::Cancel

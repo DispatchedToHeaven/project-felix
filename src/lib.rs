@@ -28,6 +28,7 @@
 //!   live by them on the server: work, meet, home, sleep, guard, follow.
 //! - `char_edit` is a character as its editor holds it (no mod API types); `char_editor` is the
 //!   character editor in the world: moods as boxes, ways as lines.
+//! - `shop` reads shops (no mod API types); `shops` runs NPCs' stalls on the server.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
     ScreenKeyPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
@@ -72,6 +73,8 @@ pub mod rules;
 pub mod runtime;
 pub mod scene;
 pub mod scenes;
+pub mod shop;
+pub mod shops;
 pub mod skin;
 pub mod skins;
 pub mod sports;
@@ -111,6 +114,7 @@ impl Hooks for Felix {
         heart::add_listener(e);
         quests::add_listener(e);
         routines::add_listener(e);
+        shops::add_listener(e);
     }
 
     fn register_gui_layers(&self, _cx: &RegistrationContext, e: &mut RegisterGuiLayersEvent<'_>) {
@@ -133,10 +137,14 @@ impl Hooks for Felix {
         heart::register_commands(e);
         quests::register_commands(e);
         routines::register_commands(e);
+        shops::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = shops::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = routines::run_command(host, e) {
@@ -174,6 +182,7 @@ impl Hooks for Felix {
             heart::tick(host);
             quests::tick(host);
             routines::tick(host);
+            shops::tick(host);
             rulebook::tick(host);
         }
     }

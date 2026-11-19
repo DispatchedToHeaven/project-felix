@@ -431,6 +431,26 @@ fn load(host: &mut dyn ServerHost, e: EntityRef) -> bool {
     true
 }
 
+/// The NPC's friend and hate lines (its character's), as last known.
+pub fn thresholds(id: u32) -> (i32, i32) {
+    let c = STATE.lock().ok().and_then(|s| s.live.get(&id).map(|l| l.character()));
+    c.map_or((30, -50), |c| (c.friend_at, c.hate_at))
+}
+
+/// A character made in the game, as its file (to go into an NPC's file).
+pub fn made_json(id: &str) -> Option<Value> {
+    MADE.lock().ok()?.characters.get(id).map(|x| x.1.clone())
+}
+
+/// A character an NPC's file brought: taken in, unless this world has its own of that name.
+pub fn adopt(id: &str, file: &str) {
+    let Ok(v) = crate::serde_json::from_str::<Value>(file) else { return };
+    let Ok(c) = character::read(&v) else { return };
+    if let Ok(mut m) = MADE.lock() {
+        m.characters.entry(id.to_string()).or_insert((Arc::new(c), v));
+    }
+}
+
 /// The mood an NPC is in (for rules and dialogs), as last known.
 pub fn mood_of(id: u32) -> String {
     STATE.lock().ok().and_then(|s| s.live.get(&id).map(|l| l.heart.mood.clone())).unwrap_or_else(|| "calm".into())

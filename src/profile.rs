@@ -1,6 +1,7 @@
 //! An NPC made in the game: its name, model, skin, what it says and its rules, and its file,
 //! `<id>.felixnpc` (a zip: `npc.json`, `skin.png`, `dialog.json`, `rules.json` when it has rules,
-//! `quests.json` when it gives quests,
+//! `quests.json` when it gives quests, `shop.json` when it trades, `character.json` when its
+//! character was made in the game (so it goes along),
 //! and `model.geo.json` when it brings its own model). No mod API types here.
 //!
 //! `npc.json`: `{ "format": 1, "id", "name", "model", "character", "greeting", "topics": [{ "ask", "answer" }] }`.
@@ -32,6 +33,10 @@ pub struct Profile {
     pub quests: Option<String>,
     /// Its day (`projectfelix:villager`…; empty: none, it follows its owner).
     pub routine: String,
+    /// What it sells and buys (`shop.json`, see `shop`).
+    pub shop: Option<String>,
+    /// Its character's own file, when that was made in the game (`felixchar:`).
+    pub character_file: Option<String>,
 }
 
 /// An id from a name: lower case letters, digits and `_`, at most 32.
@@ -68,6 +73,8 @@ impl Profile {
             character: String::new(),
             quests: None,
             routine: String::new(),
+            shop: None,
+            character_file: None,
         }
     }
 
@@ -98,6 +105,9 @@ impl Profile {
             options.push(json!({ "text": "Go about your day.", "if": { "all": [ { "owner": true }, { "not": { "mode": "live" } } ] }, "actions": [ { "order": "live" } ] }));
             options.push(json!({ "text": "Live here.", "if": { "owner": true }, "actions": [ { "place": "home" } ] }));
             options.push(json!({ "text": "Work here.", "if": { "owner": true }, "actions": [ { "place": "work" } ] }));
+        }
+        if self.shop.is_some() {
+            options.push(json!({ "text": "Let's trade.", "actions": [ { "shop": true } ] }));
         }
         if self.quests.is_some() {
             options.push(json!({ "text": "Need any help?", "actions": [ { "quests": true } ] }));
@@ -140,6 +150,12 @@ impl Profile {
         if let Some(q) = &self.quests {
             entries.push(Entry { name: "quests.json".into(), data: q.clone().into_bytes() });
         }
+        if let Some(s) = &self.shop {
+            entries.push(Entry { name: "shop.json".into(), data: s.clone().into_bytes() });
+        }
+        if let Some(c) = &self.character_file {
+            entries.push(Entry { name: "character.json".into(), data: c.clone().into_bytes() });
+        }
         zipfile::write(&entries, crc32)
     }
 
@@ -164,6 +180,14 @@ impl Profile {
         if let Some(d) = &own_dialog {
             crate::dialog::parse(d.as_bytes()).map_err(|e| format!("dialog.json: {e}"))?;
         }
+        let shop = get("shop.json").map(|r| String::from_utf8_lossy(&r).into_owned());
+        if let Some(s) = &shop {
+            crate::shop::parse(s.as_bytes()).map_err(|e| format!("shop.json: {e}"))?;
+        }
+        let character_file = get("character.json").map(|r| String::from_utf8_lossy(&r).into_owned());
+        if let Some(c) = &character_file {
+            crate::character::parse(c.as_bytes()).map_err(|e| format!("character.json: {e}"))?;
+        }
         let quests = get("quests.json").map(|r| String::from_utf8_lossy(&r).into_owned());
         if let Some(q) = &quests {
             let v: Value = crate::serde_json::from_str(q).map_err(|e| format!("quests.json: {e}"))?;
@@ -186,6 +210,8 @@ impl Profile {
             character: s("character"),
             quests,
             routine: s("routine"),
+            shop,
+            character_file,
         })
     }
 }
