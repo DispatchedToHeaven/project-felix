@@ -1,5 +1,5 @@
-//! Board games at an NPC's table, on the server: chess and Russian draughts, against the NPC or
-//! another player.
+//! Board games at an NPC's table, on the server: chess and Russian draughts, against the NPC,
+//! another player, or (NPC against NPC) another NPC seated across the table, players watching.
 //!
 //! A game belongs to an NPC: it waits where it is, a table appears in front of it (synced to
 //! Horizon clients as the `projectfelix:game` attachment, so everyone sees the position), and the
@@ -124,6 +124,8 @@ impl Board {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Seat {
     Npc,
+    /// Another NPC, seated across.
+    Other(u32),
     Player(PlayerRef),
     Empty,
 }
@@ -144,6 +146,9 @@ struct Game {
     restore: Mode,
     yaw: f32,
     thinking: Option<Arc<Mutex<Option<NpcMove>>>>,
+    /// The other NPC and its orders to go back to.
+    other: Option<(u32, Mode)>,
+    watchers: Vec<PlayerRef>,
 }
 
 #[derive(Clone)]
@@ -171,7 +176,16 @@ impl Game {
         }
     }
     fn players(&self) -> Vec<PlayerRef> {
-        [self.white, self.black].into_iter().filter_map(|s| if let Seat::Player(p) = s { Some(p) } else { None }).collect()
+        let mut out: Vec<PlayerRef> = [self.white, self.black].into_iter().filter_map(|s| if let Seat::Player(p) = s { Some(p) } else { None }).collect();
+        for w in &self.watchers {
+            if !out.iter().any(|p| p.uuid() == w.uuid()) {
+                out.push(*w);
+            }
+        }
+        out
+    }
+    fn npc_turn(&self) -> bool {
+        matches!(self.seat(self.board.side()), Seat::Npc | Seat::Other(_))
     }
 }
 
@@ -246,6 +260,8 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, kind: GameKind, player: 
         restore,
         yaw,
         thinking: None,
+        other: None,
+        watchers: Vec::new(),
     };
     let table = Table { kind: kind.name().into(), board: game.board.letters(), yaw };
     let _ = TABLE.set(host, Holder::Entity(npc.id()), Some(table));
@@ -276,7 +292,69 @@ pub fn join(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) -> Res
 
 /// Opens the board for `player`: to play if they sit at it, to watch if not.
 pub fn open(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) {
+    if let Ok(mut games) = GAMES.lock()
+        && let Some(g) = games.get_mut(&npc.id())
+        && g.color_of(player).is_none()
+        && !g.watchers.iter().any(|w| w.uuid() == player.uuid())
+    {
+        g.watchers.push(player);
+    }
     send_views(host, npc.id(), &[player]);
+}
+
+/// Whether NPC `id` sits at a game (its own table, or across another's).
+pub fn busy(id: u32) -> bool {
+    GAMES.lock().is_ok_and(|g| g.contains_key(&id) || g.values().any(|x| x.other.is_some_and(|o| o.0 == id)))
+}
+
+/// NPC `a` plays `kind` against NPC `b`, who sits down across `a`'s table.
+pub fn start_npcs(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef, kind: GameKind) -> Result<(), String> {
+    if busy(a.id()) || busy(b.id()) || crate::matches::busy(a.id()) || crate::matches::busy(b.id()) {
+        return Err("one of them is playing already".into());
+    }
+    let now = now_of(&*host, a);
+    let at = a.position(&*host).ok_or("no NPC")?;
+    let there = b.position(&*host).ok_or("no NPC")?;
+    let yaw = crate::scene::yaw_towards(at, there);
+    let restore = ORDERS.get(host, Holder::Entity(a.id())).map(|o| o.mode).unwrap_or_default();
+    let restore_b = ORDERS.get(host, Holder::Entity(b.id())).map(|o| o.mode).unwrap_or_default();
+    // Across the table, facing it.
+    let r = yaw.to_radians();
+    let spot = [at[0] - r.sin() as f64 * 2.2, at[1], at[2] + r.cos() as f64 * 2.2];
+    if let Some(u) = b.uuid(host) {
+        crate::talk::queue(format!("tp {} {:.2} {:.2} {:.2} {:.1} 0", crate::talk::uuid_text(u), spot[0], spot[1], spot[2], yaw + 180.0));
+    }
+    companion::set_orders(host, a, Mode::Wait);
+    companion::set_orders(host, b, Mode::Wait);
+    let board = match kind {
+        GameKind::Chess => Board::Chess(chess::Position::start()),
+        GameKind::Checkers => Board::Checkers(checkers::Position::start()),
+    };
+    let mut game = Game {
+        npc: a.id(),
+        kind,
+        history: Vec::new(),
+        board,
+        white: Seat::Npc,
+        black: Seat::Other(b.id()),
+        last: None,
+        result: None,
+        started: now,
+        moved: now,
+        ended: None,
+        restore,
+        yaw,
+        thinking: None,
+        other: Some((b.id(), restore_b)),
+        watchers: Vec::new(),
+    };
+    think(&mut game);
+    let table = Table { kind: kind.name().into(), board: game.board.letters(), yaw };
+    let _ = TABLE.set(host, Holder::Entity(a.id()), Some(table));
+    if let Ok(mut g) = GAMES.lock() {
+        g.insert(a.id(), game);
+    }
+    Ok(())
 }
 
 fn on_move(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
@@ -347,6 +425,7 @@ fn outcome_text(g: &Game) -> Option<String> {
 /// After any move: the table, the end of the game, the NPC's turn, everyone's views.
 fn after_move(host: &mut dyn ServerHost, npc: EntityRef, now: i64) {
     let mut reaction = None;
+    let mut done_between = None;
     let (letters, finished) = {
         let Ok(mut games) = GAMES.lock() else { return };
         let Some(g) = games.get_mut(&npc.id()) else { return };
@@ -355,11 +434,15 @@ fn after_move(host: &mut dyn ServerHost, npc: EntityRef, now: i64) {
             g.ended = Some(now);
             // The NPC cheers a win of its own and nods at a loss.
             let npc_side = if g.white == Seat::Npc { Some(Color::White) } else if g.black == Seat::Npc { Some(Color::Black) } else { None };
-            if let Some(side) = npc_side {
+            if let Some((other, _)) = g.other {
+                // NPC against NPC: who won, for their hearts.
+                let winner = if text.contains("White wins") { Some(npc.id()) } else if text.contains("Black wins") { Some(other) } else { None };
+                done_between = Some((npc.id(), other, winner));
+            } else if let Some(side) = npc_side {
                 let won = text.contains(if side == Color::White { "White wins" } else { "Black wins" });
                 reaction = Some(if won { "animation.felix.cheer" } else { "animation.felix.wave" });
             }
-        } else if g.seat(g.board.side()) == Seat::Npc {
+        } else if g.npc_turn() {
             think(g);
         }
         (g.board.letters(), g.ended.is_some())
@@ -372,6 +455,9 @@ fn after_move(host: &mut dyn ServerHost, npc: EntityRef, now: i64) {
         let _ = ACTION.set(host, Holder::Entity(npc.id()), Some(Play { animation: anim.into(), start: now }));
     }
     let _ = finished;
+    if let Some((a, b, winner)) = done_between {
+        crate::heart::game_over(host, a, b, winner);
+    }
     send_views(host, npc.id(), &[]);
 }
 
@@ -419,8 +505,8 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         let now = now_of(&*host, npc);
         enum Step {
             Nothing,
-            Moved,
-            Finish(Mode),
+            Moved(u32),
+            Finish(Mode, Option<(u32, Mode)>),
             Called,
         }
         let step = {
@@ -429,8 +515,9 @@ pub fn level_tick(host: &mut dyn ServerHost) {
             if let Some(end) = g.ended {
                 if now - end >= LINGER {
                     let restore = g.restore;
+                    let other = g.other;
                     games.remove(&id);
-                    Step::Finish(restore)
+                    Step::Finish(restore, other)
                 } else {
                     Step::Nothing
                 }
@@ -443,6 +530,11 @@ pub fn level_tick(host: &mut dyn ServerHost) {
                 && let Some(m) = slot.lock().ok().and_then(|mut s| s.take())
             {
                 g.thinking = None;
+                // Who moves: this NPC, or the one across.
+                let mover = match g.seat(g.board.side()) {
+                    Seat::Other(o) => o,
+                    _ => id,
+                };
                 let key = g.board.key();
                 match (m, &g.board) {
                     (NpcMove::Chess(m), Board::Chess(p)) => {
@@ -457,7 +549,7 @@ pub fn level_tick(host: &mut dyn ServerHost) {
                 }
                 g.history.push(key);
                 g.moved = now;
-                Step::Moved
+                Step::Moved(mover)
             } else {
                 Step::Nothing
             }
@@ -465,14 +557,19 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         match step {
             Step::Nothing => {}
             Step::Called => send_views(host, id, &[]),
-            Step::Moved => {
+            Step::Moved(mover) => {
                 // A reach for the piece.
-                let _ = ACTION.set(host, Holder::Entity(id), Some(Play { animation: "animation.felix.move_piece".into(), start: now }));
+                let _ = ACTION.set(host, Holder::Entity(mover), Some(Play { animation: "animation.felix.move_piece".into(), start: now }));
                 after_move(host, npc, now);
             }
-            Step::Finish(restore) => {
+            Step::Finish(restore, other) => {
                 let _ = TABLE.set(host, Holder::Entity(id), None);
                 companion::set_orders(host, npc, restore);
+                if let Some((o, m)) = other
+                    && let Some(e) = host.entity(o)
+                {
+                    companion::set_orders(host, e, m);
+                }
             }
         }
     }
@@ -507,7 +604,8 @@ fn send_views(host: &mut dyn ServerHost, id: u32, only: &[PlayerRef]) {
                     }
                 };
                 let seat_name = |s: Seat| match s {
-                    Seat::Npc => "NPC".to_string(),
+                    Seat::Npc => host.entity(id).and_then(|e| e.name(&*host)).unwrap_or_else(|| "NPC".into()),
+                    Seat::Other(o) => host.entity(o).and_then(|e| e.name(&*host)).unwrap_or_else(|| "NPC".into()),
                     Seat::Player(p) => p.name(&*host).unwrap_or_else(|| "?".into()),
                     Seat::Empty => "(empty seat)".into(),
                 };
@@ -517,8 +615,8 @@ fn send_views(host: &mut dyn ServerHost, id: u32, only: &[PlayerRef]) {
                     "Waiting for a second player: they talk to the NPC and take the other seat.".into()
                 } else if your_turn {
                     "Your move.".into()
-                } else if g.seat(g.board.side()) == Seat::Npc {
-                    "The NPC is thinking...".into()
+                } else if g.npc_turn() {
+                    "Thinking...".into()
                 } else {
                     format!("{} to move.", if g.board.side() == Color::White { "White" } else { "Black" })
                 };

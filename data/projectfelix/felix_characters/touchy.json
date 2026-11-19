@@ -53,7 +53,9 @@
         "rumor_bad": "upset",
         "quest_done": "happy",
         "quest_failed": "upset",
-        "woken": "upset"
+        "woken": "upset",
+        "won_game": "happy",
+        "lost_game": "upset"
       },
       "chatter": [
         "Nice day, isn't it, @listener?",

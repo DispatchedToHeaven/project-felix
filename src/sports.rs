@@ -212,6 +212,36 @@ impl Match {
         }
     }
 
+    /// The player's side played by another NPC (before `tick`): it serves, returns as the NPC
+    /// does, and shoots without the meter.
+    pub fn auto(&mut self, now: i64) -> Vec<Event> {
+        match self.phase {
+            Phase::Serve { by: Side::Player, at } if now >= at + PAUSE => {
+                let key = match self.incoming_key() {
+                    Key::Smash => Key::Left,
+                    k => k,
+                };
+                vec![self.launch(Side::Player, now, key)]
+            }
+            Phase::Flight { from: Side::Npc, arrives, key, .. } if now >= arrives => {
+                let returns = (0.9 - 0.035 * self.hits.saturating_sub(3) as f32).max(0.45);
+                if self.random() < returns {
+                    self.hits += 1;
+                    let back = if key == Key::Smash { Key::Left } else { key };
+                    vec![self.launch(Side::Player, now, back)]
+                } else {
+                    vec![self.point(Side::Npc, now)]
+                }
+            }
+            Phase::Aim { at } if now >= at + 20 => {
+                let made = self.random() < 0.55;
+                self.phase = Phase::Shot { by: Side::Player, launched: now, arrives: now + self.sport.flight(0), made };
+                vec![Event::Swing(Side::Player)]
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// The game going on by itself: serves, the NPC's returns and shots, missed balls, pauses.
     pub fn tick(&mut self, now: i64) -> Vec<Event> {
         match self.phase {

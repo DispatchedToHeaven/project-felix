@@ -573,7 +573,9 @@ fn enter(host: &mut dyn ServerHost, me: EntityRef, c: &Character, mood: &str, pl
     };
     let m = c.mood(mood).clone();
     let player_name = player.and_then(|p| p.name(&*host)).unwrap_or_default();
-    if let Some(line) = pick(&m.say) {
+    // Lines for a player only when there is one.
+    let lines: Vec<String> = m.say.iter().filter(|l| player.is_some() || !l.contains("@player")).cloned().collect();
+    if let Some(line) = pick(&lines) {
         say(host, me, &name, &fill(line, &player_name, &name, about));
     }
     if let Some(a) = &m.animation {
@@ -616,6 +618,45 @@ pub fn on_death(host: &mut dyn ServerHost, victim: u32, killer: i32) {
     if let Ok(mut s) = STATE.lock() {
         s.heard.push(Heard::Died { victim, uuid, name, at, killer: killer as u32 });
     }
+}
+
+/// A game between NPCs `a` and `b` is over (`winner`, or a draw): they say so, feel it, and
+/// grow friends for the time spent.
+pub fn game_over(host: &mut dyn ServerHost, a: u32, b: u32, winner: Option<u32>) {
+    let (Some(ea), Some(eb)) = (host.entity(a), host.entity(b)) else { return };
+    let now = now_of(&*host, ea);
+    let name = |e: EntityRef, host: &dyn mod_api::Host| e.name(host).unwrap_or_else(|| "NPC".into());
+    let (na, nb) = (name(ea, &*host), name(eb, &*host));
+    match winner {
+        Some(w) => {
+            let (we, le, wn, ln) = if w == a { (ea, eb, &na, &nb) } else { (eb, ea, &nb, &na) };
+            say_aloud(host, we, &format!("Good game, {ln}!"));
+            say_aloud(host, le, &format!("Well played, {wn}. Next time."));
+            crate::talk::run_for(host, None, we, &[crate::dialog::Action::Animation("animation.felix.cheer".into())]);
+            feel_at(host, we.id(), "won_game", None, 1.0, None);
+            feel_at(host, le.id(), "lost_game", None, 1.0, None);
+        }
+        None => {
+            say_aloud(host, ea, &format!("A draw, {nb}. Again tomorrow?"));
+        }
+    }
+    for (x, y) in [(ea, eb), (eb, ea)] {
+        if !load(host, x) || !load(host, y) {
+            continue;
+        }
+        let Some(u) = y.uuid(host) else { continue };
+        let yn = name(y, &*host);
+        if let Ok(mut s) = STATE.lock() {
+            let owner = s.live.get(&y.id()).and_then(|l| l.owner);
+            if let Some(l) = s.live.get_mut(&x.id()) {
+                let c = l.character();
+                let base = base_for(l, &c, u, owner);
+                l.heart.change(u, &yn, true, base, 3.0);
+                l.dirty = true;
+            }
+        }
+    }
+    let _ = now;
 }
 
 /// NPC `npc` says `line` to the players near it.

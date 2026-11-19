@@ -1,4 +1,5 @@
-//! Ball games on the server: a match between a player and an NPC, its ticks, the player's keys,
+//! Ball games on the server: a match between a player and an NPC (or two NPCs, one standing in
+//! the player's place), its ticks, the player's keys,
 //! and what everyone sees (the `projectfelix:sport` attachment: the match as JSON, whose it is,
 //! and which way the NPC faces). The player is put in their place, facing the NPC; walking off
 //! gives the match away.
@@ -57,9 +58,17 @@ pub static SPORT: AttachmentType<Option<Court>> = AttachmentType {
     sync: true,
 };
 
+/// Who plays against the NPC.
+#[derive(Clone, Copy)]
+enum Opp {
+    Player(PlayerRef),
+    /// Another NPC, and its orders to go back to.
+    Npc(u32, Mode),
+}
+
 struct Running {
     m: Match,
-    player: PlayerRef,
+    opp: Opp,
     restore: Mode,
     yaw: f32,
     sent: String,
@@ -88,7 +97,7 @@ impl IPayloadHandler for KeyHandler {
         let now = now_of(&*host, npc);
         let events = {
             let Ok(mut all) = MATCHES.lock() else { return Ok(()) };
-            let Some(r) = all.get_mut(&id).filter(|r| r.player.uuid() == player.uuid()) else { return Ok(()) };
+            let Some(r) = all.get_mut(&id).filter(|r| matches!(r.opp, Opp::Player(p) if p.uuid() == player.uuid())) else { return Ok(()) };
             r.m.press(key, now)
         };
         react(host, npc, events, now);
@@ -108,7 +117,35 @@ fn now_of(host: &dyn mod_api::Host, npc: EntityRef) -> i64 {
 }
 
 pub fn busy(npc: u32) -> bool {
-    MATCHES.lock().is_ok_and(|m| m.contains_key(&npc))
+    MATCHES.lock().is_ok_and(|m| m.contains_key(&npc) || m.values().any(|r| matches!(r.opp, Opp::Npc(o, _) if o == npc)))
+}
+
+/// NPC `a` plays `sport` against NPC `b`, who is put in the player's place.
+pub fn start_npcs(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef, sport: Sport) -> Result<(), String> {
+    if busy(a.id()) || busy(b.id()) || crate::games::busy(a.id()) || crate::games::busy(b.id()) {
+        return Err("one of them is playing already".into());
+    }
+    let at = a.position(&*host).ok_or("no NPC")?;
+    let there = b.position(&*host).ok_or("no NPC")?;
+    let yaw = crate::scene::yaw_towards(at, there);
+    let now = now_of(&*host, a);
+    let restore = ORDERS.get(host, Holder::Entity(a.id())).map(|o| o.mode).unwrap_or_default();
+    let restore_b = ORDERS.get(host, Holder::Entity(b.id())).map(|o| o.mode).unwrap_or_default();
+    companion::set_orders(host, a, Mode::Wait);
+    companion::set_orders(host, b, Mode::Wait);
+    let r = yaw.to_radians();
+    let d = sport.distance() as f64;
+    let spot = [at[0] - r.sin() as f64 * d, at[1], at[2] + r.cos() as f64 * d];
+    if let Some(u) = b.uuid(host) {
+        crate::talk::queue(format!("tp {} {:.2} {:.2} {:.2} {:.1} 0", crate::talk::uuid_text(u), spot[0], spot[1], spot[2], yaw + 180.0));
+    }
+    let seed = now as u64 ^ (a.id() as u64) << 20 ^ 0x5851_F42D_4C95_7F2D;
+    let m = Match::new(sport, now, seed);
+    if let Ok(mut all) = MATCHES.lock() {
+        all.insert(a.id(), Running { m, opp: Opp::Npc(b.id(), restore_b), restore, yaw, sent: String::new(), ended: None });
+    }
+    sync(host, a);
+    Ok(())
 }
 
 /// Starts `sport` between `player` and `npc`: the NPC faces the player, who is put in their
@@ -132,7 +169,7 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, sport: Sport, player: Pl
     let seed = now as u64 ^ (npc.id() as u64) << 20 ^ 0x9E37_79B9_7F4A_7C15;
     let m = Match::new(sport, now, seed);
     if let Ok(mut all) = MATCHES.lock() {
-        all.insert(npc.id(), Running { m, player, restore, yaw, sent: String::new(), ended: None });
+        all.insert(npc.id(), Running { m, opp: Opp::Player(player), restore, yaw, sent: String::new(), ended: None });
     }
     let _ = player.action_bar(host, Text::literal("Keys: Z left, C right, X smash or shoot (Options > Controls)"));
     sync(host, npc);
@@ -145,12 +182,16 @@ pub fn level_tick(host: &mut dyn ServerHost) {
     for id in ids {
         let Some(npc) = host.entity(id) else { continue };
         let now = now_of(&*host, npc);
-        let (player, sport) = match MATCHES.lock().ok().and_then(|m| m.get(&id).map(|r| (r.player, r.m.sport))) {
+        let (opp, sport) = match MATCHES.lock().ok().and_then(|m| m.get(&id).map(|r| (r.opp, r.m.sport))) {
             Some(x) => x,
             None => continue,
         };
         // Gone, or far from the court: the match is lost.
-        let near = match (player.entity().position(&*host), npc.position(&*host)) {
+        let other = match opp {
+            Opp::Player(p) => Some(p.entity()),
+            Opp::Npc(o, _) => host.entity(o),
+        };
+        let near = match (other.and_then(|e| e.position(&*host)), npc.position(&*host)) {
             (Some(p), Some(n)) => {
                 let d2 = (p[0] - n[0]).powi(2) + (p[2] - n[2]).powi(2);
                 d2 < ((sport.distance() + 8.0) as f64).powi(2)
@@ -167,20 +208,28 @@ pub fn level_tick(host: &mut dyn ServerHost) {
                 r.m.phase = crate::sports::Phase::Over { winner: Some(Side::Npc), at: now };
                 events.push(Event::Over(Some(Side::Npc)));
             } else {
-                events = r.m.tick(now);
+                if let Opp::Npc(..) = r.opp {
+                    events = r.m.auto(now);
+                }
+                events.extend(r.m.tick(now));
             }
             if r.m.over() && r.ended.is_none() {
                 r.ended = Some(now);
             }
             if r.ended.is_some_and(|e| now - e >= LINGER) {
                 let r = all.remove(&id).unwrap();
-                finish = Some(r.restore);
+                finish = Some((r.restore, r.opp));
             }
         }
         react(host, npc, events, now);
-        if let Some(restore) = finish {
+        if let Some((restore, opp)) = finish {
             let _ = SPORT.set(host, Holder::Entity(id), None);
             companion::set_orders(host, npc, restore);
+            if let Opp::Npc(o, m) = opp
+                && let Some(e) = host.entity(o)
+            {
+                companion::set_orders(host, e, m);
+            }
         } else {
             sync(host, npc);
         }
@@ -196,7 +245,11 @@ fn sync(host: &mut dyn ServerHost, npc: EntityRef) {
             return;
         }
         r.sent = json.clone();
-        Court { json, player: format!("{:032x}", r.player.uuid()), yaw: r.yaw }
+        let player = match r.opp {
+            Opp::Player(p) => format!("{:032x}", p.uuid()),
+            Opp::Npc(..) => String::new(),
+        };
+        Court { json, player, yaw: r.yaw }
     };
     let _ = SPORT.set(host, Holder::Entity(npc.id()), Some(court));
 }
@@ -206,7 +259,7 @@ fn react(host: &mut dyn ServerHost, npc: EntityRef, events: Vec<Event>, now: i64
     if events.is_empty() {
         return;
     }
-    let (sport, player, score) = match MATCHES.lock().ok().and_then(|m| m.get(&npc.id()).map(|r| (r.m.sport, r.player, r.m.score))) {
+    let (sport, opp, score) = match MATCHES.lock().ok().and_then(|m| m.get(&npc.id()).map(|r| (r.m.sport, r.opp, r.m.score))) {
         Some(x) => x,
         None => return,
     };
@@ -221,12 +274,27 @@ fn react(host: &mut dyn ServerHost, npc: EntityRef, events: Vec<Event>, now: i64
                 anim(host, if sport == Sport::Basketball { "animation.felix.shoot" } else { "animation.felix.swing" });
                 sound(if sport == Sport::Basketball { "minecraft:entity.player.attack.nodamage" } else { "minecraft:entity.player.attack.weak" }, 1.4);
             }
-            Event::Swing(Side::Player) => sound("minecraft:entity.player.attack.weak", 1.6),
+            Event::Swing(Side::Player) => {
+                if let Opp::Npc(o, _) = opp {
+                    let _ = ACTION.set(host, Holder::Entity(o), Some(Play { animation: if sport == Sport::Basketball { "animation.felix.shoot".into() } else { "animation.felix.swing".into() }, start: now }));
+                }
+                sound("minecraft:entity.player.attack.weak", 1.6)
+            }
             Event::Point(Some(Side::Player)) => sound("minecraft:entity.experience_orb.pickup", 1.0),
             Event::Point(_) => sound("minecraft:block.note_block.bass", 0.8),
             Event::Basket(_) => sound("minecraft:block.note_block.chime", 1.2),
             Event::Miss(_) => sound("minecraft:block.wood.hit", 0.8),
             Event::Over(winner) => {
+                if let Opp::Npc(o, _) = opp {
+                    let w = match winner {
+                        Some(Side::Npc) => Some(npc.id()),
+                        Some(Side::Player) => Some(o),
+                        None => None,
+                    };
+                    crate::heart::game_over(host, npc.id(), o, w);
+                    continue;
+                }
+                let Opp::Player(player) = opp else { continue };
                 let text = match winner {
                     Some(Side::Player) => format!("You win, {} to {}!", score[0], score[1]),
                     _ => format!("The NPC wins, {} to {}.", score[1], score[0]),

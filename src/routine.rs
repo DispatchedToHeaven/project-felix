@@ -11,7 +11,8 @@
 //! ```
 //!
 //! `do`: `follow` (goes with its owner), `sleep` (in its `home`), `guard` (fights monsters near its
-//! `place`, `work` unless named), or any other word: the place of that name, where it stays and
+//! `place`, `work` unless named), `play` (at `meet`, a `game` with another NPC playing there:
+//! `chess`, `checkers`, `table_tennis`, `tennis`, `basketball` or `any`), or any other word: the place of that name, where it stays and
 //! walks about a little (`work`, `home`, `meet`, `market`…). `place` names another place for it.
 //! `say` (a line, or a few to pick from) when it starts; `animation` now and then while it is there.
 //! Hours are the game's clock (`6:00` is sunrise); the day wraps round midnight.
@@ -23,6 +24,7 @@ pub enum Doing {
     Follow,
     Sleep,
     Guard,
+    Play,
     Be,
 }
 
@@ -35,6 +37,8 @@ pub struct Entry {
     pub place: String,
     pub say: Vec<String>,
     pub animation: Option<String>,
+    /// What it plays, playing.
+    pub game: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -90,14 +94,17 @@ pub fn read(root: &Value) -> Result<Routine, String> {
             "follow" => Doing::Follow,
             "sleep" => Doing::Sleep,
             "guard" => Doing::Guard,
+            "play" => Doing::Play,
             _ => Doing::Be,
         };
         let place = m.get("place").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| match doing {
             Doing::Sleep => "home".into(),
             Doing::Guard => "work".into(),
+            Doing::Play => "meet".into(),
             _ => name.clone(),
         });
-        day.push(Entry { at, name, doing, place, say: strings(m.get("say")), animation: m.get("animation").and_then(Value::as_str).map(str::to_string) });
+        let game = m.get("game").and_then(Value::as_str).unwrap_or("any").to_string();
+        day.push(Entry { at, name, doing, place, say: strings(m.get("say")), animation: m.get("animation").and_then(Value::as_str).map(str::to_string), game });
     }
     if day.is_empty() {
         return Err("an empty day".into());
@@ -151,6 +158,8 @@ mod tests {
         let guard = parse(include_bytes!("../data/projectfelix/felix_routines/guard.json")).unwrap();
         assert!(guard.day.iter().any(|e| e.doing == Doing::Guard && e.place == "work"));
         assert!(r.describe().starts_with("6:00 work"));
+        let play = r.now(clock("16:30").unwrap()).1;
+        assert_eq!((play.doing.clone(), play.place.as_str(), play.game.as_str()), (Doing::Play, "meet", "any"));
         assert!(parse(br#"{ "day": [ { "at": "7:00" } ] }"#).is_err());
         assert!(parse(br#"{ "day": [] }"#).is_err());
         assert!(parse(br#"{ "day": [ { "at": "late", "do": "x" } ] }"#).is_err());

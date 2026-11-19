@@ -34,7 +34,8 @@
         "scold": "upset",
         "gift": "happy",
         "praise": "happy",
-        "quest_done": "happy"
+        "quest_done": "happy",
+        "won_game": "happy"
       },
       "chatter": [
         "Nice day, isn't it, @listener?",

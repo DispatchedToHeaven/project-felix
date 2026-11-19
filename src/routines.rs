@@ -125,6 +125,8 @@ struct Day {
     asleep: bool,
     woke_until: i64,
     busy: i64,
+    /// No new game before this.
+    rest_until: i64,
 }
 
 #[derive(Default)]
@@ -288,6 +290,10 @@ pub fn tick(host: &mut dyn ServerHost) {
             Err(_) => continue,
         };
         if !living {
+            // A game at its play time: the day goes on after it.
+            if crate::games::busy(id) || crate::matches::busy(id) {
+                continue;
+            }
             if asleep {
                 stop_sleep(host, me);
             }
@@ -312,7 +318,7 @@ pub fn tick(host: &mut dyn ServerHost) {
                 Doing::Follow => LiveDo::Follow,
                 Doing::Sleep => LiveDo::Rest,
                 Doing::Guard => LiveDo::Guard,
-                Doing::Be => LiveDo::Stay,
+                Doing::Be | Doing::Play => LiveDo::Stay,
             };
             companion::set_live(host, me, at, what);
             if let Some(line) = e.say.get((now as usize / SCAN as usize) % e.say.len().max(1)) {
@@ -338,6 +344,9 @@ pub fn tick(host: &mut dyn ServerHost) {
                     d.asleep = true;
                 }
             }
+            Doing::Play if me.position(&*host).is_some_and(|p| dist(p, at) <= 4.0) => {
+                find_partner(host, me, &e.game, now);
+            }
             Doing::Be if now - busy >= BUSY && me.position(&*host).is_some_and(|p| dist(p, at) <= 4.0) => {
                 if let Some(a) = &e.animation {
                     play(host, me, a);
@@ -353,6 +362,54 @@ pub fn tick(host: &mut dyn ServerHost) {
     }
 }
 
+/// NPC `me`, at its play time, looks for another NPC playing near it, and they start `game`.
+fn find_partner(host: &mut dyn ServerHost, me: EntityRef, game: &str, now: i64) {
+    if crate::games::busy(me.id()) || crate::matches::busy(me.id()) {
+        return;
+    }
+    let Some(at) = me.position(&*host) else { return };
+    let others: Vec<u32> = STATE
+        .lock()
+        .map(|s| s.days.iter().filter(|(id, d)| **id > me.id() && d.doing == "play" && now >= d.rest_until).map(|(id, _)| *id).collect())
+        .unwrap_or_default();
+    // The lower id asks; one rests a while after a game.
+    if STATE.lock().ok().and_then(|s| s.days.get(&me.id()).map(|d| now < d.rest_until)).unwrap_or(true) {
+        return;
+    }
+    for o in others {
+        let Some(other) = host.entity(o) else { continue };
+        if crate::games::busy(o) || crate::matches::busy(o) || other.position(&*host).is_none_or(|p| dist(p, at) > 8.0) {
+            continue;
+        }
+        let choice = if game == "any" || game.is_empty() {
+            ["chess", "checkers", "table_tennis", "tennis", "basketball"][(now as usize / 20 + me.id() as usize) % 5]
+        } else {
+            game
+        };
+        let name = other.name(&*host).unwrap_or_else(|| "friend".into());
+        let pretty = choice.replace('_', " ");
+        let started = if let Some(k) = crate::games::GameKind::parse(choice) {
+            crate::games::start_npcs(host, me, other, k)
+        } else if let Some(s) = crate::sports::Sport::parse(choice) {
+            crate::matches::start_npcs(host, me, other, s)
+        } else {
+            Err(format!("no game {choice}"))
+        };
+        if started.is_ok() {
+            crate::heart::say_aloud(host, me, &format!("Fancy a game of {pretty}, {name}?"));
+            crate::heart::say_aloud(host, other, "You're on!");
+            if let Ok(mut s) = STATE.lock() {
+                for id in [me.id(), o] {
+                    if let Some(d) = s.days.get_mut(&id) {
+                        d.rest_until = now + 600;
+                    }
+                }
+            }
+        }
+        return;
+    }
+}
+
 // ---- commands -------------------------------------------------------------------------------------------------
 
 pub fn register_commands(e: &mut RegisterCommandsEvent<'_>) {
@@ -360,6 +417,7 @@ pub fn register_commands(e: &mut RegisterCommandsEvent<'_>) {
     e.commands.push(Command::op("felix routine clear <targets:entities>", 2));
     e.commands.push(Command::op("felix place <targets:entities> <name:word>", 2));
     e.commands.push(Command::op("felix day <target:entity>", 2));
+    e.commands.push(Command::op("felix play <first:entity> <second:entity> <game:word>", 2));
 }
 
 pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
@@ -393,6 +451,30 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
                 set_place(host, *t, &name, at);
             }
             feedback(host, format!("{} NPCs: {name} is at {:.0} {:.0} {:.0}", list.len(), at[0], at[1], at[2]));
+        }
+        ["felix", "play"] => {
+            let one = |n: &str| e.command.arguments.iter().find(|a| a.name == n).and_then(|a| match &a.value {
+                CommandArgumentValue::Entity(x) => Some(*x),
+                CommandArgumentValue::Entities(l) => l.first().copied(),
+                _ => None,
+            });
+            let (Some(a), Some(b)) = (one("first"), one("second")) else { return Flow::Cancel };
+            if !companion::is_npc(&*host, a) || !companion::is_npc(&*host, b) || a.id() == b.id() {
+                feedback(host, "Two NPCs play.".into());
+                return Flow::Cancel;
+            }
+            let game = companion::text_argument(e, "game").unwrap_or_default();
+            let r = if let Some(k) = crate::games::GameKind::parse(&game) {
+                crate::games::start_npcs(host, a, b, k)
+            } else if let Some(s) = crate::sports::Sport::parse(&game) {
+                crate::matches::start_npcs(host, a, b, s)
+            } else {
+                Err("games: chess, checkers, table_tennis, tennis, basketball".into())
+            };
+            match r {
+                Ok(()) => feedback(host, format!("They play {game}.")),
+                Err(err) => feedback(host, err),
+            }
         }
         ["felix", "day"] => {
             let Some(npc) = npcs(&*host, e).into_iter().next() else {
