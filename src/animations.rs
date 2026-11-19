@@ -23,6 +23,17 @@ pub fn get(name: &str) -> Option<Arc<Animation>> {
     ANIMATIONS.read().ok()?.get(name).cloned()
 }
 
+/// Every animation's name.
+pub fn names() -> Vec<String> {
+    let mut n: Vec<String> = ANIMATIONS.read().map(|a| a.keys().cloned().collect()).unwrap_or_default();
+    for s in SAVED.read().map(|a| a.keys().cloned().collect::<Vec<_>>()).unwrap_or_default() {
+        if !n.contains(&s) {
+            n.push(s);
+        }
+    }
+    n
+}
+
 /// An animation the editor saved, playable at once.
 pub fn insert_saved(a: Animation) {
     if let Ok(mut s) = SAVED.write() {

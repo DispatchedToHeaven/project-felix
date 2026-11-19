@@ -1,0 +1,39 @@
+{
+  "length": 9,
+  "cast": [
+    {
+      "role": "friend",
+      "offset": [
+        1.5,
+        0,
+        1.5
+      ],
+      "turn": 225
+    }
+  ],
+  "timeline": [
+    {
+      "at": 0.5,
+      "who": "lead",
+      "say": "Oh, @player! Have you met my friend?",
+      "animation": "animation.felix.wave"
+    },
+    {
+      "at": 3,
+      "who": "friend",
+      "say": "Hello there.",
+      "animation": "animation.felix.wave"
+    },
+    {
+      "at": 5.5,
+      "who": "lead",
+      "say": "We're off to play chess later. Join us?"
+    },
+    {
+      "at": 7.5,
+      "who": "friend",
+      "say": "The more the merrier!",
+      "animation": "animation.felix.cheer"
+    }
+  ]
+}
