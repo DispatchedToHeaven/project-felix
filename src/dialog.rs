@@ -42,6 +42,10 @@
 //! `forget`, `dialog` (goes on in another dialog, from its start), `feed` (the player gives it the
 //! best food they have, see `need`), `family` (it tells the player about its family, see
 //! `family`). Conditions `hungry` and `family` (it has one: true or false).
+//! Bonds (see `bond`): condition `stage` (the player is at least that: `acquaintance`, `friend`,
+//! `close`, `sweetheart`, `partner`) and `romance` (`none`, `sweetheart`, `partner`); actions
+//! `gift` (the player gives it what they hold), `tastes` (it says what it loves), `ask_out`,
+//! `propose` (with a diamond), `part` (the player ends the romance).
 //! `@player` is the player's name; `@npc` is the NPC's name in texts and its UUID in commands.
 //!
 //! Long talks: a node with `"paged": true` says its `text` a line at a time, the player going on
@@ -117,6 +121,9 @@ pub enum Cond {
     Chance(u32),
     Hungry(bool),
     Family(bool),
+    /// The player is at least at this stage with it.
+    Stage(String),
+    Romance(String),
     Not(Box<Cond>),
     All(Vec<Cond>),
     Any(Vec<Cond>),
@@ -155,6 +162,11 @@ pub enum Action {
     Dialog(String),
     Feed,
     Family,
+    Gift,
+    Tastes,
+    AskOut,
+    Propose,
+    Part,
 }
 
 /// What conditions ask about the player and the NPC.
@@ -233,6 +245,19 @@ pub trait Facts {
     fn has_family(&self) -> bool {
         false
     }
+    /// Where the player stands with it (see `bond`): its rank, from 0 (a stranger).
+    fn stage(&self) -> u8 {
+        0
+    }
+    /// `none`, `sweetheart` or `partner`.
+    fn romance(&self) -> &str {
+        "none"
+    }
+}
+
+/// A stage's rank, from 0 (a stranger) to 5 (partners).
+pub fn stage_rank(s: &str) -> Option<u8> {
+    ["stranger", "acquaintance", "friend", "close", "sweetheart", "partner"].iter().position(|x| *x == s.trim()).map(|i| i as u8)
 }
 
 /// Whether biome `id` is `want`: the same id, or (a word) a part of its name.
@@ -276,6 +301,8 @@ impl Cond {
             Cond::Chance(p) => f.roll() < *p,
             Cond::Hungry(want) => f.hungry() == *want,
             Cond::Family(want) => f.has_family() == *want,
+            Cond::Stage(s) => stage_rank(s).is_some_and(|r| f.stage() >= r),
+            Cond::Romance(r) => f.romance() == r,
             Cond::Not(c) => !c.holds(f),
             Cond::All(list) => list.iter().all(|c| c.holds(f)),
             Cond::Any(list) => list.iter().any(|c| c.holds(f)),
@@ -328,6 +355,8 @@ pub fn describe_cond(c: &Cond) -> String {
         Cond::Chance(p) => format!("{p}%"),
         Cond::Hungry(b) => if *b { "hungry".into() } else { "not hungry".into() },
         Cond::Family(b) => if *b { "has family".into() } else { "no family".into() },
+        Cond::Stage(s) => format!("{s}+"),
+        Cond::Romance(r) => format!("romance {r}"),
         Cond::Not(c) => format!("not ({})", describe_cond(c)),
         Cond::All(l) => l.iter().map(describe_cond).collect::<Vec<_>>().join(" and "),
         Cond::Any(l) => l.iter().map(describe_cond).collect::<Vec<_>>().join(" or "),
@@ -375,7 +404,7 @@ pub fn commands(action: &Action, player: &str, npc: &str) -> Vec<String> {
         Action::Tag(t) => vec![format!("tag {player} add {t}")],
         Action::Untag(t) => vec![format!("tag {player} remove {t}")],
         Action::Sound(s) => vec![format!("execute as {npc} at @s run playsound {s} neutral @a ~ ~ ~")],
-        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Place(_) | Action::Shop(_) | Action::Trade(_) | Action::Gear(_) | Action::Stats | Action::Remember(..) | Action::Forget(_) | Action::Dialog(_) | Action::Feed | Action::Family => Vec::new(),
+        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Place(_) | Action::Shop(_) | Action::Trade(_) | Action::Gear(_) | Action::Stats | Action::Remember(..) | Action::Forget(_) | Action::Dialog(_) | Action::Feed | Action::Family | Action::Gift | Action::Tastes | Action::AskOut | Action::Propose | Action::Part => Vec::new(),
     }
 }
 
@@ -507,6 +536,11 @@ pub fn read_cond(v: &Value) -> Result<Cond, String> {
         Ok(Cond::Hungry(b))
     } else if let Some(b) = m.get("family").and_then(Value::as_bool) {
         Ok(Cond::Family(b))
+    } else if let Some(st) = s("stage") {
+        stage_rank(&st).ok_or(format!("stage is stranger, acquaintance, friend, close, sweetheart or partner, not {st}"))?;
+        Ok(Cond::Stage(st))
+    } else if let Some(r) = s("romance") {
+        Ok(Cond::Romance(r))
     } else if let Some(n) = m.get("not") {
         Ok(Cond::Not(Box::new(read_cond(n)?)))
     } else if let Some(all) = list("all")? {
@@ -588,6 +622,16 @@ pub fn read_actions(v: Option<&Value>) -> Result<Vec<Action>, String> {
                 Action::Feed
             } else if m.contains_key("family") {
                 Action::Family
+            } else if m.contains_key("gift") {
+                Action::Gift
+            } else if m.contains_key("tastes") {
+                Action::Tastes
+            } else if m.contains_key("ask_out") {
+                Action::AskOut
+            } else if m.contains_key("propose") {
+                Action::Propose
+            } else if m.contains_key("part") {
+                Action::Part
             } else {
                 return Err(format!("unknown action {a}"));
             })

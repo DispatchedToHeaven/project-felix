@@ -203,6 +203,8 @@ struct PlayerFacts {
     roll: u32,
     hungry: bool,
     family: bool,
+    stage: u8,
+    romance: &'static str,
 }
 
 impl Facts for PlayerFacts {
@@ -273,6 +275,12 @@ impl Facts for PlayerFacts {
     fn has_family(&self) -> bool {
         self.family
     }
+    fn stage(&self) -> u8 {
+        self.stage
+    }
+    fn romance(&self) -> &str {
+        self.romance
+    }
 }
 
 fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: &str) -> PlayerFacts {
@@ -301,7 +309,11 @@ fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: &
     let (biome, time, weather) = crate::flags::surroundings(&*host, player);
     let now = npc.level(&*host).and_then(|l| l.game_time(&*host)).unwrap_or(0) as u64;
     let roll = (now.wrapping_mul(2_654_435_761).wrapping_add(u64::from(npc.id()).wrapping_mul(40_503)) >> 7) as u32 % 100;
-    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine, met, remembers, fault, event, flags, dialog: dialog.to_string(), biome, time, weather, roll, hungry: crate::needs::food_of(npc.id()) <= crate::need::HUNGRY, family: crate::families::has_family(host, npc) }
+    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine, met, remembers, fault, event, flags, dialog: dialog.to_string(), biome, time, weather, roll, hungry: crate::needs::food_of(npc.id()) <= crate::need::HUNGRY, family: crate::families::has_family(host, npc), stage: crate::bonds::stage(host, npc, player) as u8, romance: match crate::bonds::stage(host, npc, player) {
+        crate::bond::Stage::Sweetheart => "sweetheart",
+        crate::bond::Stage::Partner => "partner",
+        _ => "none",
+    } }
 }
 
 /// A UUID written with dashes, as commands take it.
@@ -335,6 +347,7 @@ fn talk(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
         return;
     }
     crate::quests::on_talk(host, npc, player);
+    crate::bonds::on_talk(host, npc, player);
     let chosen = DIALOG.get(host, Holder::Entity(id)).ok().flatten().unwrap_or_else(|| DEFAULT_DIALOG.into());
     // An NPC file may speak a dialog made in the game.
     let chosen = crate::custom::dialog_override(&chosen).unwrap_or(chosen);
@@ -509,14 +522,17 @@ fn show(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Ar
         title = format!("{title} (level {level})");
     }
     let food = crate::needs::food_of(npc.id());
-    let words: Vec<&str> = [crate::flags::standing_word(npc.id(), player.uuid()), crate::need::word(food)].into_iter().filter(|w| !w.is_empty()).collect();
+    // Past friends, where they stand (a close friend, a sweetheart…) says more than liking.
+    let standing = crate::bonds::stage_word(host, npc, player).unwrap_or_else(|| crate::flags::standing_word(npc.id(), player.uuid()));
+    let words: Vec<&str> = [standing, crate::need::word(food)].into_iter().filter(|w| !w.is_empty()).collect();
     if !words.is_empty() {
         title = format!("{title} - {}", words.join(", "));
     }
     if extended {
         let rel = crate::heart::relation_of(npc.id(), player.uuid());
         let mood = crate::heart::mood_of(npc.id());
-        title = format!("{title}  [rel {rel}, {mood}, food {food}, {}{node_name}{}]", if id.is_empty() { String::new() } else { format!("{id} ") }, if paged { format!(" {}/{}", page + 1, node.text.len()) } else { String::new() });
+        let close = crate::bonds::closeness(host, npc, player);
+        title = format!("{title}  [rel {rel}, close {close:.0}, {mood}, food {food}, {}{node_name}{}]", if id.is_empty() { String::new() } else { format!("{id} ") }, if paged { format!(" {}/{}", page + 1, node.text.len()) } else { String::new() });
     }
     let event_name = crate::events::name_at(host, npc).unwrap_or_else(|| "festival".into());
     let upset_by = crate::heart::upset_by_name(npc.id());
@@ -588,6 +604,17 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
             Action::Family => {
                 if let Some(p) = player {
                     crate::families::tell(host, npc, p);
+                }
+            }
+            Action::Gift | Action::Tastes | Action::AskOut | Action::Propose | Action::Part => {
+                if let Some(p) = player {
+                    match a {
+                        Action::Gift => crate::bonds::give_held(host, npc, p),
+                        Action::Tastes => crate::bonds::tell_tastes(host, npc, p),
+                        Action::AskOut => crate::bonds::ask_out(host, npc, p),
+                        Action::Propose => crate::bonds::propose(host, npc, p),
+                        _ => crate::bonds::part(host, npc, p, false),
+                    }
                 }
             }
             Action::News => {

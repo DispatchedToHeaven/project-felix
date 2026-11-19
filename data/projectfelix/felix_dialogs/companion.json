@@ -217,6 +217,13 @@
           ]
         },
         {
+          "text": "Just between us...",
+          "if": {
+            "stage": "acquaintance"
+          },
+          "goto": "us"
+        },
+        {
           "text": "What's on today?",
           "if": {
             "event": "any"
@@ -640,6 +647,102 @@
     },
     "event_today": {
       "text": "It's the @event, @player! Everyone's here. Come and join us.",
+      "options": [
+        {
+          "text": "Something else...",
+          "goto": "main"
+        },
+        {
+          "text": "Bye."
+        }
+      ]
+    },
+    "us": {
+      "text": "Yes, @player?",
+      "options": [
+        {
+          "text": "I brought you something.",
+          "actions": [
+            {
+              "gift": true
+            }
+          ]
+        },
+        {
+          "text": "What do you like?",
+          "actions": [
+            {
+              "tastes": true
+            }
+          ]
+        },
+        {
+          "text": "Would you go out with me?",
+          "if": {
+            "all": [
+              {
+                "stage": "close"
+              },
+              {
+                "romance": "none"
+              }
+            ]
+          },
+          "actions": [
+            {
+              "ask_out": true
+            }
+          ]
+        },
+        {
+          "text": "Will you marry me?",
+          "if": {
+            "romance": "sweetheart"
+          },
+          "actions": [
+            {
+              "propose": true
+            }
+          ]
+        },
+        {
+          "text": "Come live with me, here.",
+          "if": {
+            "romance": "partner"
+          },
+          "actions": [
+            {
+              "place": "home"
+            }
+          ],
+          "goto": "moved_in"
+        },
+        {
+          "text": "I think we should part ways.",
+          "if": {
+            "any": [
+              {
+                "romance": "sweetheart"
+              },
+              {
+                "romance": "partner"
+              }
+            ]
+          },
+          "actions": [
+            {
+              "part": true
+            }
+          ]
+        },
+        {
+          "text": "Something else...",
+          "goto": "main"
+        }
+      ]
+    },
+    "moved_in": {
+      "text": "Home is wherever you are, @player.",
       "options": [
         {
           "text": "Something else...",

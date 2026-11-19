@@ -252,6 +252,7 @@ pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
         json!({ "text": "Who upset you?", "if": { "all": [ { "not": fine }, { "fault": false } ] }, "goto": "not_you" }),
         json!({ "text": "Here, eat something.", "if": { "hungry": true }, "actions": [ { "feed": true } ] }),
         json!({ "text": "How's your family?", "if": { "family": true }, "actions": [ { "family": true } ] }),
+        json!({ "text": "Just between us...", "if": { "stage": "acquaintance" }, "goto": "us" }),
         json!({ "text": "What's on today?", "if": { "event": "any" }, "goto": "event_today" }),
         json!({ "text": "Heard any news?", "actions": [ { "news": true } ] }),
     ];
@@ -261,6 +262,15 @@ pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
         ("feel_bad".to_string(), json!({ "text": "Not great, @player. Not great at all.", "options": again })),
         ("thanks".to_string(), json!({ "text": "For me? Thank you!", "options": again })),
         ("sorry".to_string(), json!({ "text": "...All right. Let's forget it.", "options": again })),
+        ("us".to_string(), json!({ "text": "Yes, @player?", "options": [
+            { "text": "I brought you something.", "actions": [ { "gift": true } ] },
+            { "text": "What do you like?", "actions": [ { "tastes": true } ] },
+            { "text": "Would you go out with me?", "if": { "all": [ { "stage": "close" }, { "romance": "none" } ] }, "actions": [ { "ask_out": true } ] },
+            { "text": "Will you marry me?", "if": { "romance": "sweetheart" }, "actions": [ { "propose": true } ] },
+            { "text": "Come live with me, here.", "if": { "romance": "partner" }, "actions": [ { "place": "home" } ], "goto": "moved_in" },
+            { "text": "I think we should part ways.", "if": { "any": [ { "romance": "sweetheart" }, { "romance": "partner" } ] }, "actions": [ { "part": true } ] },
+            { "text": "Something else...", "goto": back } ] })),
+        ("moved_in".to_string(), json!({ "text": "Home is wherever you are, @player.", "options": again })),
         ("event_today".to_string(), json!({ "text": "It's the @event, @player! Everyone's here. Come and join us.", "options": again })),
         ("not_you".to_string(), json!({ "text": "It's not you, @player. @upset_by can say sorry, not you.", "options": again })),
     ];

@@ -74,6 +74,8 @@ pub struct Character {
     pub greetings: HashMap<String, Vec<String>>,
     /// The voice its NPCs have (see `voice`), unless one has its own.
     pub voice: Option<String>,
+    /// Whether its NPCs may fall for a player (`"romance": false`: never, see `bond`).
+    pub romance: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -321,6 +323,7 @@ pub fn read(root: &Value) -> Result<Character, String> {
         shun: strings(m.get("shun")),
         greetings: m.get("greetings").and_then(Value::as_object).map(|g| g.iter().map(|(k, v)| (k.clone(), strings(Some(v)))).collect()).unwrap_or_default(),
         voice: m.get("voice").and_then(Value::as_str).map(str::to_string).filter(|v| !v.is_empty()),
+        romance: m.get("romance").and_then(Value::as_bool).unwrap_or(true),
     })
 }
 

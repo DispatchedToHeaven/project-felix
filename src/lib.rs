@@ -35,6 +35,7 @@
 //! - `speech` shows what NPCs say over their heads (and copies some of it to chat).
 //! - `event` is the village calendar (no mod API types); `events` gathers NPCs for its days.
 //! - `need` is NPCs' food (no mod API types); `needs` feeds them and has them say when hungry.
+//! - `bond` is how close an NPC and a player are, up to romance (no mod API types); `bonds` keeps it.
 //! - `family` is NPC families (no mod API types); `families` makes couples and their children.
 //! - `squad` is a player's squad of NPCs: keys to attack, fall back, hold; archers shoot.
 //! - `plan` is a building plan (no mod API types); `builds` has builders build them.
@@ -58,6 +59,8 @@ pub use mod_api::serde_json;
 
 pub mod anim;
 pub mod anim_edit;
+pub mod bond;
+pub mod bonds;
 pub mod builds;
 pub mod checkers;
 pub mod chess;
@@ -199,11 +202,15 @@ impl Hooks for Felix {
         builds::register_commands(e);
         squad::register_commands(e);
         families::register_commands(e);
+        bonds::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = bonds::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = families::run_command(host, e) {
@@ -296,6 +303,7 @@ impl Hooks for Felix {
             needs::tick(host);
             squad::tick(host);
             families::tick(host);
+            bonds::tick(host);
             shops::tick(host);
             speech::tick(host);
             rulebook::tick(host);
@@ -318,6 +326,7 @@ impl Hooks for Felix {
         heart::on_death(host, e.entity, e.source.causing);
         quests::on_death(host, e.entity, e.source.causing);
         gear::on_death(host, e.entity, e.source.causing);
+        bonds::on_death(host, e.entity, e.source.causing);
         Flow::Continue
     }
 

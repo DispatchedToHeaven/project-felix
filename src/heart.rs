@@ -503,6 +503,14 @@ pub fn fault_of(id: u32, who: u128) -> bool {
     STATE.lock().ok().and_then(|s| s.live.get(&id).map(|l| l.heart.by.is_none_or(|b| b == who))).unwrap_or(true)
 }
 
+/// Whether NPC `npc`'s character says no to romance.
+pub fn no_romance(host: &mut dyn ServerHost, npc: EntityRef) -> bool {
+    if !load(host, npc) {
+        return false;
+    }
+    STATE.lock().ok().and_then(|s| s.live.get(&npc.id()).map(|l| !l.character().romance)).unwrap_or(false)
+}
+
 /// What NPC `id`'s voice comes from: its character's voice, its mood, and that mood's own.
 pub fn voice_facts(id: u32) -> (Option<String>, String, Option<(f32, f32)>) {
     let Ok(s) = STATE.lock() else { return (None, String::new(), None) };

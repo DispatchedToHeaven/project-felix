@@ -110,6 +110,11 @@ struct State {
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
+/// NPC `e`'s partner among NPCs, by name.
+pub fn partner_name(host: &mut dyn ServerHost, e: EntityRef) -> Option<String> {
+    family_of(host, e).partner.map(|p| p.1)
+}
+
 /// Whether NPC `e` has a family (a partner, children, parents).
 pub fn has_family(host: &mut dyn ServerHost, e: EntityRef) -> bool {
     let f = family_of(host, e);
