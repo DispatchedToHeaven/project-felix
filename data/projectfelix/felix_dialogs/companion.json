@@ -135,16 +135,23 @@
         {
           "text": "I'm sorry.",
           "if": {
-            "not": {
-              "any": [
-                {
-                  "mood": "calm"
-                },
-                {
-                  "mood": "happy"
+            "all": [
+              {
+                "not": {
+                  "any": [
+                    {
+                      "mood": "calm"
+                    },
+                    {
+                      "mood": "happy"
+                    }
+                  ]
                 }
-              ]
-            }
+              },
+              {
+                "fault": true
+              }
+            ]
           },
           "actions": [
             {
@@ -152,6 +159,29 @@
             }
           ],
           "goto": "sorry"
+        },
+        {
+          "text": "Who upset you?",
+          "if": {
+            "all": [
+              {
+                "not": {
+                  "any": [
+                    {
+                      "mood": "calm"
+                    },
+                    {
+                      "mood": "happy"
+                    }
+                  ]
+                }
+              },
+              {
+                "fault": false
+              }
+            ]
+          },
+          "goto": "not_you"
         },
         {
           "text": "Well done, @npc!",
@@ -545,6 +575,18 @@
     },
     "placed": {
       "text": "Got it. I'll remember this place.",
+      "options": [
+        {
+          "text": "Something else...",
+          "goto": "main"
+        },
+        {
+          "text": "Bye."
+        }
+      ]
+    },
+    "not_you": {
+      "text": "It's not you, @player. @upset_by can say sorry, not you.",
       "options": [
         {
           "text": "Something else...",

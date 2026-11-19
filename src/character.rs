@@ -388,6 +388,8 @@ pub struct Heart {
     pub bonds: Vec<Bond>,
     /// What it saw or heard players do, newest last.
     pub news: Vec<News>,
+    /// The player (or NPC) who brought on its mood, if one did.
+    pub by: Option<u128>,
 }
 
 /// How many news an NPC keeps, how long (game ticks), and how far news goes (tellings).

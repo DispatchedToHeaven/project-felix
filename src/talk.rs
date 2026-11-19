@@ -167,6 +167,7 @@ struct PlayerFacts {
     routine: bool,
     met: bool,
     remembers: Vec<String>,
+    fault: bool,
 }
 
 impl Facts for PlayerFacts {
@@ -206,6 +207,9 @@ impl Facts for PlayerFacts {
     fn remembers(&self, kind: &str) -> bool {
         self.remembers.iter().any(|k| k == kind)
     }
+    fn fault(&self) -> bool {
+        self.fault
+    }
 }
 
 fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> PlayerFacts {
@@ -228,7 +232,8 @@ fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> Player
     let doing = crate::routines::doing(npc.id());
     let routine = crate::routines::has_routine(npc.id());
     let (met, remembers) = crate::heart::memory_of(npc.id(), player.uuid());
-    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine, met, remembers }
+    let fault = crate::heart::fault_of(npc.id(), player.uuid());
+    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine, met, remembers, fault }
 }
 
 /// A UUID written with dashes, as commands take it.
@@ -337,7 +342,7 @@ fn enter(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: A
     let view = crate::serde_json::json!({
         "npc": npc.id(),
         "title": title,
-        "lines": node.text.iter().map(|t| dialog::fill(t, &name, &fill_name)).collect::<Vec<_>>(),
+        "lines": node.text.iter().map(|t| dialog::fill(t, &name, &fill_name).replace("@upset_by", &crate::heart::upset_by_name(npc.id()))).collect::<Vec<_>>(),
         "options": shown.iter().map(|i| dialog::fill(&node.options[*i].text, &name, &fill_name)).collect::<Vec<_>>(),
     });
     if let Ok(mut s) = SESSIONS.lock() {

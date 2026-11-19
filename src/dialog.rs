@@ -23,7 +23,8 @@
 //! `none`, `waiting`, `playing`, `over`), `in_game` (the player sits at it), `mood` (the NPC's, as
 //! `upset`), `relation_above` / `relation_below` (how much it likes the player), `doing` (what its
 //! day has it do: `work`, `sleep`…), `routine` (it has one), `met` (it has talked with the player before), `remembers` (news of
-//! the player and it: `gift`, `helped`, `hurt`, `let_down`…), `not`, `all`, `any`.
+//! the player and it: `gift`, `helped`, `hurt`, `let_down`…), `fault` (the player is the one who
+//! upset it, or no one in particular did), `not`, `all`, `any`. Text may name `@upset_by`.
 //! Actions: `command` (run as the server console), `give` / `take` (+ `count`), `tag`, `untag`,
 //! `animation` (played on the NPC), `order` (`follow`, `wait`, `guard`), `sound` (at the NPC),
 //! `scene` (a scene from `felix_scenes`, played by the NPC), `game` (`chess` or `checkers`, with
@@ -78,6 +79,8 @@ pub enum Cond {
     Doing(String),
     Routine(bool),
     Met(bool),
+    /// Whether the player is the one who upset the NPC (or no one in particular did).
+    Fault(bool),
     Remembers(String),
     Not(Box<Cond>),
     All(Vec<Cond>),
@@ -150,6 +153,10 @@ pub trait Facts {
     fn remembers(&self, _kind: &str) -> bool {
         false
     }
+    /// Whether the player brought on its mood (or no one in particular did).
+    fn fault(&self) -> bool {
+        true
+    }
 }
 
 impl Cond {
@@ -167,6 +174,7 @@ impl Cond {
             Cond::Doing(d) => f.doing() == d,
             Cond::Routine(want) => f.has_routine() == *want,
             Cond::Met(want) => f.met() == *want,
+            Cond::Fault(want) => f.fault() == *want,
             Cond::Remembers(k) => f.remembers(k),
             Cond::Not(c) => !c.holds(f),
             Cond::All(list) => list.iter().all(|c| c.holds(f)),
@@ -288,6 +296,8 @@ fn read_cond(v: &Value) -> Result<Cond, String> {
         Ok(Cond::Routine(b))
     } else if let Some(b) = m.get("met").and_then(Value::as_bool) {
         Ok(Cond::Met(b))
+    } else if let Some(b) = m.get("fault").and_then(Value::as_bool) {
+        Ok(Cond::Fault(b))
     } else if let Some(k) = s("remembers") {
         Ok(Cond::Remembers(k))
     } else if let Some(n) = m.get("not") {

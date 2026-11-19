@@ -66,6 +66,9 @@ fn encode(h: &Option<Heart>) -> Result<Compound, AttachmentError> {
     }
     c.insert("mood".into(), Tag::String(h.mood.as_str().into()));
     c.insert("since".into(), Tag::Long(h.since));
+    if let Some(by) = h.by {
+        c.insert("by".into(), uuid_tag(by));
+    }
     let bonds = h
         .bonds
         .iter()
@@ -159,7 +162,7 @@ fn decode(c: &Compound) -> Result<Option<Heart>, AttachmentError> {
             news.push(News { about, name: t("name"), kind: t("kind"), victim, victim_name: t("victim_name"), delta, hops, from: t("from"), at });
         }
     }
-    Ok(Some(Heart { character: text(c, "character"), mood, since, bonds, news }))
+    Ok(Some(Heart { character: text(c, "character"), mood, since, bonds, news, by: tag_uuid(c.get(&"by".into())) }))
 }
 
 pub static HEART: AttachmentType<Option<Heart>> = AttachmentType {
@@ -433,7 +436,7 @@ fn load(host: &mut dyn ServerHost, e: EntityRef) -> bool {
     let Some(uuid) = e.uuid(host) else { return false };
     let saved = HEART.get(host, Holder::Entity(e.id())).ok().flatten();
     let now = now_of(&*host, e);
-    let heart = saved.unwrap_or_else(|| Heart { character: None, mood: character_named(DEFAULT).start.clone(), since: now, bonds: Vec::new(), news: Vec::new() });
+    let heart = saved.unwrap_or_else(|| Heart { character: None, mood: character_named(DEFAULT).start.clone(), since: now, bonds: Vec::new(), news: Vec::new(), by: None });
     let live = Live { heart, uuid, name: e.name(&*host).unwrap_or_else(|| "NPC".into()), owner: LivingRef::new(e).owner(&*host), dirty: false };
     if let Ok(mut s) = STATE.lock() {
         s.live.entry(e.id()).or_insert(live);
@@ -491,6 +494,23 @@ pub fn mood_of(id: u32) -> String {
 }
 
 /// Whether NPC `id` talked with `who` before this talk, and the kinds of news it has of them.
+/// Whether player `who` is the one who upset NPC `id` (or no one in particular did).
+pub fn fault_of(id: u32, who: u128) -> bool {
+    STATE.lock().ok().and_then(|s| s.live.get(&id).map(|l| l.heart.by.is_none_or(|b| b == who))).unwrap_or(true)
+}
+
+/// The name of the one who upset NPC `id`, for `@upset_by`.
+pub fn upset_by_name(id: u32) -> String {
+    STATE
+        .lock()
+        .ok()
+        .and_then(|s| {
+            let l = s.live.get(&id)?;
+            l.heart.get(l.heart.by?).map(|b| b.name.clone())
+        })
+        .unwrap_or_else(|| "Someone".into())
+}
+
 pub fn memory_of(id: u32, who: u128) -> (bool, Vec<String>) {
     let Ok(s) = STATE.lock() else { return (false, Vec::new()) };
     let Some(l) = s.live.get(&id) else { return (false, Vec::new()) };
@@ -606,7 +626,12 @@ fn feel_at(host: &mut dyn ServerHost, id: u32, event: &str, player: Option<Playe
             }
             None => 0,
         };
-        let next = c.next(&l.heart.mood, event, relation).map(str::to_string);
+        // Only the one who upset it can say sorry for it.
+        let theirs = match (&who, l.heart.by) {
+            (Some((u, _)), Some(by)) => by == *u,
+            _ => true,
+        };
+        let next = if event == "apology" && !theirs { None } else { c.next(&l.heart.mood, event, relation).map(str::to_string) };
         (c, labels, next, l.name.clone())
     };
     if let (Some(p), Some((label, worse))) = (player, labels) {
@@ -631,6 +656,7 @@ fn enter(host: &mut dyn ServerHost, me: EntityRef, c: &Character, mood: &str, pl
         let Some(l) = s.live.get_mut(&me.id()) else { return };
         l.heart.mood = mood.to_string();
         l.heart.since = now;
+        l.heart.by = player.map(|p| p.uuid());
         l.dirty = true;
         (l.uuid, l.name.clone())
     };
@@ -866,6 +892,7 @@ pub fn set_character(host: &mut dyn ServerHost, npc: EntityRef, id: Option<&str>
         l.heart.character = id.map(str::to_string);
         l.heart.mood = c.start.clone();
         l.heart.since = now;
+        l.heart.by = None;
         l.dirty = true;
         l.uuid
     };

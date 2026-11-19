@@ -6,8 +6,8 @@ use crate::companion::{self, LOOK, Look, Mode, NPC};
 use crate::village::{NpcSpec, Village};
 use crate::zipfile::{self, Entry};
 use mod_api::{
-    Command, CommandArgumentValue, CommandSource, Compound, ConfigPath, Flow, Holder, PlayerRef, RegisterCommandsEvent,
-    RunModCommandEvent, ServerHost, Tag, Text,
+    Command, CommandArgumentValue, CommandSource, Compound, ConfigPath, Flow, Holder, Host, LevelRef, PlayerRef,
+    RegisterCommandsEvent, RunModCommandEvent, ServerHost, Tag, Text,
 };
 use std::sync::{LazyLock, Mutex};
 
@@ -31,6 +31,60 @@ fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 
 fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+/// How far up and down, and to the sides, a spot is looked for.
+const REACH: i32 = 24;
+const SIDES: i32 = 8;
+
+/// Where an NPC can stand nearest `p`: in the middle of a block, on ground that is not a tree
+/// (leaves, logs), room for its body, out of water; its own column first, then ever wider rings
+/// (out of a lake). `p` itself where there is none (or the chunks are not there).
+fn ground(host: &dyn Host, level: LevelRef, p: [f64; 3]) -> [f64; 3] {
+    let (bx, bz) = (p[0].floor() as i32, p[2].floor() as i32);
+    for ring in 0..=SIDES {
+        for dx in -ring..=ring {
+            for dz in -ring..=ring {
+                if dx.abs().max(dz.abs()) != ring {
+                    continue;
+                }
+                let (x, z) = (f64::from(bx + dx) + 0.5, f64::from(bz + dz) + 0.5);
+                if let Some(y) = column(host, level, x, z, p[1]) {
+                    return [x, y, z];
+                }
+            }
+        }
+    }
+    p
+}
+
+/// The height nearest `y` an NPC can stand at in the column of `x`, `z` (a block's middle).
+fn column(host: &dyn Host, level: LevelRef, x: f64, z: f64, y: f64) -> Option<f64> {
+    let r = 0.3;
+    let stand = |cell: i32| -> Option<f64> {
+        let y = f64::from(cell);
+        // The top of what is under the feet in this cell (a full block, a slab, a path).
+        let boxes = level.collision_boxes(host, [x - r, y - 1.0, z - r, x + r, y + 0.6, z + r])?;
+        let top = boxes.iter().map(|b| b[4]).filter(|t| *t <= y + 0.6).fold(f64::NAN, f64::max);
+        if top.is_nan() {
+            return None;
+        }
+        let below = [x.floor() as i32, (top - 0.5).floor() as i32, z.floor() as i32];
+        let id = level.block(host, below).map(|k| k.id(host)).unwrap_or_default();
+        if id.contains("leaves") || id.ends_with("_log") || id.ends_with("_wood") || id.ends_with("_stem") {
+            return None;
+        }
+        if level.has_collisions(host, [x - r, top + 0.01, z - r, x + r, top + 1.8, z + r])? {
+            return None;
+        }
+        let feet = [x.floor() as i32, (top + 0.01).floor() as i32, z.floor() as i32];
+        if level.fluid_state(host, feet).is_some_and(|f| !f.is_empty()) {
+            return None;
+        }
+        Some(top)
+    };
+    let base = y.round() as i32;
+    (0..=REACH).flat_map(|d| if d == 0 { vec![base] } else { vec![base + d, base - d] }).find_map(stand)
 }
 
 fn export(host: &mut dyn ServerHost, player: PlayerRef, name: &str, radius: f64) -> Result<String, String> {
@@ -156,7 +210,9 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         if let Some(c) = &spec.character {
             crate::heart::set_character(host, e, Some(c));
         }
-        let places = spec.places.iter().map(|(k, p)| (k.clone(), add(anchor, *p))).collect();
+        let level = e.level(&*host);
+        let on_ground = |host: &dyn Host, p: [f64; 3]| level.map_or(p, |l| ground(host, l, p));
+        let places = spec.places.iter().map(|(k, p)| (k.clone(), on_ground(&*host, add(anchor, *p)))).collect();
         let _ = crate::routines::PLACES.set(host, Holder::Entity(id), places);
         if spec.level > 0 {
             crate::gear::set_level(host, e, spec.level);
@@ -165,7 +221,8 @@ pub fn level_tick(host: &mut dyn ServerHost) {
             for t in &spec.tags {
                 crate::talk::queue(format!("tag {u} add {t}"));
             }
-            let at = add(anchor, spec.at);
+            // Its feet on this world's ground, which is not where the village was made.
+            let at = on_ground(&*host, add(anchor, spec.at));
             crate::talk::queue(format!("tp {u} {:.2} {:.2} {:.2} {:.1} 0", at[0], at[1], at[2], spec.yaw));
         }
         match (&spec.routine, spec.orders.as_str()) {
