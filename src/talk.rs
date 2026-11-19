@@ -396,7 +396,14 @@ fn choose(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
     let mut refused = false;
     actions.retain(|a| match a {
         Action::Order(o) => {
-            refused |= !crate::heart::order(host, npc, player, mode_named(o));
+            // Three follow a player at most (see `squad`).
+            if mode_named(o) == Mode::Follow && crate::squad::full(&*host, player, npc) {
+                let name = player.name(&*host).unwrap_or_default();
+                crate::heart::say_to(host, npc, player, &format!("You have enough company already, {name}."));
+                refused = true;
+            } else {
+                refused |= !crate::heart::order(host, npc, player, mode_named(o));
+            }
             false
         }
         _ => true,

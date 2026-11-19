@@ -153,6 +153,8 @@ pub fn armour_points(item: &str) -> f64 {
 
 /// What its gear adds, by NPC: (hits, armour), as last applied.
 static APPLIED: LazyLock<Mutex<HashMap<u32, (f64, f64)>>> = LazyLock::new(Default::default);
+/// NPCs with a shield in their off hand, as last seen.
+static SHIELDED: LazyLock<Mutex<std::collections::HashSet<u32>>> = LazyLock::new(Default::default);
 
 const SLOTS: [EquipmentSlot; 6] = [EquipmentSlot::MainHand, EquipmentSlot::OffHand, EquipmentSlot::Head, EquipmentSlot::Chest, EquipmentSlot::Legs, EquipmentSlot::Feet];
 
@@ -171,6 +173,16 @@ fn short(id: &str) -> String {
 pub fn on_damage_pre(e: &mut mod_api::LivingDamagePreEvent<'_>) {
     if e.kind != companion::NPC || e.source.causing <= 0 {
         return;
+    }
+    // An NPC of the same owner (a stray arrow) does it no harm.
+    if crate::squad::friendly(e.entity as u32, e.source.causing as u32) {
+        e.container.set_new_damage(0.0);
+        return;
+    }
+    // A shield in its off hand takes a third of each hit.
+    if SHIELDED.lock().is_ok_and(|s| s.contains(&(e.entity as u32))) {
+        let d = e.container.new_damage();
+        e.container.set_new_damage(d * 0.67);
     }
     let Some(a) = APPLIED.lock().ok().and_then(|m| m.get(&(e.entity as u32)).map(|x| x.1 as f32)).filter(|a| *a > 0.0) else { return };
     let d = e.container.new_damage();
@@ -402,6 +414,13 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         let worn = WORN_SLOTS.map(|slot| l.equipment(&*host, slot).filter(|s| s.count() > 0).map(|s| item_id(&*host, &s)).unwrap_or_default());
         let feet = l.equipment(&*host, EquipmentSlot::Feet).filter(|s| s.count() > 0).map(|s| item_id(&*host, &s)).unwrap_or_default();
         let stats = (weapon_bonus(&worn[0]), worn[2..].iter().chain([&feet]).map(|i| armour_points(i)).sum::<f64>());
+        if let Ok(mut s) = SHIELDED.lock() {
+            if worn[1] == "minecraft:shield" {
+                s.insert(id);
+            } else {
+                s.remove(&id);
+            }
+        }
         if APPLIED.lock().ok().and_then(|a| a.get(&id).copied()) != Some(stats)
             && let Some(u) = e.uuid(host).map(crate::talk::uuid_text)
         {

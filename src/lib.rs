@@ -35,6 +35,7 @@
 //! - `speech` shows what NPCs say over their heads (and copies some of it to chat).
 //! - `event` is the village calendar (no mod API types); `events` gathers NPCs for its days.
 //! - `need` is NPCs' food (no mod API types); `needs` feeds them and has them say when hungry.
+//! - `squad` is a player's squad of NPCs: keys to attack, fall back, hold; archers shoot.
 //! - `plan` is a building plan (no mod API types); `builds` has builders build them.
 //! - `job` is what NPCs do at work (no mod API types); `jobs` has them farm, fell trees and fish.
 //! - `voice` is how NPCs babble what they say (no mod API types); `voices` gives them theirs.
@@ -110,6 +111,7 @@ pub mod shops;
 pub mod skin;
 pub mod skins;
 pub mod speech;
+pub mod squad;
 pub mod sports;
 pub mod sports_client;
 pub mod sync;
@@ -137,6 +139,7 @@ impl Hooks for Felix {
         dialog_editor::register(r);
         rules_editor::register(r);
         scene_editor::register(r);
+        squad::register(r);
     }
 
     /// Models from `assets/<namespace>/geo/*.geo.json` and animations from
@@ -191,11 +194,15 @@ impl Hooks for Felix {
         rulesets::register_commands(e);
         needs::register_commands(e);
         builds::register_commands(e);
+        squad::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = squad::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = builds::run_command(host, e) {
@@ -280,6 +287,7 @@ impl Hooks for Felix {
             jobs::tick(host);
             events::tick(host);
             needs::tick(host);
+            squad::tick(host);
             shops::tick(host);
             speech::tick(host);
             rulebook::tick(host);
@@ -471,6 +479,7 @@ impl Hooks for Felix {
         char_editor::tick(host);
         dialog_editor::tick(host);
         rules_editor::tick(host);
+        squad::client_tick(host);
         scene_editor::tick(host);
         skins::tick(host);
         sports_client::tick(host);

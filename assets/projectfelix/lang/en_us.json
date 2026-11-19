@@ -3,5 +3,8 @@
   "key.categories.projectfelix": "Project Felix",
   "key.projectfelix.left": "Ball games: left",
   "key.projectfelix.right": "Ball games: right",
-  "key.projectfelix.smash": "Ball games: smash / shoot"
+  "key.projectfelix.smash": "Ball games: smash / shoot",
+  "key.projectfelix.squad_attack": "Squad: attack what I look at",
+  "key.projectfelix.squad_back": "Squad: fall back to me",
+  "key.projectfelix.squad_hold": "Squad: hold here"
 }
