@@ -64,6 +64,8 @@ enum Do {
     Voice,
     Job,
     Day,
+    DialogSet,
+    RulesSet,
     Save(bool),
     Close,
     /// 1: rules, 2: quests (again: back to the topics).
@@ -120,6 +122,11 @@ struct Creator {
     /// The jobs offered (the first, none) and the one picked.
     jobs: Vec<String>,
     job: usize,
+    /// The dialogs and rules made in the game it may take (the first, none: its own).
+    dialog_sets: Vec<String>,
+    dialog_set: usize,
+    rules_sets: Vec<String>,
+    rules_set: usize,
     buttons: Vec<([f32; 4], Do)>,
     status: String,
     shown: bool,
@@ -188,6 +195,20 @@ impl IPayloadHandler for OpenHandler {
         let voice = editing.as_ref().and_then(|p| voices.iter().position(|v| *v == p.voice)).unwrap_or(0);
         let jobs: Vec<String> = std::iter::once(String::new()).chain(crate::job::JOBS.iter().map(|j| j.name().to_string())).collect();
         let job = editing.as_ref().and_then(|p| jobs.iter().position(|j| *j == p.job)).unwrap_or(0);
+        let (made_dialogs, made_rules) = crate::char_editor::known_sets();
+        let pick = |list: Vec<String>, now: Option<String>| -> (Vec<String>, usize) {
+            let mut l: Vec<String> = std::iter::once(String::new()).chain(list).collect();
+            let i = match now.filter(|n| !n.is_empty()) {
+                Some(n) => l.iter().position(|x| *x == n).unwrap_or_else(|| {
+                    l.push(n);
+                    l.len() - 1
+                }),
+                None => 0,
+            };
+            (l, i)
+        };
+        let (dialog_sets, dialog_set) = pick(made_dialogs, editing.as_ref().map(|p| p.dialog_set.clone()));
+        let (rules_sets, rules_set) = pick(made_rules, editing.as_ref().map(|p| p.rules_set.clone()));
         let mut routines: Vec<String> = ROUTINES.iter().map(|s| s.to_string()).collect();
         let mut routine = 0;
         if let Some(r) = editing.as_ref().map(|p| p.routine.clone()).filter(|r| !r.is_empty()) {
@@ -277,6 +298,10 @@ impl IPayloadHandler for OpenHandler {
             voice,
             jobs,
             job,
+            dialog_sets,
+            dialog_set,
+            rules_sets,
+            rules_set,
             buttons: Vec::new(),
             status,
             shown,
@@ -436,6 +461,8 @@ impl Creator {
         p.routine = self.routines.get(self.routine).cloned().unwrap_or_default();
         p.voice = self.voices.get(self.voice).cloned().unwrap_or_default();
         p.job = self.jobs.get(self.job).cloned().unwrap_or_default();
+        p.dialog_set = self.dialog_sets.get(self.dialog_set).cloned().unwrap_or_default();
+        p.rules_set = self.rules_sets.get(self.rules_set).cloned().unwrap_or_default();
         for (n, r) in self.rules.iter().enumerate() {
             if let Some(what) = WHENS[r.when].1.filter(|_| r.when_arg.trim().is_empty()) {
                 return Err(format!("Rule {}: \"{}\" needs the {what}", n + 1, WHENS[r.when].0));
@@ -719,6 +746,14 @@ pub(crate) fn hint_field<T>(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32;
 fn draw_rules(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, c: &Creator, at: [f32; 2], mouse: [f32; 2], blink: bool) {
     let [x0, mut y] = at;
     let grey = 0xFFA0_A0A0;
+    // A dialog and rules made in the game may stand in for its own.
+    let h = ROW - 2.0;
+    let or_own = |s: &str| if s.is_empty() { "(its own)".to_string() } else { s.to_string() };
+    draw.text("dialog", [x0, y + 3.0], grey, false);
+    picker(draw, buttons, [x0 + 32.0, y, 130.0, h], &or_own(c.dialog_sets.get(c.dialog_set).map(String::as_str).unwrap_or("")), Do::DialogSet, mouse);
+    draw.text("rules", [x0 + 170.0, y + 3.0], grey, false);
+    picker(draw, buttons, [x0 + 198.0, y, W - 198.0, h], &or_own(c.rules_sets.get(c.rules_set).map(String::as_str).unwrap_or("")), Do::RulesSet, mouse);
+    y += ROW + 2.0;
     let note = if c.kept_rules.is_empty() {
         "When it..., if..., then it... else it...".to_string()
     } else {
@@ -834,6 +869,8 @@ fn act(host: &dyn ClientHost, c: &mut Creator, what: Do, by: i32) {
         Do::Character => c.character = cycle(c.character, by, c.characters.len()),
         Do::Day => c.routine = cycle(c.routine, by, c.routines.len()),
         Do::Job => c.job = cycle(c.job, by, c.jobs.len()),
+        Do::DialogSet => c.dialog_set = cycle(c.dialog_set, by, c.dialog_sets.len()),
+        Do::RulesSet => c.rules_set = cycle(c.rules_set, by, c.rules_sets.len()),
         Do::Voice => {
             c.voice = cycle(c.voice, by, c.voices.len());
             // A word in it, to hear.
@@ -958,7 +995,7 @@ pub fn mouse_scrolled(host: &dyn ClientHost, e: &mut ScreenMouseScrolledPreEvent
     let Ok(mut lock) = CREATOR.lock() else { return Flow::Continue };
     let Some(c) = lock.as_mut() else { return Flow::Continue };
     let mouse = e.screen.mouse;
-    if let Some(what) = c.buttons.iter().find(|(r, w)| inside(*r, mouse) && matches!(w, Do::Model | Do::Skin | Do::Character | Do::Voice | Do::Job | Do::Day | Do::SellBuy(_) | Do::Kind(_) | Do::When(_) | Do::If(_) | Do::Then(_) | Do::Else(_))).map(|(_, w)| *w) {
+    if let Some(what) = c.buttons.iter().find(|(r, w)| inside(*r, mouse) && matches!(w, Do::Model | Do::Skin | Do::Character | Do::Voice | Do::Job | Do::DialogSet | Do::RulesSet | Do::Day | Do::SellBuy(_) | Do::Kind(_) | Do::When(_) | Do::If(_) | Do::Then(_) | Do::Else(_))).map(|(_, w)| *w) {
         act(host, c, what, if e.scroll[1] > 0.0 { -1 } else { 1 });
     }
     Flow::Cancel

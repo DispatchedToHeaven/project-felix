@@ -542,7 +542,7 @@ pub fn tick(host: &mut dyn ServerHost) {
         // Which rules: read again every few seconds (a command may change them).
         if mind.rules_id.is_none() || now % 100 < SCAN {
             let set = RULES.get(host, Holder::Entity(id)).ok().flatten();
-            let own = crate::talk::DIALOG.get(host, Holder::Entity(id)).ok().flatten().filter(|d| d.starts_with("felixnpc:"));
+            let own = crate::talk::DIALOG.get(host, Holder::Entity(id)).ok().flatten().filter(|d| d.starts_with("felixnpc:")).map(|d| crate::custom::rules_override(&d).unwrap_or(d));
             mind.rules_id = Some(set.or(own).unwrap_or_default());
         }
         let Some(rules) = mind.rules_id.as_deref().filter(|r| !r.is_empty()).and_then(rules_named) else { continue };

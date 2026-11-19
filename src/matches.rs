@@ -116,6 +116,13 @@ fn now_of(host: &dyn mod_api::Host, npc: EntityRef) -> i64 {
     npc.level(host).and_then(|l| l.game_time(host)).unwrap_or(0)
 }
 
+/// A court left from a match no longer played goes.
+pub fn forget_stale(host: &mut dyn ServerHost, id: u32) {
+    if !busy(id) && SPORT.get(host, Holder::Entity(id)).ok().flatten().is_some() {
+        let _ = SPORT.set(host, Holder::Entity(id), None);
+    }
+}
+
 pub fn busy(npc: u32) -> bool {
     MATCHES.lock().is_ok_and(|m| m.contains_key(&npc) || m.values().any(|r| matches!(r.opp, Opp::Npc(o, _) if o == npc)))
 }

@@ -285,7 +285,11 @@ fn all_characters() -> Vec<String> {
 pub fn send_list(host: &mut dyn ServerHost, player: PlayerRef) {
     let mut made: Vec<String> = MADE.lock().map(|m| m.characters.keys().cloned().collect()).unwrap_or_default();
     made.sort();
-    let body = crate::serde_json::to_vec(&json!(made)).unwrap_or_default();
+    let mut dialogs: Vec<String> = crate::dialogs::made_all().into_iter().map(|(n, _)| format!("{}{n}", crate::dialogs::PREFIX)).collect();
+    dialogs.sort();
+    let mut rules: Vec<String> = crate::rulesets::made_all().into_iter().map(|(n, _)| format!("{}{n}", crate::rulesets::PREFIX)).collect();
+    rules.sort();
+    let body = crate::serde_json::to_vec(&json!({ "characters": made, "dialogs": dialogs, "rules": rules })).unwrap_or_default();
     let _ = player.send_payload(host, &PayloadId(crate::char_editor::LIST.into()), PayloadBytes(body));
 }
 

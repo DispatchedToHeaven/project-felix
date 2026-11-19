@@ -37,6 +37,10 @@ pub struct Profile {
     pub voice: String,
     /// Its job (see `job`; empty: none).
     pub job: String,
+    /// A dialog made in the game it speaks instead of its greeting and topics (empty: those).
+    pub dialog_set: String,
+    /// Rules made in the game it follows instead of its own (empty: its own).
+    pub rules_set: String,
     /// What it sells and buys (`shop.json`, see `shop`).
     pub shop: Option<String>,
     /// Its character's own file, when that was made in the game (`felixchar:`).
@@ -79,6 +83,8 @@ impl Profile {
             routine: String::new(),
             voice: String::new(),
             job: String::new(),
+            dialog_set: String::new(),
+            rules_set: String::new(),
             shop: None,
             character_file: None,
         }
@@ -143,6 +149,8 @@ impl Profile {
             "routine": self.routine,
             "voice": self.voice,
             "job": self.job,
+            "dialog_set": self.dialog_set,
+            "rules_set": self.rules_set,
             "greeting": self.greeting,
             "topics": topics,
             "own_dialog": self.own_dialog.is_some(),
@@ -225,6 +233,8 @@ impl Profile {
             routine: s("routine"),
             voice: s("voice"),
             job: s("job"),
+            dialog_set: s("dialog_set"),
+            rules_set: s("rules_set"),
             shop,
             character_file,
         })

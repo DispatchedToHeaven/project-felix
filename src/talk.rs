@@ -336,6 +336,8 @@ fn talk(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
     }
     crate::quests::on_talk(host, npc, player);
     let chosen = DIALOG.get(host, Holder::Entity(id)).ok().flatten().unwrap_or_else(|| DEFAULT_DIALOG.into());
+    // An NPC file may speak a dialog made in the game.
+    let chosen = crate::custom::dialog_override(&chosen).unwrap_or(chosen);
     let extra = EXTRA.lock().ok().and_then(|e| e.get(&chosen).cloned());
     let found = extra.or_else(|| DIALOGS.lock().ok().and_then(|d| d.get(&chosen).or_else(|| d.get(DEFAULT_DIALOG)).cloned()));
     let Some(dialog) = found else {

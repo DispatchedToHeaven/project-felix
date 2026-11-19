@@ -90,6 +90,13 @@ struct Editor {
 
 static EDITOR: LazyLock<Mutex<Option<Editor>>> = LazyLock::new(Default::default);
 static KNOWN: LazyLock<Mutex<Vec<String>>> = LazyLock::new(Default::default);
+/// The dialogs and rules made in the game, as the server last said.
+static KNOWN_SETS: LazyLock<Mutex<(Vec<String>, Vec<String>)>> = LazyLock::new(Default::default);
+
+/// The dialogs and rules made in the game (for the maker's pickers).
+pub fn known_sets() -> (Vec<String>, Vec<String>) {
+    KNOWN_SETS.lock().map(|k| k.clone()).unwrap_or_default()
+}
 
 pub fn active() -> bool {
     EDITOR.lock().is_ok_and(|e| e.is_some())
@@ -112,12 +119,14 @@ struct ListHandler;
 
 impl IPayloadHandler for ListHandler {
     fn handle(&self, payload: PayloadBytes, _context: &mut dyn IPayloadContext) -> Result<(), String> {
-        let list: Vec<String> = crate::serde_json::from_slice::<Value>(&payload.0)
-            .ok()
-            .and_then(|v| v.as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()))
-            .unwrap_or_default();
+        let v = crate::serde_json::from_slice::<Value>(&payload.0).unwrap_or(Value::Null);
+        let strings = |v: Option<&Value>| -> Vec<String> { v.and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default() };
+        let list = if v.is_array() { strings(Some(&v)) } else { strings(v.get("characters")) };
         if let Ok(mut k) = KNOWN.lock() {
             *k = list;
+        }
+        if let Ok(mut k) = KNOWN_SETS.lock() {
+            *k = (strings(v.get("dialogs")), strings(v.get("rules")));
         }
         Ok(())
     }

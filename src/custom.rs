@@ -46,6 +46,18 @@ pub fn texture_of(id: &str) -> String {
     format!("felixnpc:{id}")
 }
 
+/// The dialog made in the game NPC file `felixnpc:<id>` speaks instead of its own, if one.
+pub fn dialog_override(dialog: &str) -> Option<String> {
+    let id = dialog.strip_prefix("felixnpc:")?;
+    SERVER.lock().ok()?.profiles.get(id).map(|x| x.0.dialog_set.clone()).filter(|d| !d.is_empty())
+}
+
+/// The rules made in the game NPC file `felixnpc:<id>` follows instead of its own, if any.
+pub fn rules_override(dialog: &str) -> Option<String> {
+    let id = dialog.strip_prefix("felixnpc:")?;
+    SERVER.lock().ok()?.profiles.get(id).map(|x| x.0.rules_set.clone()).filter(|d| !d.is_empty())
+}
+
 pub fn dialog_of(id: &str) -> String {
     format!("felixnpc:{id}")
 }

@@ -50,7 +50,9 @@ enum Do {
     AddElse,
     DelElse(usize),
     ElseKind(usize),
+    CopyRule,
     Save,
+    Try,
     Close,
 }
 
@@ -65,6 +67,7 @@ struct Editor {
     shown: bool,
     close: bool,
     outbox: Vec<Vec<u8>>,
+    history: Vec<Vec<RuleEd>>,
 }
 
 static EDITOR: LazyLock<Mutex<Option<Editor>>> = LazyLock::new(Default::default);
@@ -101,10 +104,11 @@ impl IPayloadHandler for OpenHandler {
             focus: None,
             save_as: name,
             buttons: Vec::new(),
-            status: "Pick a rule on the left. Pickers: click goes on, right-click back.".into(),
+            status: "Pick a rule on the left. Pickers: click on, right-click back. Ctrl+Z undoes; Try gives them to the nearest NPC.".into(),
             shown,
             close: false,
             outbox: Vec::new(),
+            history: Vec::new(),
         };
         if let Ok(mut lock) = EDITOR.lock() {
             *lock = Some(e);
@@ -141,11 +145,37 @@ impl Editor {
         o
     }
 
+    fn remember(&mut self) {
+        if self.history.last() != Some(&self.rules) {
+            self.history.push(self.rules.clone());
+            if self.history.len() > 40 {
+                self.history.remove(0);
+            }
+        }
+    }
+
+    fn undo(&mut self) {
+        if let Some(before) = self.history.pop() {
+            self.rules = before;
+            self.selected = self.selected.min(self.rules.len().saturating_sub(1));
+            self.focus = None;
+            self.status = format!("Undone ({} more back)", self.history.len());
+        }
+    }
+
     fn save(&mut self) {
+        self.send(false);
+    }
+
+    /// Saves them; trying, the NPC nearest the player follows them at once.
+    fn send(&mut self, try_it: bool) {
         match rules_edit::to_json(&self.rules) {
             Ok(file) => {
                 let name = crate::profile::make_id(self.save_as.trim());
-                self.outbox.push(crate::serde_json::to_vec(&json!({ "name": name, "file": file })).unwrap_or_default());
+                self.outbox.push(crate::serde_json::to_vec(&json!({ "name": name, "file": file, "try": try_it })).unwrap_or_default());
+                if try_it {
+                    self.close = true;
+                }
                 self.status = format!("Sent: felixrules:{name}");
             }
             Err(e) => self.status = e,
@@ -159,8 +189,14 @@ fn cycle(i: usize, by: i32, n: usize) -> usize {
 
 fn act(e: &mut Editor, what: Do, by: i32) {
     if let Do::Field(f) = what {
+        if e.focus != Some(f) {
+            e.remember();
+        }
         e.focus = Some(f);
         return;
+    }
+    if !matches!(what, Do::Select(_) | Do::Save | Do::Try | Do::Close) {
+        e.remember();
     }
     match what {
         Do::Select(i) => {
@@ -183,6 +219,15 @@ fn act(e: &mut Editor, what: Do, by: i32) {
             return;
         }
         Do::Save => return e.save(),
+        Do::Try => return e.send(true),
+        Do::CopyRule => {
+            if e.rules.len() < MAX_RULES {
+                let r = e.rules[e.selected].clone();
+                e.rules.insert(e.selected + 1, r);
+                e.selected += 1;
+            }
+            return;
+        }
         Do::Close => {
             e.close = true;
             return;
@@ -362,12 +407,14 @@ pub fn render(host: &dyn ClientHost, ev: &mut ScreenRenderPostEvent<'_>) {
         button(draw, &mut b, [x0 + 2.0, y + 2.0, 50.0, 12.0], "+ Rule", Do::AddRule, mouse);
     }
     button(draw, &mut b, [x0 + 56.0, y + 2.0, 50.0, 12.0], "- Rule", Do::DelRule, mouse);
+    button(draw, &mut b, [x0 + 110.0, y + 2.0, 38.0, 12.0], "Copy", Do::CopyRule, mouse);
     draw_panel(draw, &mut b, e, [x0 + LIST + 8.0, y0 + 12.0], mouse, blink);
     let y = y0 + H - 26.0;
     draw.text("save as", [x0, y + 3.0], 0xFFA0_A0A0, false);
     let saving = e.save_as.clone();
     field(draw, &mut b, [x0 + 42.0, y, 90.0, 14.0], &saving, e.focus == Some(F::SaveAs), Do::Field(F::SaveAs), mouse, blink);
     button(draw, &mut b, [x0 + 136.0, y, 40.0, 14.0], "Save", Do::Save, mouse);
+    button(draw, &mut b, [x0 + 180.0, y, 30.0, 14.0], "Try", Do::Try, mouse);
     button(draw, &mut b, [x0 + W - 44.0, y, 44.0, 14.0], "Close", Do::Close, mouse);
     let status = crate::creator::tail(draw, &e.status, W);
     draw.text(&status, [x0, y + 17.0], 0xFFC0_C0C8, false);
@@ -462,6 +509,7 @@ pub fn key_pressed(host: &dyn ClientHost, ev: &mut ScreenKeyPressedPreEvent<'_>)
             }
         }
         "key.keyboard.s" if ctrl => e.save(),
+        "key.keyboard.z" if ctrl => e.undo(),
         _ => {}
     }
     Flow::Cancel

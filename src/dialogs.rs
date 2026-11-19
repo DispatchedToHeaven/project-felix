@@ -10,6 +10,19 @@ use mod_api::{
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
 
+
+/// The NPC nearest player `p`, within 10 blocks.
+pub fn nearest_npc(host: &dyn mod_api::Host, p: mod_api::PlayerRef) -> Option<mod_api::EntityRef> {
+    let at = p.entity().position(host)?;
+    crate::companion::npcs()
+        .into_iter()
+        .filter_map(|id| host.entity(id))
+        .filter_map(|e| Some(((e.position(host)?[0] - at[0]).powi(2) + (e.position(host)?[2] - at[2]).powi(2), e)))
+        .filter(|(d, _)| *d <= 100.0)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, e)| e)
+}
+
 pub const FOLDER: &str = "dialogs";
 pub const PREFIX: &str = "felixdialog:";
 
@@ -122,6 +135,16 @@ impl IPayloadHandler for SaveDialog {
         if let Err(e) = keep(&id, file) {
             tell(host, format!("Not kept: {e}"));
             return Ok(());
+        }
+        if v.get("try").and_then(Value::as_bool) == Some(true) {
+            match nearest_npc(&*host, player) {
+                Some(npc) => {
+                    let _ = crate::talk::DIALOG.set(host, mod_api::Holder::Entity(npc.id()), Some(id.clone()));
+                    crate::talk::start_dialog(host, player, npc, &id);
+                    return Ok(());
+                }
+                None => tell(host, "No NPC near to try it on.".into()),
+            }
         }
         tell(host, format!("Kept as {id}. Give it to an NPC: /felix dialog <npc> {id}"));
         Ok(())

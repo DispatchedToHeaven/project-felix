@@ -102,6 +102,13 @@ fn scene_named(id: &str) -> Option<(Arc<Scene>, String)> {
 }
 
 /// Whether NPC `id` plays in a scene (the lead or a role).
+/// Props left from a scene no longer played go.
+pub fn forget_stale(host: &mut dyn ServerHost, id: u32) {
+    if !busy(id) && SCENE.get(host, Holder::Entity(id)).ok().flatten().is_some() {
+        let _ = SCENE.set(host, Holder::Entity(id), None);
+    }
+}
+
 pub fn busy(id: u32) -> bool {
     RUNNING.lock().is_ok_and(|r| r.iter().any(|x| x.npc == id || x.cast.iter().any(|c| c.1 == id)))
 }

@@ -276,6 +276,10 @@ pub fn level_tick(host: &mut dyn ServerHost) {
             continue;
         }
         let Ok(mut o) = ORDERS.get(host, Holder::Entity(id)) else { continue };
+        // A table, court or scene props left from before its world closed go.
+        crate::games::forget_stale(host, id);
+        crate::matches::forget_stale(host, id);
+        crate::scenes::forget_stale(host, id);
         // Held when its world was closed: what held it is gone, so it goes back.
         if let Some(m) = HELD.get(host, Holder::Entity(id)).ok().flatten() {
             o.mode = m;

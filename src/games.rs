@@ -303,6 +303,13 @@ pub fn open(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) {
 }
 
 /// Whether NPC `id` sits at a game (its own table, or across another's).
+/// A table left from a game no longer played (its world closed during it) goes.
+pub fn forget_stale(host: &mut dyn ServerHost, id: u32) {
+    if !busy(id) && TABLE.get(host, Holder::Entity(id)).ok().flatten().is_some() {
+        let _ = TABLE.set(host, Holder::Entity(id), None);
+    }
+}
+
 pub fn busy(id: u32) -> bool {
     GAMES.lock().is_ok_and(|g| g.contains_key(&id) || g.values().any(|x| x.other.is_some_and(|o| o.0 == id)))
 }

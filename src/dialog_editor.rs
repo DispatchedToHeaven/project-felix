@@ -65,7 +65,9 @@ enum Do {
     AddTalk,
     AddCheckNode,
     DelNode,
+    Copy,
     Save,
+    Try,
     Close,
 }
 
@@ -83,6 +85,8 @@ struct Editor {
     shown: bool,
     close: bool,
     outbox: Vec<Vec<u8>>,
+    /// What it was before each change, for Ctrl+Z.
+    history: Vec<DialogEd>,
 }
 
 static EDITOR: LazyLock<Mutex<Option<Editor>>> = LazyLock::new(Default::default);
@@ -119,10 +123,11 @@ impl IPayloadHandler for OpenHandler {
             drag: None,
             canvas: [0.0; 2],
             buttons: Vec::new(),
-            status: "Pick a node to change it, drag it about. Right-click a picker goes back.".into(),
+            status: "Pick a node, drag it about. Right-click a picker goes back. Ctrl+Z undoes; Try saves and talks.".into(),
             shown,
             close: false,
             outbox: Vec::new(),
+            history: Vec::new(),
         };
         if let Ok(mut lock) = EDITOR.lock() {
             *lock = Some(e);
@@ -174,11 +179,38 @@ impl Editor {
         o
     }
 
+    /// Keeps what it is now, to go back to.
+    fn remember(&mut self) {
+        if self.history.last() != Some(&self.ed) {
+            self.history.push(self.ed.clone());
+            if self.history.len() > 40 {
+                self.history.remove(0);
+            }
+        }
+    }
+
+    fn undo(&mut self) {
+        if let Some(before) = self.history.pop() {
+            self.ed = before;
+            self.selected = self.selected.min(self.ed.nodes.len().saturating_sub(1));
+            self.focus = None;
+            self.status = format!("Undone ({} more back)", self.history.len());
+        }
+    }
+
     fn save(&mut self) {
+        self.send(false);
+    }
+
+    /// Saves it; trying, it is spoken at once by the NPC nearest the player.
+    fn send(&mut self, try_it: bool) {
         match self.ed.to_json() {
             Ok(file) => {
                 let name = crate::profile::make_id(self.save_as.trim());
-                let body = json!({ "name": name, "file": file });
+                let body = json!({ "name": name, "file": file, "try": try_it });
+                if try_it {
+                    self.close = true;
+                }
                 self.outbox.push(crate::serde_json::to_vec(&body).unwrap_or_default());
                 self.status = format!("Sent: felixdialog:{name}");
             }
@@ -199,6 +231,16 @@ fn cycle(i: usize, by: i32, n: usize) -> usize {
 }
 
 fn act(e: &mut Editor, what: Do, by: i32) {
+    match what {
+        Do::Field(f) => {
+            // A new field to type in: what it was before, to go back to.
+            if e.focus != Some(f) {
+                e.remember();
+            }
+        }
+        Do::Tab(_) | Do::Save | Do::Try | Do::Close => {}
+        _ => e.remember(),
+    }
     let count = e.ed.nodes.len();
     let sel = e.selected;
     let Some(n) = e.ed.nodes.get_mut(sel) else { return };
@@ -290,7 +332,19 @@ fn act(e: &mut Editor, what: Do, by: i32) {
                 e.focus = None;
             }
         }
+        Do::Copy => {
+            let mut n = e.ed.nodes[sel].clone();
+            let mut k = 2;
+            while e.ed.nodes.iter().any(|x| x.name == format!("{}_{k}", n.name)) {
+                k += 1;
+            }
+            n.name = format!("{}_{k}", n.name);
+            n.at = [(n.at[0] + 8.0).min(CANVAS[0] - BOX[0]), (n.at[1] + 16.0).min(CANVAS[1] - BOX[1] - 10.0)];
+            e.ed.nodes.push(n);
+            e.selected = e.ed.nodes.len() - 1;
+        }
         Do::Save => e.save(),
+        Do::Try => e.send(true),
         Do::Close => e.close = true,
     }
 }
@@ -505,10 +559,12 @@ pub fn render(host: &dyn ClientHost, ev: &mut ScreenRenderPostEvent<'_>) {
     draw.text("save as", [x0, y + 3.0], 0xFFA0_A0A0, false);
     let saving = e.save_as.clone();
     field(draw, &mut b, [x0 + 42.0, y, 76.0, 14.0], &saving, e.focus == Some(F::SaveAs), Do::Field(F::SaveAs), mouse, blink);
-    button(draw, &mut b, [x0 + 122.0, y, 36.0, 14.0], "Save", Do::Save, mouse);
-    button(draw, &mut b, [x0 + 166.0, y, 50.0, 14.0], "+ Talk", Do::AddTalk, mouse);
-    button(draw, &mut b, [x0 + 220.0, y, 54.0, 14.0], "+ Check", Do::AddCheckNode, mouse);
-    button(draw, &mut b, [x0 + 278.0, y, 50.0, 14.0], "- Node", Do::DelNode, mouse);
+    button(draw, &mut b, [x0 + 122.0, y, 34.0, 14.0], "Save", Do::Save, mouse);
+    button(draw, &mut b, [x0 + 159.0, y, 28.0, 14.0], "Try", Do::Try, mouse);
+    button(draw, &mut b, [x0 + 192.0, y, 44.0, 14.0], "+ Talk", Do::AddTalk, mouse);
+    button(draw, &mut b, [x0 + 239.0, y, 48.0, 14.0], "+ Check", Do::AddCheckNode, mouse);
+    button(draw, &mut b, [x0 + 290.0, y, 42.0, 14.0], "- Node", Do::DelNode, mouse);
+    button(draw, &mut b, [x0 + 335.0, y, 32.0, 14.0], "Copy", Do::Copy, mouse);
     button(draw, &mut b, [x0 + W - 44.0, y, 44.0, 14.0], "Close", Do::Close, mouse);
     let status = crate::creator::tail(draw, &e.status, W);
     draw.text(&status, [x0, y + 17.0], 0xFFC0_C0C8, false);
@@ -540,6 +596,7 @@ pub fn mouse_pressed(host: &dyn ClientHost, ev: &mut ScreenMouseButtonPressedPre
             e.selected = i;
             e.focus = None;
             let at = e.ed.nodes[i].at;
+            e.remember();
             e.drag = Some([p[0] - at[0], p[1] - at[1]]);
         }
         None => e.focus = None,
@@ -642,6 +699,7 @@ pub fn key_pressed(host: &dyn ClientHost, ev: &mut ScreenKeyPressedPreEvent<'_>)
             }
         }
         "key.keyboard.s" if ctrl => e.save(),
+        "key.keyboard.z" if ctrl => e.undo(),
         _ => {}
     }
     Flow::Cancel

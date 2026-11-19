@@ -123,6 +123,17 @@ impl IPayloadHandler for SaveRules {
             return Ok(());
         }
         crate::rulebook::forget_minds();
+        if v.get("try").and_then(Value::as_bool) == Some(true) {
+            match crate::dialogs::nearest_npc(&*host, player) {
+                Some(npc) => {
+                    let _ = crate::rulebook::RULES.set(host, mod_api::Holder::Entity(npc.id()), Some(id.clone()));
+                    let name = npc.name(&*host).unwrap_or_else(|| "NPC".into());
+                    tell(host, format!("Kept as {id}: {name} follows them now."));
+                    return Ok(());
+                }
+                None => tell(host, "No NPC near to try them on.".into()),
+            }
+        }
         tell(host, format!("Kept as {id}. Give them to an NPC: /felix rules <npc> {id}"));
         Ok(())
     }
