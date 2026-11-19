@@ -150,6 +150,8 @@ pub enum LiveDo {
     Stay,
     Rest,
     Guard,
+    /// At its job (see `jobs`): goes where the work is, and stays.
+    Work,
 }
 
 fn live_of(id: u32) -> LiveDo {
@@ -374,7 +376,7 @@ impl Goal for Live {
             LiveDo::Guard => {
                 cx.mob().target(cx.host()).is_none() && cx.mob().entity().position(cx.host()).is_some_and(|at| distance_sq(at, o.post) > 2.5 * 2.5)
             }
-            LiveDo::Stay | LiveDo::Rest => true,
+            LiveDo::Stay | LiveDo::Rest | LiveDo::Work => true,
         }
     }
     fn can_continue(&mut self, cx: &mut GoalContext<'_>) -> bool {
@@ -388,7 +390,7 @@ impl Goal for Live {
         let id = cx.mob().entity().id();
         let Some(o) = orders_of(id) else { return };
         let Some(at) = cx.mob().entity().position(cx.host()) else { return };
-        let far = distance_sq(at, o.post) > 2.5 * 2.5;
+        let far = distance_sq(at, o.post) > if live_of(id) == LiveDo::Work { 1.2 * 1.2 } else { 2.5 * 2.5 };
         if far && self.t % 10 == 1 {
             cx.move_to(o.post, 1.0);
         } else if !far && live_of(id) == LiveDo::Stay && self.t % 200 == 0 {

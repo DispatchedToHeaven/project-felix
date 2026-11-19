@@ -170,8 +170,15 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
                     .into(),
                 );
                 let money = shop::short(&s.currency);
+                // An NPC with a job sells what its chest holds (see `jobs`).
+                let chest = crate::jobs::chest_of(host, npc);
                 for (i, o) in s.sells.iter().enumerate() {
-                    let n = left(npc.id(), &id, &s, false, i, o, now);
+                    let n = match chest {
+                        // Its job's goods only, and none without a chest.
+                        Some(None) => Some(0),
+                        Some(Some(c)) => Some((crate::jobs::amount(host, c, &o.item) / u64::from(o.count.max(1))).min(9999) as u32),
+                        None => left(npc.id(), &id, &s, false, i, o, now),
+                    };
                     if n == Some(0) {
                         continue;
                     }
@@ -219,7 +226,15 @@ pub fn trade(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, n: i3
     let standing = Standing::of(crate::heart::relation_of(npc.id(), player.uuid()), friend_at, hate_at);
     let name = player.name(&*host).unwrap_or_default();
     let money = shop::short(&s.currency);
-    let ok = if left(npc.id(), &id, &s, buys, i, &o, now) == Some(0) {
+    let chest = crate::jobs::chest_of(host, npc);
+    // With a chest, what it sells is what the chest holds, not stock.
+    let stocked = match (chest, buys) {
+        (Some(Some(_)), false) => None,
+        (Some(None), false) => Some(0),
+        _ => left(npc.id(), &id, &s, buys, i, &o, now),
+    };
+    let chest = chest.flatten();
+    let ok = if stocked == Some(0) {
         crate::heart::say_aloud(host, npc, &format!("Sorry, {name}, that's gone."));
         false
     } else if buys {
@@ -230,12 +245,19 @@ pub fn trade(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, n: i3
         } else {
             crate::talk::queue(format!("clear {name} {} {}", o.item, o.count));
             crate::talk::queue(format!("give {name} {} {paid}", s.currency));
+            // What it buys goes in its chest.
+            if let Some(c) = chest {
+                crate::jobs::put_item(host, c, &o.item, o.count);
+            }
             true
         }
     } else {
         let Some(price) = standing.pays(o.price) else { return };
         if items_of(host, player, &s.currency) < price {
             crate::heart::say_aloud(host, npc, &format!("That's {price} {money}, {name}. You're short."));
+            false
+        } else if chest.is_some_and(|c| !crate::jobs::take(host, c, &o.item, o.count)) {
+            crate::heart::say_aloud(host, npc, &format!("Sorry, {name}, my chest is out of that."));
             false
         } else {
             crate::talk::queue(format!("clear {name} {} {price}", s.currency));

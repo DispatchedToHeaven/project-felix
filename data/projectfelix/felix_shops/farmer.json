@@ -1,0 +1,14 @@
+{
+  "currency": "minecraft:emerald",
+  "hours": "work",
+  "sells": [
+    { "item": "minecraft:wheat", "count": 8, "price": 1 },
+    { "item": "minecraft:carrot", "count": 12, "price": 1 },
+    { "item": "minecraft:potato", "count": 12, "price": 1 },
+    { "item": "minecraft:beetroot", "count": 10, "price": 1 },
+    { "item": "minecraft:wheat_seeds", "count": 16, "price": 1 }
+  ],
+  "buys": [
+    { "item": "minecraft:bone_meal", "count": 16, "price": 1, "stock": 8 }
+  ]
+}

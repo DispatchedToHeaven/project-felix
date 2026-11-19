@@ -1,0 +1,13 @@
+{
+  "currency": "minecraft:emerald",
+  "hours": "work",
+  "sells": [
+    { "item": "minecraft:cod", "count": 4, "price": 1 },
+    { "item": "minecraft:salmon", "count": 3, "price": 1 },
+    { "item": "minecraft:tropical_fish", "count": 1, "price": 1 },
+    { "item": "minecraft:pufferfish", "count": 1, "price": 2 }
+  ],
+  "buys": [
+    { "item": "minecraft:string", "count": 8, "price": 1, "stock": 8 }
+  ]
+}

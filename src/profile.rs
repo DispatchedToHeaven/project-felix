@@ -35,6 +35,8 @@ pub struct Profile {
     pub routine: String,
     /// Its voice (see `voice`; empty: its character's).
     pub voice: String,
+    /// Its job (see `job`; empty: none).
+    pub job: String,
     /// What it sells and buys (`shop.json`, see `shop`).
     pub shop: Option<String>,
     /// Its character's own file, when that was made in the game (`felixchar:`).
@@ -76,6 +78,7 @@ impl Profile {
             quests: None,
             routine: String::new(),
             voice: String::new(),
+            job: String::new(),
             shop: None,
             character_file: None,
         }
@@ -108,6 +111,9 @@ impl Profile {
             options.push(json!({ "text": "Go about your day.", "if": { "all": [ { "owner": true }, { "not": { "mode": "live" } } ] }, "actions": [ { "order": "live" } ] }));
             options.push(json!({ "text": "Live here.", "if": { "owner": true }, "actions": [ { "place": "home" } ] }));
             options.push(json!({ "text": "Work here.", "if": { "owner": true }, "actions": [ { "place": "work" } ] }));
+            if !self.job.is_empty() {
+                options.push(json!({ "text": "Keep your things here.", "if": { "owner": true }, "actions": [ { "place": "chest" } ] }));
+            }
         }
         if self.shop.is_some() {
             options.push(json!({ "text": "Let's trade.", "actions": [ { "shop": true } ] }));
@@ -136,6 +142,7 @@ impl Profile {
             "character": self.character,
             "routine": self.routine,
             "voice": self.voice,
+            "job": self.job,
             "greeting": self.greeting,
             "topics": topics,
             "own_dialog": self.own_dialog.is_some(),
@@ -217,6 +224,7 @@ impl Profile {
             quests,
             routine: s("routine"),
             voice: s("voice"),
+            job: s("job"),
             shop,
             character_file,
         })

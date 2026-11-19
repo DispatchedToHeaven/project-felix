@@ -33,6 +33,7 @@
 //! - `scene_edit` is a scene as its editor holds it (no mod API types); `scene_editor` is the scene
 //!   editor in the world: the stage from above, the roles, the timeline.
 //! - `speech` shows what NPCs say over their heads (and copies some of it to chat).
+//! - `job` is what NPCs do at work (no mod API types); `jobs` has them farm, fell trees and fish.
 //! - `voice` is how NPCs babble what they say (no mod API types); `voices` gives them theirs.
 //! - `village` is a village as a file (no mod API types); `villages` exports and imports them.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
@@ -63,6 +64,8 @@ pub mod game_screen;
 pub mod games;
 pub mod gear;
 pub mod heart;
+pub mod job;
+pub mod jobs;
 pub mod geo;
 pub mod image;
 pub mod matches;
@@ -157,11 +160,15 @@ impl Hooks for Felix {
         speech::register_commands(e);
         villages::register_commands(e);
         voices::register_commands(e);
+        jobs::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = jobs::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = voices::run_command(host, e) {
@@ -219,6 +226,7 @@ impl Hooks for Felix {
             heart::tick(host);
             quests::tick(host);
             routines::tick(host);
+            jobs::tick(host);
             shops::tick(host);
             speech::tick(host);
             rulebook::tick(host);

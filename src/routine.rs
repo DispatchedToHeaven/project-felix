@@ -15,6 +15,8 @@
 //! `chess`, `checkers`, `table_tennis`, `tennis`, `basketball` or `any`), or any other word: the place of that name, where it stays and
 //! walks about a little (`work`, `home`, `meet`, `market`…). `place` names another place for it.
 //! `say` (a line, or a few to pick from) when it starts; `animation` now and then while it is there.
+//! At `work`, an NPC with a job (see `job`) works; `job` (`farm`, `wood`, `fish`) on an entry
+//! gives every NPC of the day that job then.
 //! Hours are the game's clock (`6:00` is sunrise); the day wraps round midnight.
 
 use crate::serde_json::Value;
@@ -39,6 +41,8 @@ pub struct Entry {
     pub animation: Option<String>,
     /// What it plays, playing.
     pub game: String,
+    /// The job it works at then (see `job`; empty: its own, at `work`).
+    pub job: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -104,7 +108,7 @@ pub fn read(root: &Value) -> Result<Routine, String> {
             _ => name.clone(),
         });
         let game = m.get("game").and_then(Value::as_str).unwrap_or("any").to_string();
-        day.push(Entry { at, name, doing, place, say: strings(m.get("say")), animation: m.get("animation").and_then(Value::as_str).map(str::to_string), game });
+        day.push(Entry { at, name, doing, place, say: strings(m.get("say")), animation: m.get("animation").and_then(Value::as_str).map(str::to_string), game, job: m.get("job").and_then(Value::as_str).unwrap_or("").trim().to_string() });
     }
     if day.is_empty() {
         return Err("an empty day".into());

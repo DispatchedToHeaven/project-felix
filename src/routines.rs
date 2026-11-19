@@ -127,6 +127,9 @@ struct Day {
     busy: i64,
     /// No new game before this.
     rest_until: i64,
+    /// The entry's job and place (see `jobs`).
+    job: String,
+    place: String,
 }
 
 #[derive(Default)]
@@ -144,6 +147,21 @@ fn dist(a: [f64; 3], b: [f64; 3]) -> f64 {
 
 fn now_of(host: &dyn mod_api::Host, e: EntityRef) -> i64 {
     e.level(host).and_then(|l| l.game_time(host)).unwrap_or(0)
+}
+
+/// The NPCs at work by their day: each with its entry's job, if it names one, and its place.
+pub fn at_work() -> Vec<(u32, Option<String>, String)> {
+    let Ok(s) = STATE.lock() else { return Vec::new() };
+    s.days
+        .iter()
+        .filter(|(id, d)| d.entry.is_some() && (d.doing == "work" || !d.job.is_empty()) && companion::mode_of(**id) == Mode::Live)
+        .map(|(id, d)| (*id, Some(d.job.clone()).filter(|j| !j.is_empty()), d.place.clone()))
+        .collect()
+}
+
+/// Place `name` of NPC `npc`, if it has one.
+pub fn place_named(host: &mut dyn ServerHost, npc: EntityRef, name: &str) -> Option<[f64; 3]> {
+    PLACES.get(host, Holder::Entity(npc.id())).unwrap_or_default().into_iter().find(|p| p.0 == name).map(|p| p.1)
 }
 
 /// What NPC `id` is doing by its day (`work`, `sleep`…; empty: it isn't living by one).
@@ -208,6 +226,11 @@ fn stop_sleep(host: &mut dyn ServerHost, npc: EntityRef) {
     if ACTION.get(host, Holder::Entity(npc.id())).ok().flatten().is_some_and(|p| p.animation == SLEEP) {
         let _ = ACTION.set(host, Holder::Entity(npc.id()), None);
     }
+}
+
+/// Plays `animation` on NPC `npc` (its work, say).
+pub fn play_animation(host: &mut dyn ServerHost, npc: EntityRef, animation: &str) {
+    play(host, npc, animation);
 }
 
 fn play(host: &mut dyn ServerHost, npc: EntityRef, animation: &str) {
@@ -330,6 +353,8 @@ pub fn tick(host: &mut dyn ServerHost) {
             {
                 d.entry = Some(i);
                 d.doing = e.name.clone();
+                d.job = e.job.clone();
+                d.place = e.place.clone();
                 d.asleep = false;
             }
             continue;

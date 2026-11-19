@@ -518,6 +518,18 @@
           "goto": "placed"
         },
         {
+          "text": "Keep your things here.",
+          "if": {
+            "owner": true
+          },
+          "actions": [
+            {
+              "place": "chest"
+            }
+          ],
+          "goto": "placed"
+        },
+        {
           "text": "Let's meet here.",
           "if": {
             "owner": true
