@@ -167,6 +167,11 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         {
             crate::routines::set_routine(host, e, Some(&p.routine));
         }
+        if !p.voice.is_empty()
+            && let Some(e) = host.entity(entity)
+        {
+            crate::voices::set_voice(host, e, &p.voice);
+        }
     }
     if let Ok(mut s) = SERVER.lock() {
         s.dress.extend(later.into_iter().take(64));

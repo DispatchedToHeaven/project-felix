@@ -33,6 +33,8 @@ pub struct Profile {
     pub quests: Option<String>,
     /// Its day (`projectfelix:villager`…; empty: none, it follows its owner).
     pub routine: String,
+    /// Its voice (see `voice`; empty: its character's).
+    pub voice: String,
     /// What it sells and buys (`shop.json`, see `shop`).
     pub shop: Option<String>,
     /// Its character's own file, when that was made in the game (`felixchar:`).
@@ -73,6 +75,7 @@ impl Profile {
             character: String::new(),
             quests: None,
             routine: String::new(),
+            voice: String::new(),
             shop: None,
             character_file: None,
         }
@@ -132,6 +135,7 @@ impl Profile {
             "model": self.model,
             "character": self.character,
             "routine": self.routine,
+            "voice": self.voice,
             "greeting": self.greeting,
             "topics": topics,
             "own_dialog": self.own_dialog.is_some(),
@@ -212,6 +216,7 @@ impl Profile {
             character: s("character"),
             quests,
             routine: s("routine"),
+            voice: s("voice"),
             shop,
             character_file,
         })

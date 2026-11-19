@@ -12,7 +12,7 @@
 //!               "routine": "projectfelix:villager", "shop": "projectfelix:baker",
 //!               "quests": "projectfelix:festival_1", "character": "felixchar:grumpy",
 //!               "rules": null, "places": { "home": [0, 0, 0] }, "tags": ["felix_guest"],
-//!               "level": 3, "orders": "live" } ] }
+//!               "level": 3, "orders": "live", "voice": "bell" } ] }
 //! ```
 //!
 //! Places are from where the village was saved (and is put back): its NPCs' feet and places
@@ -37,6 +37,8 @@ pub struct NpcSpec {
     pub tags: Vec<String>,
     pub level: u32,
     pub orders: String,
+    /// Its own voice (see `voice`), if it has one.
+    pub voice: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -74,7 +76,7 @@ impl Village {
                 json!({
                     "name": n.name, "at": round(n.at), "yaw": n.yaw.round(), "model": n.model, "texture": n.texture,
                     "dialog": n.dialog, "rules": n.rules, "routine": n.routine, "shop": n.shop, "quests": n.quests,
-                    "character": n.character, "places": Value::Object(places), "tags": n.tags, "level": n.level, "orders": n.orders,
+                    "character": n.character, "places": Value::Object(places), "tags": n.tags, "level": n.level, "orders": n.orders, "voice": n.voice,
                 })
             })
             .collect();
@@ -113,6 +115,7 @@ impl Village {
                 tags: n.get("tags").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default(),
                 level: n.get("level").and_then(Value::as_u64).unwrap_or(0).min(20) as u32,
                 orders: s("orders").unwrap_or_else(|| "wait".into()),
+                voice: s("voice"),
             });
         }
         Ok(Village { name: v.get("name").and_then(Value::as_str).unwrap_or("village").to_string(), npcs })

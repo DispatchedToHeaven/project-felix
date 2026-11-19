@@ -1,10 +1,12 @@
 //! What NPCs say, shown over their heads: a bubble for a few seconds, seen by whoever is near,
 //! turned to each one's camera. The chat gets a copy as `/felix chat` says: `player` (the
 //! default) for a line that names a player near (it is said to them), `all` for every line,
-//! `none` for no copies.
+//! `none` for no copies. Each line comes with how its NPC sounds saying it; the clients near
+//! babble it (see `voice`).
 use mod_api::{
     AttachmentCodec, AttachmentHolder, AttachmentQueries, AttachmentType, BlockEntityDrawContext, ClientHost, Command,
-    Compound, EntityRef, Flow, Holder, RegisterCommandsEvent, RunModCommandEvent, ServerHost, Tag, Text,
+    Compound, EntityRef, Flow, Holder, RegisterCommandsEvent, RunModCommandEvent, ServerHost, SoundPlay, SoundSource, Tag,
+    Text,
 };
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -15,6 +17,11 @@ pub struct Bubble {
     pub text: String,
     pub start: i64,
     pub until: i64,
+    /// Its voice's sound (empty: silent), pitch, volume and ticks a note (see `voice`).
+    pub sound: String,
+    pub pitch: f32,
+    pub volume: f32,
+    pub gap: u8,
 }
 
 pub static SPEECH: AttachmentType<Option<Bubble>> = AttachmentType {
@@ -28,6 +35,10 @@ pub static SPEECH: AttachmentType<Option<Bubble>> = AttachmentType {
                 c.insert("text".into(), Tag::String(b.text.as_str().into()));
                 c.insert("start".into(), Tag::Long(b.start));
                 c.insert("until".into(), Tag::Long(b.until));
+                c.insert("sound".into(), Tag::String(b.sound.as_str().into()));
+                c.insert("pitch".into(), Tag::Double(f64::from(b.pitch).to_bits()));
+                c.insert("volume".into(), Tag::Double(f64::from(b.volume).to_bits()));
+                c.insert("gap".into(), Tag::Byte(b.gap as i8));
             }
             Ok(c)
         },
@@ -35,7 +46,19 @@ pub static SPEECH: AttachmentType<Option<Bubble>> = AttachmentType {
             let (Some(Tag::String(t)), Some(Tag::Long(s)), Some(Tag::Long(u))) = (c.get(&"text".into()), c.get(&"start".into()), c.get(&"until".into())) else {
                 return Ok(None);
             };
-            Ok(Some(Bubble { text: t.to_string_lossy(), start: *s, until: *u }))
+            let f = |k: &str, d: f32| match c.get(&k.into()) {
+                Some(Tag::Double(v)) => f64::from_bits(*v) as f32,
+                _ => d,
+            };
+            let sound = match c.get(&"sound".into()) {
+                Some(Tag::String(x)) => x.to_string_lossy(),
+                _ => String::new(),
+            };
+            let gap = match c.get(&"gap".into()) {
+                Some(Tag::Byte(g)) => *g as u8,
+                _ => 3,
+            };
+            Ok(Some(Bubble { text: t.to_string_lossy(), start: *s, until: *u, sound, pitch: f("pitch", 1.0), volume: f("volume", 0.7), gap }))
         },
     }),
     copy_on_death: false,
@@ -66,7 +89,8 @@ pub fn lasts(text: &str) -> i64 {
 pub fn show(host: &mut dyn ServerHost, npc: EntityRef, line: &str) {
     let Some(now) = npc.level(&*host).and_then(|l| l.game_time(&*host)) else { return };
     let until = now + lasts(line);
-    let b = Bubble { text: line.chars().take(160).collect(), start: now, until };
+    let (sound, pitch, volume, gap) = crate::voices::tone_for(host, npc);
+    let b = Bubble { text: line.chars().take(160).collect(), start: now, until, sound, pitch, volume, gap };
     if SPEECH.set(host, Holder::Entity(npc.id()), Some(b)).is_ok()
         && let Ok(mut s) = SHOWN.lock()
     {
@@ -124,6 +148,8 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
 struct Seen {
     bubbles: HashMap<u32, Bubble>,
     yaw: f32,
+    /// The line each NPC was last heard saying (its start).
+    heard: HashMap<u32, i64>,
 }
 
 static SEEN: LazyLock<Mutex<Seen>> = LazyLock::new(Default::default);
@@ -139,9 +165,36 @@ pub fn client_tick(host: &dyn ClientHost) {
         }
     }
     let yaw = host.camera().map(|c| c.yaw).unwrap_or(0.0);
-    if let Ok(mut s) = SEEN.lock() {
-        s.bubbles = bubbles;
-        s.yaw = yaw;
+    let fresh: Vec<(u32, Bubble)> = match SEEN.lock() {
+        Ok(mut s) => {
+            let fresh = bubbles.iter().filter(|(id, b)| s.heard.get(*id) != Some(&b.start)).map(|(id, b)| (*id, b.clone())).collect();
+            s.heard = bubbles.iter().map(|(id, b)| (*id, b.start)).collect();
+            s.bubbles = bubbles;
+            s.yaw = yaw;
+            fresh
+        }
+        Err(_) => Vec::new(),
+    };
+    for (id, b) in fresh {
+        babble(host, id, &b);
+    }
+}
+
+/// NPC `id` babbles line `b`, a note a syllable, if it was just said.
+fn babble(host: &dyn ClientHost, id: u32, b: &Bubble) {
+    if b.sound.is_empty() {
+        return;
+    }
+    let Some(e) = host.entity(id) else { return };
+    let (Some(at), Some(now)) = (e.position(host), e.level(host).and_then(|l| l.game_time(host))) else { return };
+    // Not a line that was up already when it came near.
+    if now - b.start > 10 {
+        return;
+    }
+    for n in crate::voice::notes(&b.text, b.pitch, b.volume, b.gap, b.start as u64 ^ u64::from(id)) {
+        let mut play = SoundPlay::at(&b.sound, SoundSource::Neutral, [at[0], at[1] + 1.6, at[2]]);
+        (play.volume, play.pitch) = (n.volume, n.pitch);
+        let _ = host.play_local_sound(&play, n.at);
     }
 }
 

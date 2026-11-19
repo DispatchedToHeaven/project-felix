@@ -33,6 +33,7 @@
 //! - `scene_edit` is a scene as its editor holds it (no mod API types); `scene_editor` is the scene
 //!   editor in the world: the stage from above, the roles, the timeline.
 //! - `speech` shows what NPCs say over their heads (and copies some of it to chat).
+//! - `voice` is how NPCs babble what they say (no mod API types); `voices` gives them theirs.
 //! - `village` is a village as a file (no mod API types); `villages` exports and imports them.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
@@ -92,6 +93,8 @@ pub mod sync;
 pub mod talk;
 pub mod village;
 pub mod villages;
+pub mod voice;
+pub mod voices;
 pub mod zipfile;
 
 #[derive(Default)]
@@ -153,11 +156,15 @@ impl Hooks for Felix {
         gear::register_commands(e);
         speech::register_commands(e);
         villages::register_commands(e);
+        voices::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = voices::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = villages::run_command(host, e) {

@@ -1,5 +1,6 @@
 {
   "start": "calm",
+  "voice": "beep",
   "friend_at": 30,
   "hate_at": -35,
   "owner": 50,
@@ -143,7 +144,11 @@
       },
       "chatter": [
         "Leave it, @listener."
-      ]
+      ],
+      "voice": {
+        "pitch": 0.75,
+        "volume": 1
+      }
     },
     "grieving": {
       "obey": 0.4,

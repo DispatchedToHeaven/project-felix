@@ -499,6 +499,14 @@ pub fn fault_of(id: u32, who: u128) -> bool {
     STATE.lock().ok().and_then(|s| s.live.get(&id).map(|l| l.heart.by.is_none_or(|b| b == who))).unwrap_or(true)
 }
 
+/// What NPC `id`'s voice comes from: its character's voice, its mood, and that mood's own.
+pub fn voice_facts(id: u32) -> (Option<String>, String, Option<(f32, f32)>) {
+    let Ok(s) = STATE.lock() else { return (None, String::new(), None) };
+    let Some(l) = s.live.get(&id) else { return (None, String::new(), None) };
+    let c = l.character();
+    (c.voice.clone(), l.heart.mood.clone(), c.mood(&l.heart.mood).voice)
+}
+
 /// The name of the one who upset NPC `id`, for `@upset_by`.
 pub fn upset_by_name(id: u32) -> String {
     STATE

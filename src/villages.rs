@@ -1,7 +1,7 @@
 //! Villages on the server (see `village`): `/felix village export <name> [radius]` saves the NPCs
 //! around you, and what the game made that they need, to `exports/<name>.felixvillage`;
 //! `/felix village import <name>` (from `imports/`, else `exports/`) puts them around you, yours,
-//! each with its look, dialog, rules, day, shop, quests, character, places, tags and level.
+//! each with its look, dialog, rules, day, shop, quests, character, voice, places, tags and level.
 use crate::companion::{self, LOOK, Look, Mode, NPC};
 use crate::village::{NpcSpec, Village};
 use crate::zipfile::{self, Entry};
@@ -117,6 +117,7 @@ fn export(host: &mut dyn ServerHost, player: PlayerRef, name: &str, radius: f64)
             tags: e.tags(&*host).unwrap_or_default(),
             level: crate::gear::level_of(host, e),
             orders: mode_name(companion::mode_of(id)).to_string(),
+            voice: crate::voices::VOICE.get(host, Holder::Entity(id)).ok().flatten(),
         };
         if let Some(p) = spec.profile() {
             profiles.push(p.to_string());
@@ -207,6 +208,7 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         let _ = crate::rulebook::RULES.set(host, Holder::Entity(id), spec.rules.clone());
         let _ = crate::shops::SHOP.set(host, Holder::Entity(id), spec.shop.clone());
         let _ = crate::quests::GIVES.set(host, Holder::Entity(id), spec.quests.clone());
+        let _ = crate::voices::VOICE.set(host, Holder::Entity(id), spec.voice.clone());
         if let Some(c) = &spec.character {
             crate::heart::set_character(host, e, Some(c));
         }

@@ -36,6 +36,8 @@ pub struct MoodEd {
     pub after: String,
     pub after_to: usize,
     pub ways: Vec<WayEd>,
+    /// What the editor doesn't show (its voice…), kept as the file had it.
+    pub rest: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -50,6 +52,8 @@ pub struct CharEd {
     pub bond_max: String,
     pub shun: String,
     pub relations: Vec<(String, String)>,
+    /// What the editor doesn't show (greetings, voice…), kept as the file had it.
+    pub rest: Map<String, Value>,
 }
 
 fn lines(v: Option<&Value>) -> String {
@@ -58,6 +62,11 @@ fn lines(v: Option<&Value>) -> String {
         Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" | "),
         _ => String::new(),
     }
+}
+
+/// The keys of object `v` but `known`.
+fn rest_of(v: &Value, known: &[&str]) -> Map<String, Value> {
+    v.as_object().map(|o| o.iter().filter(|(k, _)| !known.contains(&k.as_str())).map(|(k, x)| (k.clone(), x.clone())).collect()).unwrap_or_default()
 }
 
 fn split(s: &str) -> Vec<String> {
@@ -148,6 +157,7 @@ impl CharEd {
                     after,
                     after_to,
                     ways,
+                    rest: rest_of(&m, &["obey", "speed", "delay", "say", "refuse", "grumble", "chatter", "animation", "particle", "on"]),
                 }
             })
             .collect();
@@ -167,6 +177,7 @@ impl CharEd {
             bond_max: num(v.get("bond_max"), "60"),
             shun: lines(v.get("shun")),
             relations,
+            rest: rest_of(v, &["start", "friend_at", "hate_at", "owner", "forgive", "bond", "bond_max", "shun", "relations", "moods", "layout"]),
         }
     }
 
@@ -233,6 +244,9 @@ impl CharEd {
             if !on.is_empty() {
                 o.insert("on".into(), Value::Object(on));
             }
+            for (k, x) in &m.rest {
+                o.entry(k.clone()).or_insert_with(|| x.clone());
+            }
             moods.insert(name.to_string(), Value::Object(o));
             layout.insert(name.to_string(), json!([m.at[0].round(), m.at[1].round()]));
         }
@@ -242,7 +256,7 @@ impl CharEd {
                 relations.insert(event.trim().to_string(), json!(number(&format!("relation {event}"), delta)? as i64));
             }
         }
-        let v = json!({
+        let mut v = json!({
             "start": self.moods.get(self.start).map(|m| m.name.trim().to_string()).unwrap_or_default(),
             "friend_at": number("friend at", &self.friend_at)? as i64,
             "hate_at": number("hate at", &self.hate_at)? as i64,
@@ -255,6 +269,11 @@ impl CharEd {
             "moods": Value::Object(moods),
             "layout": Value::Object(layout),
         });
+        if let Value::Object(top) = &mut v {
+            for (k, x) in &self.rest {
+                top.entry(k.clone()).or_insert_with(|| x.clone());
+            }
+        }
         crate::character::read(&v)?;
         Ok(v)
     }

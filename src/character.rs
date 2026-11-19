@@ -38,6 +38,10 @@
 //! saw or heard of them hurting someone, and doesn't like them), `thanks_gift`, `thanks_help`,
 //! `let_down` (news of the last day about them and it), `again` (three days or more since),
 //! `friend`, `dislike`. `@victim` is who the news was about.
+//!
+//! Its `voice` (`beep`, `soft`, `pluck`, `bell`, `deep`, `buzz`, `none`) is how its NPCs babble
+//! what they say; a mood may set the pitch and volume they say it at: `"voice": { "pitch": 0.8,
+//! "volume": 1 }` (see `voice`).
 
 use crate::serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -68,6 +72,8 @@ pub struct Character {
     pub shun: Vec<String>,
     /// Greetings by what it remembers (see [`greeting_key`]).
     pub greetings: HashMap<String, Vec<String>>,
+    /// The voice its NPCs have (see `voice`), unless one has its own.
+    pub voice: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -89,6 +95,8 @@ pub struct Mood {
     pub edges: Vec<Edge>,
     /// After so many seconds in this mood, go to that one.
     pub after: Option<(f32, String)>,
+    /// The pitch and volume it speaks at, if not as its name says (see `voice`).
+    pub voice: Option<(f32, f32)>,
 }
 
 impl Default for Mood {
@@ -105,6 +113,7 @@ impl Default for Mood {
             chatter: Vec::new(),
             edges: Vec::new(),
             after: None,
+            voice: None,
         }
     }
 }
@@ -311,6 +320,7 @@ pub fn read(root: &Value) -> Result<Character, String> {
         bond_max: clamp(num("bond_max", 60.0)),
         shun: strings(m.get("shun")),
         greetings: m.get("greetings").and_then(Value::as_object).map(|g| g.iter().map(|(k, v)| (k.clone(), strings(Some(v)))).collect()).unwrap_or_default(),
+        voice: m.get("voice").and_then(Value::as_str).map(str::to_string).filter(|v| !v.is_empty()),
     })
 }
 
@@ -360,6 +370,7 @@ fn read_mood(v: &Value) -> Result<Mood, String> {
         chatter: strings(m.get("chatter")),
         edges,
         after,
+        voice: m.get("voice").and_then(|v| Some((v.get("pitch")?.as_f64()? as f32, v.get("volume").and_then(Value::as_f64).unwrap_or(0.7) as f32))),
     })
 }
 
