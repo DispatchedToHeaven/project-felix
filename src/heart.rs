@@ -76,6 +76,8 @@ fn encode(h: &Option<Heart>) -> Result<Compound, AttachmentError> {
             x.insert("npc".into(), Tag::Byte(b.npc as i8));
             x.insert("value".into(), Tag::Double(f64::from(b.value).to_bits()));
             x.insert("base".into(), Tag::Int(b.base));
+            x.insert("met".into(), Tag::Int(b.met as i32));
+            x.insert("seen".into(), Tag::Long(b.seen));
             Tag::Compound(x)
         })
         .collect();
@@ -125,7 +127,15 @@ fn decode(c: &Compound) -> Result<Option<Heart>, AttachmentError> {
                 _ => 0,
             };
             let npc = matches!(x.get(&"npc".into()), Some(Tag::Byte(1)));
-            bonds.push(Bond { who, name: text(x, "name").unwrap_or_default(), npc, value, base });
+            let met = match x.get(&"met".into()) {
+                Some(Tag::Int(v)) => (*v).max(0) as u32,
+                _ => 0,
+            };
+            let seen = match x.get(&"seen".into()) {
+                Some(Tag::Long(v)) => *v,
+                _ => 0,
+            };
+            bonds.push(Bond { who, name: text(x, "name").unwrap_or_default(), npc, value, base, met, seen });
         }
     }
     let mut news = Vec::new();
@@ -456,6 +466,15 @@ pub fn mood_of(id: u32) -> String {
     STATE.lock().ok().and_then(|s| s.live.get(&id).map(|l| l.heart.mood.clone())).unwrap_or_else(|| "calm".into())
 }
 
+/// Whether NPC `id` talked with `who` before this talk, and the kinds of news it has of them.
+pub fn memory_of(id: u32, who: u128) -> (bool, Vec<String>) {
+    let Ok(s) = STATE.lock() else { return (false, Vec::new()) };
+    let Some(l) = s.live.get(&id) else { return (false, Vec::new()) };
+    let met = l.heart.get(who).is_some_and(|b| b.met > 1);
+    let kinds = l.heart.news.iter().filter(|n| n.about == who).map(|n| n.kind.clone()).collect();
+    (met, kinds)
+}
+
 /// How much NPC `id` likes the player or NPC `who`, as last known.
 pub fn relation_of(id: u32, who: u128) -> i32 {
     let Ok(s) = STATE.lock() else { return 0 };
@@ -724,12 +743,50 @@ pub fn talks_to(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) ->
     };
     if value > c.hate_at {
         feel(host, npc, Some(player), "talk");
+        greet(host, npc, player);
         return true;
     }
     let player_name = player.name(&*host).unwrap_or_default();
     let line = pick(&c.shun).cloned().unwrap_or_else(|| "...".into());
     say(host, npc, &name, &fill(&line, &player_name, &name, ""));
     false
+}
+
+/// Ticks between greetings to one player.
+const GREET_REST: i64 = 6000;
+
+/// The NPC greets `player` by what it remembers of them, and remembers this talk.
+fn greet(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) {
+    let now = now_of(&*host, npc);
+    let player_name = player.name(&*host).unwrap_or_default();
+    let (line, name) = {
+        let Ok(mut s) = STATE.lock() else { return };
+        let Some(l) = s.live.get_mut(&npc.id()) else { return };
+        let c = l.character();
+        let u = player.uuid();
+        let base = base_for(l, &c, u, None);
+        let relation = l.heart.value(u).unwrap_or(base);
+        // Make sure the bond is there, then read and update the memory.
+        l.heart.change(u, &player_name, false, base, 0.0);
+        let Some(i) = l.heart.bonds.iter().position(|b| b.who == u) else { return };
+        let (met, seen) = (l.heart.bonds[i].met, l.heart.bonds[i].seen);
+        let rested = met == 0 || now - seen >= GREET_REST || now < seen;
+        l.heart.bonds[i].met = met + 1;
+        l.heart.bonds[i].seen = now;
+        l.dirty = true;
+        if !rested {
+            return;
+        }
+        let news: Vec<(&News, i64, bool)> = l.heart.news.iter().filter(|n| n.about == u).map(|n| (n, now - n.at, n.victim == l.uuid)).collect();
+        let memory = character::Memory { met, since: now - seen, relation, news };
+        let Some((key, victim)) = character::greeting_key(&c, &memory) else { return };
+        let lines = character::greeting_lines(&c, key);
+        let n = lines.len().max(1);
+        let Some(line) = lines.get((now as usize / 7 + met as usize) % n).cloned() else { return };
+        (fill(&line, &player_name, &l.name, &victim).replace("@victim", &victim), l.name.clone())
+    };
+    let _ = name;
+    say_to(host, npc, player, &line);
 }
 
 /// `player` tells NPC `npc` to `mode`: it does (maybe after a while, grumbling), or refuses.
@@ -1303,7 +1360,8 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
                 for b in bonds.iter().take(12) {
                     let v = b.value.round() as i32;
                     let what = if b.npc { "NPC" } else { "player" };
-                    lines.push(format!("  {} ({what}): {v}, {}", if b.name.is_empty() { "?" } else { &b.name }, c.label(v)));
+                    let met = if b.met > 0 { format!(", met {} times, last {} min ago", b.met, (now - b.seen).max(0) / 1200) } else { String::new() };
+                    lines.push(format!("  {} ({what}): {v}, {}{met}", if b.name.is_empty() { "?" } else { &b.name }, c.label(v)));
                 }
                 for n in l.heart.news.iter().rev().take(6) {
                     lines.push(format!("  news: {} ({} min ago)", n.text(&l.name, ""), (now - n.at).max(0) / 1200));

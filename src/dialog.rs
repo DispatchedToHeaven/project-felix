@@ -22,7 +22,8 @@
 //! `tag`, `item` (+ `count`), `owner`, `mode` (`follow`, `wait`, `guard`), `game` (the NPC's table:
 //! `none`, `waiting`, `playing`, `over`), `in_game` (the player sits at it), `mood` (the NPC's, as
 //! `upset`), `relation_above` / `relation_below` (how much it likes the player), `doing` (what its
-//! day has it do: `work`, `sleep`…), `routine` (it has one), `not`, `all`, `any`.
+//! day has it do: `work`, `sleep`…), `routine` (it has one), `met` (it has talked with the player before), `remembers` (news of
+//! the player and it: `gift`, `helped`, `hurt`, `let_down`…), `not`, `all`, `any`.
 //! Actions: `command` (run as the server console), `give` / `take` (+ `count`), `tag`, `untag`,
 //! `animation` (played on the NPC), `order` (`follow`, `wait`, `guard`), `sound` (at the NPC),
 //! `scene` (a scene from `felix_scenes`, played by the NPC), `game` (`chess` or `checkers`, with
@@ -76,6 +77,8 @@ pub enum Cond {
     RelationBelow(i32),
     Doing(String),
     Routine(bool),
+    Met(bool),
+    Remembers(String),
     Not(Box<Cond>),
     All(Vec<Cond>),
     Any(Vec<Cond>),
@@ -139,6 +142,14 @@ pub trait Facts {
     fn has_routine(&self) -> bool {
         false
     }
+    /// Whether it talked with the player before.
+    fn met(&self) -> bool {
+        false
+    }
+    /// Whether it has news of `kind` about the player.
+    fn remembers(&self, _kind: &str) -> bool {
+        false
+    }
 }
 
 impl Cond {
@@ -155,6 +166,8 @@ impl Cond {
             Cond::RelationBelow(v) => f.relation() < *v,
             Cond::Doing(d) => f.doing() == d,
             Cond::Routine(want) => f.has_routine() == *want,
+            Cond::Met(want) => f.met() == *want,
+            Cond::Remembers(k) => f.remembers(k),
             Cond::Not(c) => !c.holds(f),
             Cond::All(list) => list.iter().all(|c| c.holds(f)),
             Cond::Any(list) => list.iter().any(|c| c.holds(f)),
@@ -273,6 +286,10 @@ fn read_cond(v: &Value) -> Result<Cond, String> {
         Ok(Cond::Doing(d))
     } else if let Some(b) = m.get("routine").and_then(Value::as_bool) {
         Ok(Cond::Routine(b))
+    } else if let Some(b) = m.get("met").and_then(Value::as_bool) {
+        Ok(Cond::Met(b))
+    } else if let Some(k) = s("remembers") {
+        Ok(Cond::Remembers(k))
     } else if let Some(n) = m.get("not") {
         Ok(Cond::Not(Box::new(read_cond(n)?)))
     } else if let Some(all) = list("all")? {

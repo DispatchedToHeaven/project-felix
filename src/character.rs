@@ -32,6 +32,12 @@
 //! the teller does: half as much for each telling, more if the one it happened to is its friend too.
 //! Its character may move its mood on `rumor_bad` and `rumor_good`. Quests done for it
 //! (`quest_done`) and failed (`quest_failed`) are news too.
+//!
+//! It remembers each player it talks to: how often and when. Talking, it greets them by what it
+//! remembers (`greetings`, by key, or the lines here): `first` (they never met), `grudge` (it
+//! saw or heard of them hurting someone, and doesn't like them), `thanks_gift`, `thanks_help`,
+//! `let_down` (news of the last day about them and it), `again` (three days or more since),
+//! `friend`, `dislike`. `@victim` is who the news was about.
 
 use crate::serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -60,6 +66,8 @@ pub struct Character {
     pub bond_max: i32,
     /// Said to a player it hates, who wants to talk.
     pub shun: Vec<String>,
+    /// Greetings by what it remembers (see [`greeting_key`]).
+    pub greetings: HashMap<String, Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -185,6 +193,63 @@ impl Character {
     }
 }
 
+/// What an NPC remembers of a player, for its greeting.
+pub struct Memory<'a> {
+    pub met: u32,
+    /// Ticks since they last talked.
+    pub since: i64,
+    pub relation: i32,
+    /// Its news about the player, with how old each is (ticks) and whether it is about the NPC.
+    pub news: Vec<(&'a News, i64, bool)>,
+}
+
+/// The kind of greeting what it remembers calls for (none: no word but the dialog's).
+pub fn greeting_key(c: &Character, m: &Memory) -> Option<(&'static str, String)> {
+    if m.met == 0 {
+        return Some(("first", String::new()));
+    }
+    let fresh = |n: &&(&News, i64, bool)| n.1 < 24_000;
+    if m.relation < 10
+        && let Some(n) = m.news.iter().filter(fresh).find(|n| n.0.kind == "hurt" || n.0.kind == "killed")
+    {
+        return Some(("grudge", n.0.victim_name.clone()));
+    }
+    for (kind, key) in [("gift", "thanks_gift"), ("helped", "thanks_help"), ("let_down", "let_down")] {
+        if m.news.iter().filter(fresh).any(|n| n.2 && n.0.kind == kind) {
+            return Some((key, String::new()));
+        }
+    }
+    if m.since >= 72_000 {
+        return Some(("again", String::new()));
+    }
+    if m.relation >= c.friend_at {
+        Some(("friend", String::new()))
+    } else if m.relation <= -10 {
+        Some(("dislike", String::new()))
+    } else {
+        None
+    }
+}
+
+/// The lines for a greeting: its character's, or these.
+pub fn greeting_lines(c: &Character, key: &str) -> Vec<String> {
+    if let Some(l) = c.greetings.get(key).filter(|l| !l.is_empty()) {
+        return l.clone();
+    }
+    let l: &[&str] = match key {
+        "first" => &["Nice to meet you, @player. I'm @npc.", "Hello there! I don't think we've met, @player. I'm @npc."],
+        "grudge" => &["I know what you did to @victim, @player.", "What do you want, @player?"],
+        "thanks_gift" => &["Thanks again for the present, @player!"],
+        "thanks_help" => &["Thanks again for your help, @player."],
+        "let_down" => &["I hope you keep your word this time, @player."],
+        "again" => &["Long time no see, @player!", "@player! Where have you been?"],
+        "friend" => &["Good to see you, @player!", "Hey, @player!"],
+        "dislike" => &["Oh. It's you.", "Make it quick, @player."],
+        _ => &[],
+    };
+    l.iter().map(|s| s.to_string()).collect()
+}
+
 /// How much more a friend's hurt counts the closer the friend: 0.5 to 2 times.
 pub fn friend_scale(friendship: i32) -> f32 {
     (friendship as f32 / 50.0).clamp(0.5, 2.0)
@@ -245,6 +310,7 @@ pub fn read(root: &Value) -> Result<Character, String> {
         bond: num("bond", 1.0).max(0.0) as f32,
         bond_max: clamp(num("bond_max", 60.0)),
         shun: strings(m.get("shun")),
+        greetings: m.get("greetings").and_then(Value::as_object).map(|g| g.iter().map(|(k, v)| (k.clone(), strings(Some(v)))).collect()).unwrap_or_default(),
     })
 }
 
@@ -308,6 +374,9 @@ pub struct Bond {
     pub value: f32,
     /// Where it began (forgiving goes back up to here).
     pub base: i32,
+    /// Times they talked, and when last (game ticks).
+    pub met: u32,
+    pub seen: i64,
 }
 
 /// An NPC's heart: its character, its mood (since when, in game ticks) and its relations.
@@ -440,7 +509,7 @@ impl Heart {
         let i = match self.bonds.iter().position(|b| b.who == who) {
             Some(i) => i,
             None => {
-                self.bonds.push(Bond { who, name: name.to_string(), npc, value: base as f32, base });
+                self.bonds.push(Bond { who, name: name.to_string(), npc, value: base as f32, base, met: 0, seen: 0 });
                 self.bonds.len() - 1
             }
         };
@@ -637,6 +706,23 @@ mod tests {
         k.learn(heard);
         k.learn(news("hurt", (1, "Ann"), -8.0, 10));
         assert_eq!(k.news[0].hops, 0);
+    }
+
+    #[test]
+    fn greetings_follow_memory() {
+        let c = parse(KIND.as_bytes()).unwrap();
+        let m = |met, since, relation, news| Memory { met, since, relation, news };
+        assert_eq!(greeting_key(&c, &m(0, 0, 0, vec![])).map(|k| k.0), Some("first"));
+        let hit = news("hurt", (9, "Bob"), -8.0, 0);
+        assert_eq!(greeting_key(&c, &m(3, 100, -20, vec![(&hit, 500, false)])), Some(("grudge", "Bob".to_string())));
+        assert_eq!(greeting_key(&c, &m(3, 100, 40, vec![(&hit, 500, false)])).map(|k| k.0), Some("friend"), "a friend is forgiven");
+        let gift = news("gift", (1, "Ann"), 8.0, 0);
+        assert_eq!(greeting_key(&c, &m(3, 100, 5, vec![(&gift, 500, true)])).map(|k| k.0), Some("thanks_gift"));
+        assert_eq!(greeting_key(&c, &m(3, 100, 5, vec![(&gift, 30_000, true)])), None, "an old gift is not news");
+        assert_eq!(greeting_key(&c, &m(3, 80_000, 5, vec![])).map(|k| k.0), Some("again"));
+        assert_eq!(greeting_key(&c, &m(3, 10, -30, vec![])).map(|k| k.0), Some("dislike"));
+        assert!(!greeting_lines(&c, "first").is_empty());
+        assert!(greeting_lines(&c, "nothing").is_empty());
     }
 
     #[test]

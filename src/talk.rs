@@ -165,6 +165,8 @@ struct PlayerFacts {
     relation: i32,
     doing: String,
     routine: bool,
+    met: bool,
+    remembers: Vec<String>,
 }
 
 impl Facts for PlayerFacts {
@@ -198,6 +200,12 @@ impl Facts for PlayerFacts {
     fn has_routine(&self) -> bool {
         self.routine
     }
+    fn met(&self) -> bool {
+        self.met
+    }
+    fn remembers(&self, kind: &str) -> bool {
+        self.remembers.iter().any(|k| k == kind)
+    }
 }
 
 fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> PlayerFacts {
@@ -219,7 +227,8 @@ fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> Player
     let relation = crate::heart::relation_of(npc.id(), player.uuid());
     let doing = crate::routines::doing(npc.id());
     let routine = crate::routines::has_routine(npc.id());
-    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine }
+    let (met, remembers) = crate::heart::memory_of(npc.id(), player.uuid());
+    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine, met, remembers }
 }
 
 /// A UUID written with dashes, as commands take it.
