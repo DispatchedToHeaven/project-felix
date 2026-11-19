@@ -1,0 +1,32 @@
+{
+  "day": [
+    {
+      "at": "7:00",
+      "do": "meet",
+      "say": [
+        "Can we play?",
+        "Wheee!"
+      ],
+      "animation": "animation.felix.cheer"
+    },
+    {
+      "at": "12:00",
+      "do": "home",
+      "say": "Lunch!"
+    },
+    {
+      "at": "13:00",
+      "do": "meet",
+      "animation": "animation.felix.wave"
+    },
+    {
+      "at": "18:00",
+      "do": "home"
+    },
+    {
+      "at": "20:00",
+      "do": "sleep",
+      "say": "Good night!"
+    }
+  ]
+}

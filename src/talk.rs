@@ -202,6 +202,7 @@ struct PlayerFacts {
     weather: &'static str,
     roll: u32,
     hungry: bool,
+    family: bool,
 }
 
 impl Facts for PlayerFacts {
@@ -269,6 +270,9 @@ impl Facts for PlayerFacts {
     fn hungry(&self) -> bool {
         self.hungry
     }
+    fn has_family(&self) -> bool {
+        self.family
+    }
 }
 
 fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: &str) -> PlayerFacts {
@@ -297,7 +301,7 @@ fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: &
     let (biome, time, weather) = crate::flags::surroundings(&*host, player);
     let now = npc.level(&*host).and_then(|l| l.game_time(&*host)).unwrap_or(0) as u64;
     let roll = (now.wrapping_mul(2_654_435_761).wrapping_add(u64::from(npc.id()).wrapping_mul(40_503)) >> 7) as u32 % 100;
-    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine, met, remembers, fault, event, flags, dialog: dialog.to_string(), biome, time, weather, roll, hungry: crate::needs::food_of(npc.id()) <= crate::need::HUNGRY }
+    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine, met, remembers, fault, event, flags, dialog: dialog.to_string(), biome, time, weather, roll, hungry: crate::needs::food_of(npc.id()) <= crate::need::HUNGRY, family: crate::families::has_family(host, npc) }
 }
 
 /// A UUID written with dashes, as commands take it.
@@ -577,6 +581,11 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
             Action::Feed => {
                 if let Some(p) = player {
                     crate::needs::feed(host, npc, p);
+                }
+            }
+            Action::Family => {
+                if let Some(p) = player {
+                    crate::families::tell(host, npc, p);
                 }
             }
             Action::News => {

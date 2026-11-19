@@ -241,6 +241,7 @@ pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
         json!({ "text": "I'm sorry.", "if": { "all": [ { "not": fine }, { "fault": true } ] }, "actions": [ { "feel": "apology" } ], "goto": "sorry" }),
         json!({ "text": "Who upset you?", "if": { "all": [ { "not": fine }, { "fault": false } ] }, "goto": "not_you" }),
         json!({ "text": "Here, eat something.", "if": { "hungry": true }, "actions": [ { "feed": true } ] }),
+        json!({ "text": "How's your family?", "if": { "family": true }, "actions": [ { "family": true } ] }),
         json!({ "text": "What's on today?", "if": { "event": "any" }, "goto": "event_today" }),
         json!({ "text": "Heard any news?", "actions": [ { "news": true } ] }),
     ];

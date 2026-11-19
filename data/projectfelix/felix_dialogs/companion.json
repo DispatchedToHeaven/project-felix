@@ -206,6 +206,17 @@
           ]
         },
         {
+          "text": "How's your family?",
+          "if": {
+            "family": true
+          },
+          "actions": [
+            {
+              "family": true
+            }
+          ]
+        },
+        {
           "text": "What's on today?",
           "if": {
             "event": "any"

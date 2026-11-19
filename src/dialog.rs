@@ -40,7 +40,8 @@
 //! back), `stats` (it says its level, health, armour and hits).
 //! `remember` (+ `is`, default `yes`: the player's memory, for later talks and other NPCs),
 //! `forget`, `dialog` (goes on in another dialog, from its start), `feed` (the player gives it the
-//! best food they have, see `need`). Condition `hungry` (true or false).
+//! best food they have, see `need`), `family` (it tells the player about its family, see
+//! `family`). Conditions `hungry` and `family` (it has one: true or false).
 //! `@player` is the player's name; `@npc` is the NPC's name in texts and its UUID in commands.
 //!
 //! Long talks: a node with `"paged": true` says its `text` a line at a time, the player going on
@@ -115,6 +116,7 @@ pub enum Cond {
     /// Percent.
     Chance(u32),
     Hungry(bool),
+    Family(bool),
     Not(Box<Cond>),
     All(Vec<Cond>),
     Any(Vec<Cond>),
@@ -152,6 +154,7 @@ pub enum Action {
     Forget(String),
     Dialog(String),
     Feed,
+    Family,
 }
 
 /// What conditions ask about the player and the NPC.
@@ -226,6 +229,10 @@ pub trait Facts {
     fn hungry(&self) -> bool {
         false
     }
+    /// Whether the NPC has a family (a partner, children, parents).
+    fn has_family(&self) -> bool {
+        false
+    }
 }
 
 /// Whether biome `id` is `want`: the same id, or (a word) a part of its name.
@@ -268,6 +275,7 @@ impl Cond {
             },
             Cond::Chance(p) => f.roll() < *p,
             Cond::Hungry(want) => f.hungry() == *want,
+            Cond::Family(want) => f.has_family() == *want,
             Cond::Not(c) => !c.holds(f),
             Cond::All(list) => list.iter().all(|c| c.holds(f)),
             Cond::Any(list) => list.iter().any(|c| c.holds(f)),
@@ -319,6 +327,7 @@ pub fn describe_cond(c: &Cond) -> String {
         Cond::Weather(w) => w.clone(),
         Cond::Chance(p) => format!("{p}%"),
         Cond::Hungry(b) => if *b { "hungry".into() } else { "not hungry".into() },
+        Cond::Family(b) => if *b { "has family".into() } else { "no family".into() },
         Cond::Not(c) => format!("not ({})", describe_cond(c)),
         Cond::All(l) => l.iter().map(describe_cond).collect::<Vec<_>>().join(" and "),
         Cond::Any(l) => l.iter().map(describe_cond).collect::<Vec<_>>().join(" or "),
@@ -366,7 +375,7 @@ pub fn commands(action: &Action, player: &str, npc: &str) -> Vec<String> {
         Action::Tag(t) => vec![format!("tag {player} add {t}")],
         Action::Untag(t) => vec![format!("tag {player} remove {t}")],
         Action::Sound(s) => vec![format!("execute as {npc} at @s run playsound {s} neutral @a ~ ~ ~")],
-        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Place(_) | Action::Shop(_) | Action::Trade(_) | Action::Gear(_) | Action::Stats | Action::Remember(..) | Action::Forget(_) | Action::Dialog(_) | Action::Feed => Vec::new(),
+        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Place(_) | Action::Shop(_) | Action::Trade(_) | Action::Gear(_) | Action::Stats | Action::Remember(..) | Action::Forget(_) | Action::Dialog(_) | Action::Feed | Action::Family => Vec::new(),
     }
 }
 
@@ -496,6 +505,8 @@ pub fn read_cond(v: &Value) -> Result<Cond, String> {
         Ok(Cond::Chance(p.clamp(0.0, 100.0) as u32))
     } else if let Some(b) = m.get("hungry").and_then(Value::as_bool) {
         Ok(Cond::Hungry(b))
+    } else if let Some(b) = m.get("family").and_then(Value::as_bool) {
+        Ok(Cond::Family(b))
     } else if let Some(n) = m.get("not") {
         Ok(Cond::Not(Box::new(read_cond(n)?)))
     } else if let Some(all) = list("all")? {
@@ -575,6 +586,8 @@ pub fn read_actions(v: Option<&Value>) -> Result<Vec<Action>, String> {
                 Action::Dialog(d)
             } else if m.contains_key("feed") {
                 Action::Feed
+            } else if m.contains_key("family") {
+                Action::Family
             } else {
                 return Err(format!("unknown action {a}"));
             })

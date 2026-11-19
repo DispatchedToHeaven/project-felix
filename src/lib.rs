@@ -35,6 +35,7 @@
 //! - `speech` shows what NPCs say over their heads (and copies some of it to chat).
 //! - `event` is the village calendar (no mod API types); `events` gathers NPCs for its days.
 //! - `need` is NPCs' food (no mod API types); `needs` feeds them and has them say when hungry.
+//! - `family` is NPC families (no mod API types); `families` makes couples and their children.
 //! - `squad` is a player's squad of NPCs: keys to attack, fall back, hold; archers shoot.
 //! - `plan` is a building plan (no mod API types); `builds` has builders build them.
 //! - `job` is what NPCs do at work (no mod API types); `jobs` has them farm, fell trees and fish.
@@ -75,6 +76,8 @@ pub mod editor;
 pub mod event;
 pub mod flags;
 pub mod events;
+pub mod families;
+pub mod family;
 pub mod game_screen;
 pub mod games;
 pub mod gear;
@@ -195,11 +198,15 @@ impl Hooks for Felix {
         needs::register_commands(e);
         builds::register_commands(e);
         squad::register_commands(e);
+        families::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = families::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = squad::run_command(host, e) {
@@ -288,6 +295,7 @@ impl Hooks for Felix {
             events::tick(host);
             needs::tick(host);
             squad::tick(host);
+            families::tick(host);
             shops::tick(host);
             speech::tick(host);
             rulebook::tick(host);
