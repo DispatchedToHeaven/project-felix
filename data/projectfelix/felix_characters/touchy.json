@@ -55,7 +55,8 @@
         "quest_failed": "upset",
         "woken": "upset",
         "won_game": "happy",
-        "lost_game": "upset"
+        "lost_game": "upset",
+        "level_up": "happy"
       },
       "chatter": [
         "Nice day, isn't it, @listener?",

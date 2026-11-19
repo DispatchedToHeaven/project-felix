@@ -13,7 +13,7 @@ use mod_api::{
     Identifier, ModelPart, ModelPolygon, ModelVertex, PartPose, ReloadApply, ReloadResourceError,
 };
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 /// A bone ready to draw: where it sits in its parent (texels), its rest rotation (radians, z then
 /// y then x), and its faces relative to its pivot.
@@ -23,6 +23,8 @@ pub struct BonePart {
     offset: [f32; 3],
     rest: [f32; 3],
     part: ModelPart,
+    /// The part without its front faces: a helmet's shell that leaves the face seen.
+    open_front: ModelPart,
     children: Vec<usize>,
 }
 
@@ -97,6 +99,7 @@ fn build(m: geo::Model) -> LoadedModel {
                 offset: [b.pivot[0] - parent[0], b.pivot[1] - parent[1], b.pivot[2] - parent[2]],
                 rest: b.rotation,
                 part: ModelPart::new(polygons(b), Vec::new(), PartPose::ZERO),
+                open_front: ModelPart::new(polygons(b).into_iter().filter(|q| q.normal[2] > -0.5).collect(), Vec::new(), PartPose::ZERO),
                 children: b.children.clone(),
             }
         })
@@ -139,10 +142,72 @@ fn draw_bone(draw: &mut dyn BlockEntityDrawContext, m: &LoadedModel, i: usize, p
     if !b.part.polygons.is_empty() && !draw.model_part(&b.part, texture, tint) {
         *ok = false;
     }
+    bone_extras(draw, m, i);
     for &c in &b.children {
         draw_bone(draw, m, c, pose, look, texture, tint, ok);
     }
     draw.pop();
+}
+
+/// What an NPC wears and holds, drawn on its bones: armour as a coloured shell (bone, colour),
+/// items at its hands.
+#[derive(Clone, Default)]
+pub struct Extras {
+    pub armour: Vec<(&'static str, u32)>,
+    pub hand: Option<mod_api::ItemStack>,
+    pub off_hand: Option<mod_api::ItemStack>,
+    pub seed: i32,
+}
+
+static EXTRAS: Mutex<Option<Extras>> = Mutex::new(None);
+
+/// Draws with `extras` on the bones, for what `f` draws.
+pub fn with_extras<R>(extras: Option<Extras>, f: impl FnOnce() -> R) -> R {
+    if let Ok(mut e) = EXTRAS.lock() {
+        *e = extras;
+    }
+    let r = f();
+    if let Ok(mut e) = EXTRAS.lock() {
+        *e = None;
+    }
+    r
+}
+
+/// A hand's place on bone `i`, in the bone's frame (texels): a locator, else the arm's end.
+fn hand_on(m: &LoadedModel, i: usize, right: bool) -> Option<[f32; 3]> {
+    let b = m.geo.bones.get(i)?;
+    let locator = if right { "hand" } else { "left_hand" };
+    if let Some((bone, at)) = m.geo.locator(locator)
+        && bone == i
+    {
+        return Some([at[0] - b.pivot[0], at[1] - b.pivot[1], at[2] - b.pivot[2]]);
+    }
+    let arm = m.geo.bone(if right { "rightArm" } else { "leftArm" })?;
+    let has_locator = m.geo.locator(locator).is_some();
+    (arm == i && !has_locator).then_some([0.0, -10.0, 0.0])
+}
+
+fn bone_extras(draw: &mut dyn BlockEntityDrawContext, m: &LoadedModel, i: usize) {
+    let Some(x) = EXTRAS.lock().ok().and_then(|e| e.clone()) else { return };
+    let b = &m.bones[i];
+    for (bone, colour) in &x.armour {
+        if b.lower == *bone && !b.part.polygons.is_empty() {
+            draw.push();
+            draw.scale([1.14, 1.06, 1.14]);
+            draw.model_part(if b.lower == "head" { &b.open_front } else { &b.part }, WHITE, *colour);
+            draw.pop();
+        }
+    }
+    for (stack, right) in [(&x.hand, true), (&x.off_hand, false)] {
+        let (Some(stack), Some(at)) = (stack, hand_on(m, i, right)) else { continue };
+        draw.push();
+        draw.translate([at[0] / 16.0, at[1] / 16.0, at[2] / 16.0]);
+        draw.rotate_about([1.0, 0.0, 0.0], 90.0, [0.0; 3]);
+        draw.rotate_about([0.0, 0.0, 1.0], 180.0, [0.0; 3]);
+        let ctx = if right { mod_api::ItemDisplayContext::ThirdPersonRightHand } else { mod_api::ItemDisplayContext::ThirdPersonLeftHand };
+        draw.item(stack, ctx, None, x.seed);
+        draw.pop();
+    }
 }
 
 /// The white sprite texel quads are drawn with, tinted.
@@ -189,6 +254,7 @@ fn texel_bone(draw: &mut dyn BlockEntityDrawContext, m: &LoadedModel, i: usize, 
             break;
         }
     }
+    bone_extras(draw, m, i);
     for &c in &b.children {
         texel_bone(draw, m, c, pose, look, texels, tint, ok);
     }

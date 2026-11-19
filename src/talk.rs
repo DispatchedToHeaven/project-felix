@@ -318,12 +318,17 @@ fn enter(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: A
     let f = facts(host, player, npc);
     let shown: Vec<usize> = (0..node.options.len()).filter(|i| node.options[*i].shown(&f)).collect();
     let name = player.name(&*host).unwrap_or_default();
-    let title = npc.name(&*host).unwrap_or_else(|| "NPC".into());
+    let mut title = npc.name(&*host).unwrap_or_else(|| "NPC".into());
+    let level = crate::gear::level_of(host, npc);
+    let fill_name = title.clone();
+    if level > 0 {
+        title = format!("{title} (level {level})");
+    }
     let view = crate::serde_json::json!({
         "npc": npc.id(),
         "title": title,
-        "lines": node.text.iter().map(|t| dialog::fill(t, &name, &title)).collect::<Vec<_>>(),
-        "options": shown.iter().map(|i| dialog::fill(&node.options[*i].text, &name, &title)).collect::<Vec<_>>(),
+        "lines": node.text.iter().map(|t| dialog::fill(t, &name, &fill_name)).collect::<Vec<_>>(),
+        "options": shown.iter().map(|i| dialog::fill(&node.options[*i].text, &name, &fill_name)).collect::<Vec<_>>(),
     });
     if let Ok(mut s) = SESSIONS.lock() {
         s.insert(player.uuid(), Session { npc: npc.id(), dialog, node: node_name.to_string(), shown });
@@ -371,6 +376,16 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
                     crate::routines::set_place(host, npc, name, at);
                 }
             }
+            Action::Gear(what) => {
+                if let Some(p) = player {
+                    if what == "return" {
+                        crate::gear::give_back(host, npc, p);
+                    } else {
+                        crate::gear::take(host, npc, p);
+                    }
+                }
+            }
+            Action::Stats => crate::gear::tell_stats(host, npc),
             Action::Shop(id) => {
                 if let Some(p) = player {
                     crate::shops::board(host, p, npc, id);

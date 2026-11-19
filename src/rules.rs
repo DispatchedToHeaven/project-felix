@@ -20,7 +20,7 @@
 //! hurt or killed an NPC it is friends with: the player is the event's), `{ "feels": "<mood>" }` (its
 //! mood turns to that, see `character`), `hears_rumor` (a friend told it what a player did: the
 //! player is the event's), `quest_done` / `quest_failed` (a player did, or failed, a quest it gave), `{ "starts": "<doing>" }`
-//! (its day has it start that: `work`, `sleep`…).
+//! (its day has it start that: `work`, `sleep`…), `level_up`.
 //!
 //! If (optional; `not`, `all`, `any` combine them): `time` (`day` or `night`), `raining`, `mode`
 //! (`follow`, `wait`, `guard`), `health_below` (a fraction), `owner_near` (blocks), `owner` (the player
@@ -61,6 +61,7 @@ pub enum When {
     QuestDone,
     QuestFailed,
     Starts(String),
+    LevelUp,
 }
 
 impl When {
@@ -235,6 +236,7 @@ fn read_when(v: &Value) -> Result<When, String> {
             "hears_rumor" => When::HearsRumor,
             "quest_done" => When::QuestDone,
             "quest_failed" => When::QuestFailed,
+            "level_up" => When::LevelUp,
             _ => return Err(format!("unknown \"when\": {s}")),
         });
     }
@@ -369,6 +371,7 @@ pub const WHENS: &[(&str, Option<&str>)] = &[
     ("a quest is done", None),
     ("a quest failed", None),
     ("starts...", Some("work, sleep...")),
+    ("levels up", None),
 ];
 
 fn when_json(i: usize, arg: &str) -> Value {
@@ -393,7 +396,8 @@ fn when_json(i: usize, arg: &str) -> Value {
         17 => json!("hears_rumor"),
         18 => json!("quest_done"),
         19 => json!("quest_failed"),
-        _ => json!({ "starts": arg.trim() }),
+        20 => json!({ "starts": arg.trim() }),
+        _ => json!("level_up"),
     }
 }
 

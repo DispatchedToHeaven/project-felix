@@ -153,6 +153,11 @@ pub fn orders(id: u32) -> Option<Orders> {
     STATE.lock().ok()?.orders.get(&id).copied()
 }
 
+/// The NPCs the client knows of (whose orders it has).
+pub fn npc_ids() -> Vec<u32> {
+    STATE.lock().map(|s| s.orders.keys().copied().collect()).unwrap_or_default()
+}
+
 /// An NPC's look, if the server gave it one.
 pub fn look(id: u32) -> Option<Look> {
     STATE.lock().ok()?.looks.get(&id).cloned()

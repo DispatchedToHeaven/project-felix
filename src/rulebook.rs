@@ -372,7 +372,7 @@ fn run(host: &mut dyn ServerHost, h: &Here, ev: &Event, dos: &[Do]) {
             Do::Act(a) => {
                 use crate::dialog::Action;
                 // What needs a player waits for one.
-                let needs_player = matches!(a, Action::Shop(_) | Action::Trade(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Give(..) | Action::Take(..) | Action::Tag(_) | Action::Untag(_) | Action::Game(..) | Action::Sport(_) | Action::JoinGame | Action::OpenGame | Action::EditAnimation(_));
+                let needs_player = matches!(a, Action::Gear(_) | Action::Shop(_) | Action::Trade(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Give(..) | Action::Take(..) | Action::Tag(_) | Action::Untag(_) | Action::Game(..) | Action::Sport(_) | Action::JoinGame | Action::OpenGame | Action::EditAnimation(_));
                 if needs_player && ev.player.is_none() {
                     continue;
                 }
@@ -534,7 +534,7 @@ fn look(host: &mut dyn ServerHost, h: &Here, rules: &[Rule], mind: &mut Mind, no
                     events.push(None);
                 }
             }
-            When::FriendHurt | When::FriendKilled | When::Feels(_) | When::HearsRumor | When::QuestDone | When::QuestFailed | When::Starts(_) => {
+            When::FriendHurt | When::FriendKilled | When::Feels(_) | When::HearsRumor | When::QuestDone | When::QuestFailed | When::Starts(_) | When::LevelUp => {
                 let key = match &rule.when {
                     When::FriendHurt => "friend_hurt".to_string(),
                     When::FriendKilled => "friend_killed".to_string(),
@@ -543,6 +543,7 @@ fn look(host: &mut dyn ServerHost, h: &Here, rules: &[Rule], mind: &mut Mind, no
                     When::QuestDone => "quest_done".to_string(),
                     When::QuestFailed => "quest_failed".to_string(),
                     When::Starts(d) => format!("starts:{d}"),
+                    When::LevelUp => "level_up".to_string(),
                     _ => String::new(),
                 };
                 for hd in heard {

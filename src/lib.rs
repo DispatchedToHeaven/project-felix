@@ -29,10 +29,11 @@
 //! - `char_edit` is a character as its editor holds it (no mod API types); `char_editor` is the
 //!   character editor in the world: moods as boxes, ways as lines.
 //! - `shop` reads shops (no mod API types); `shops` runs NPCs' stalls on the server.
+//! - `gear` is what companions wear and hold, and how they grow with what they kill.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
     ScreenKeyPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
-    ScreenCharTypedPreEvent, ServerTickEvent, ServerTickPhase, LivingDamagePostEvent, LivingDeathEvent, ServerChatEvent, LevelRandomHost, AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
+    ScreenCharTypedPreEvent, ServerTickEvent, ServerTickPhase, LivingDamagePostEvent, LivingDamagePreEvent, LivingDeathEvent, ServerChatEvent, LevelRandomHost, AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
     Host, HostSide, InteractionKeyMappingTriggeredEvent, InteractionResult, LevelTickPostEvent, RegisterCommandsEvent,
     RegisterEntityRenderersEvent, Registrar, RegistrationContext, RunModCommandEvent, ScreenMouseButtonPressedPreEvent,
     ScreenRenderPostEvent, ServerHost,
@@ -55,6 +56,7 @@ pub mod dialog;
 pub mod editor;
 pub mod game_screen;
 pub mod games;
+pub mod gear;
 pub mod heart;
 pub mod geo;
 pub mod image;
@@ -138,10 +140,14 @@ impl Hooks for Felix {
         quests::register_commands(e);
         routines::register_commands(e);
         shops::register_commands(e);
+        gear::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = gear::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = shops::run_command(host, e) {
@@ -174,6 +180,7 @@ impl Hooks for Felix {
             matches::level_tick(host);
             custom::level_tick(host);
             heart::level_tick(host);
+            gear::level_tick(host);
         }
     }
 
@@ -187,6 +194,11 @@ impl Hooks for Felix {
         }
     }
 
+    /// Armour an NPC wears takes its share of a hit (the game doesn't count an NPC's armour).
+    fn living_damage_pre(&self, _level: &mut dyn LevelRandomHost, e: &mut LivingDamagePreEvent<'_>) {
+        gear::on_damage_pre(e);
+    }
+
     fn living_damage_post(&self, _level: &mut dyn LevelRandomHost, e: &mut LivingDamagePostEvent<'_>) {
         rulebook::on_hurt(e.entity, e.source.causing);
         heart::on_hurt(e.entity, e.source.causing);
@@ -197,6 +209,7 @@ impl Hooks for Felix {
         rulebook::on_death(&*host, e.entity, e.source.causing);
         heart::on_death(host, e.entity, e.source.causing);
         quests::on_death(host, e.entity, e.source.causing);
+        gear::on_death(host, e.entity, e.source.causing);
         Flow::Continue
     }
 
@@ -310,6 +323,7 @@ impl Hooks for Felix {
 
     fn client_tick_post(&self, host: &mut dyn ClientHost, _e: &mut ClientTickPostEvent) {
         runtime::tick(host);
+        gear::client_tick(&*host);
         menu::tick(host);
         game_screen::tick(host);
         editor::tick(host);

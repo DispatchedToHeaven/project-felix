@@ -508,6 +508,36 @@
           ]
         },
         {
+          "text": "Take this.",
+          "if": {
+            "owner": true
+          },
+          "actions": [
+            {
+              "gear": "take"
+            }
+          ]
+        },
+        {
+          "text": "Give me back your gear.",
+          "if": {
+            "owner": true
+          },
+          "actions": [
+            {
+              "gear": "return"
+            }
+          ]
+        },
+        {
+          "text": "How strong are you?",
+          "actions": [
+            {
+              "stats": true
+            }
+          ]
+        },
+        {
           "text": "Never mind.",
           "goto": "main"
         }

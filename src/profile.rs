@@ -112,6 +112,8 @@ impl Profile {
         if self.quests.is_some() {
             options.push(json!({ "text": "Need any help?", "actions": [ { "quests": true } ] }));
         }
+        options.push(json!({ "text": "Take this.", "if": { "owner": true }, "actions": [ { "gear": "take" } ] }));
+        options.push(json!({ "text": "How strong are you?", "actions": [ { "stats": true } ] }));
         let (more, more_nodes) = social("hello");
         options.extend(more);
         nodes.extend(more_nodes);
