@@ -606,13 +606,14 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
                     crate::families::tell(host, npc, p);
                 }
             }
-            Action::Gift | Action::Tastes | Action::AskOut | Action::Propose | Action::Part => {
+            Action::Gift | Action::Tastes | Action::AskOut | Action::Propose | Action::Part | Action::Reminisce => {
                 if let Some(p) = player {
                     match a {
                         Action::Gift => crate::bonds::give_held(host, npc, p),
                         Action::Tastes => crate::bonds::tell_tastes(host, npc, p),
                         Action::AskOut => crate::bonds::ask_out(host, npc, p),
                         Action::Propose => crate::bonds::propose(host, npc, p),
+                        Action::Reminisce => crate::bonds::reminisce(host, npc, p),
                         _ => crate::bonds::part(host, npc, p, false),
                     }
                 }

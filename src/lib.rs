@@ -35,6 +35,8 @@
 //! - `speech` shows what NPCs say over their heads (and copies some of it to chat).
 //! - `event` is the village calendar (no mod API types); `events` gathers NPCs for its days.
 //! - `need` is NPCs' food (no mod API types); `needs` feeds them and has them say when hungry.
+//! - `remark` is what companions say on the way (no mod API types); `companions` has them say it
+//!   and help their hurt player.
 //! - `bond` is how close an NPC and a player are, up to romance (no mod API types); `bonds` keeps it.
 //! - `family` is NPC families (no mod API types); `families` makes couples and their children.
 //! - `squad` is a player's squad of NPCs: keys to attack, fall back, hold; archers shoot.
@@ -69,6 +71,7 @@ pub mod char_edit;
 pub mod char_editor;
 pub mod character;
 pub mod companion;
+pub mod companions;
 pub mod creator;
 pub mod custom;
 pub mod dialog;
@@ -96,6 +99,7 @@ pub mod menu;
 pub mod models;
 pub mod profile;
 pub mod quest;
+pub mod remark;
 pub mod quests;
 pub mod molang;
 pub mod plan;
@@ -304,6 +308,7 @@ impl Hooks for Felix {
             squad::tick(host);
             families::tick(host);
             bonds::tick(host);
+            companions::tick(host);
             shops::tick(host);
             speech::tick(host);
             rulebook::tick(host);

@@ -45,7 +45,8 @@
 //! Bonds (see `bond`): condition `stage` (the player is at least that: `acquaintance`, `friend`,
 //! `close`, `sweetheart`, `partner`) and `romance` (`none`, `sweetheart`, `partner`); actions
 //! `gift` (the player gives it what they hold), `tastes` (it says what it loves), `ask_out`,
-//! `propose` (with a diamond), `part` (the player ends the romance).
+//! `propose` (with a diamond), `part` (the player ends the romance), `reminisce` (it brings up a
+//! memory of them: when they met, fights, lands, a gift).
 //! `@player` is the player's name; `@npc` is the NPC's name in texts and its UUID in commands.
 //!
 //! Long talks: a node with `"paged": true` says its `text` a line at a time, the player going on
@@ -167,6 +168,7 @@ pub enum Action {
     AskOut,
     Propose,
     Part,
+    Reminisce,
 }
 
 /// What conditions ask about the player and the NPC.
@@ -404,7 +406,7 @@ pub fn commands(action: &Action, player: &str, npc: &str) -> Vec<String> {
         Action::Tag(t) => vec![format!("tag {player} add {t}")],
         Action::Untag(t) => vec![format!("tag {player} remove {t}")],
         Action::Sound(s) => vec![format!("execute as {npc} at @s run playsound {s} neutral @a ~ ~ ~")],
-        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Place(_) | Action::Shop(_) | Action::Trade(_) | Action::Gear(_) | Action::Stats | Action::Remember(..) | Action::Forget(_) | Action::Dialog(_) | Action::Feed | Action::Family | Action::Gift | Action::Tastes | Action::AskOut | Action::Propose | Action::Part => Vec::new(),
+        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Place(_) | Action::Shop(_) | Action::Trade(_) | Action::Gear(_) | Action::Stats | Action::Remember(..) | Action::Forget(_) | Action::Dialog(_) | Action::Feed | Action::Family | Action::Gift | Action::Tastes | Action::AskOut | Action::Propose | Action::Part | Action::Reminisce => Vec::new(),
     }
 }
 
@@ -632,6 +634,8 @@ pub fn read_actions(v: Option<&Value>) -> Result<Vec<Action>, String> {
                 Action::Propose
             } else if m.contains_key("part") {
                 Action::Part
+            } else if m.contains_key("reminisce") {
+                Action::Reminisce
             } else {
                 return Err(format!("unknown action {a}"));
             })

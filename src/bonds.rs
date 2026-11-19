@@ -27,6 +27,11 @@ pub struct Tie {
     pub day: i64,
     pub fought: f32,
     pub treat_day: i64,
+    /// Memories: when they met, monsters fought side by side, lands gone through, a gift it loved.
+    pub first: i64,
+    pub fights: u32,
+    pub places: Vec<String>,
+    pub loved: String,
 }
 
 fn uuid_tag(u: u128) -> Tag {
@@ -55,7 +60,10 @@ pub static BONDS: AttachmentType<Vec<Tie>> = AttachmentType {
                     x.insert("name".into(), Tag::String(t.name.as_str().into()));
                     x.insert("close".into(), Tag::Double(f64::from(t.close).to_bits()));
                     x.insert("romance".into(), Tag::Byte(t.romance.byte() as i8));
-                    for (k, v) in [("since", t.since), ("gift", t.last_gift), ("talk", t.last_talk), ("seen", t.seen), ("asked", t.asked), ("day", t.day), ("treat", t.treat_day)] {
+                    x.insert("fights".into(), Tag::Int(t.fights as i32));
+                    x.insert("places".into(), Tag::List(t.places.iter().map(|p| Tag::String(p.as_str().into())).collect()));
+                    x.insert("loved".into(), Tag::String(t.loved.as_str().into()));
+                    for (k, v) in [("since", t.since), ("gift", t.last_gift), ("talk", t.last_talk), ("seen", t.seen), ("asked", t.asked), ("day", t.day), ("treat", t.treat_day), ("first", t.first)] {
                         x.insert(k.into(), Tag::Long(v));
                     }
                     x.insert("fought".into(), Tag::Double(f64::from(t.fought).to_bits()));
@@ -98,6 +106,19 @@ pub static BONDS: AttachmentType<Vec<Tie>> = AttachmentType {
                         day: long("day"),
                         fought: double("fought"),
                         treat_day: long("treat"),
+                        first: long("first"),
+                        fights: match x.get(&"fights".into()) {
+                            Some(Tag::Int(v)) => (*v).max(0) as u32,
+                            _ => 0,
+                        },
+                        places: match x.get(&"places".into()) {
+                            Some(Tag::List(l)) => l.iter().filter_map(|t| if let Tag::String(s) = t { Some(s.to_string_lossy()) } else { None }).collect(),
+                            _ => Vec::new(),
+                        },
+                        loved: match x.get(&"loved".into()) {
+                            Some(Tag::String(s)) => s.to_string_lossy(),
+                            _ => String::new(),
+                        },
                     })
                 })
                 .collect())
@@ -119,7 +140,8 @@ fn with_tie<T>(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef, f: impl 
     let i = match list.iter().position(|t| t.who == p.uuid()) {
         Some(i) => i,
         None => {
-            list.push(Tie { who: p.uuid(), name: p.name(&*host).unwrap_or_default(), ..Tie::default() });
+            let first = npc.level(&*host).and_then(|l| l.game_time(&*host)).unwrap_or(0);
+            list.push(Tie { who: p.uuid(), name: p.name(&*host).unwrap_or_default(), first, ..Tie::default() });
             list.len() - 1
         }
     };
@@ -217,7 +239,12 @@ pub fn give_held(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) {
     let uuid = npc.uuid(host).unwrap_or(0);
     let (rel, close, word) = bond::gift(&item, uuid);
     crate::talk::queue(format!("clear {name} {item} 1"));
-    with_tie(host, npc, p, |t| t.last_gift = now);
+    with_tie(host, npc, p, |t| {
+        t.last_gift = now;
+        if word == "love" {
+            t.loved = item.clone();
+        }
+    });
     let what = bond::short(&item);
     let a = if what.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
     let cap = if a == "an" { "An" } else { "A" };
@@ -236,6 +263,28 @@ pub fn give_held(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) {
         hearts(host, npc);
         crate::heart::feel(host, npc, Some(p), "gift");
     }
+}
+
+/// A land they went through together, to remember.
+pub fn note_place(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef, land: &str) {
+    with_tie(host, npc, p, |t| {
+        if !t.places.iter().any(|x| x == land) {
+            t.places.push(land.to_string());
+            if t.places.len() > 12 {
+                t.places.remove(0);
+            }
+        }
+    });
+}
+
+/// It brings up something they went through together.
+pub fn reminisce(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) {
+    let now = now_of(&*host, npc);
+    let t = tie(host, npc, p.uuid()).unwrap_or_default();
+    let days = if t.first == 0 { 0 } else { (now - t.first) / DAY };
+    let line = crate::remark::memory(days, t.fights, &t.places, &t.loved, (now as u64 / 20) ^ u64::from(npc.id()));
+    let name = p.name(&*host).unwrap_or_default();
+    crate::heart::say_to(host, npc, p, &line.replace("@player", &name));
 }
 
 /// It tells what it loves and can't stand, once close enough.
@@ -377,6 +426,7 @@ pub fn on_death(host: &mut dyn ServerHost, victim: u32, killer: i32) {
             }
             let g = (6.0 - t.fought).clamp(0.0, 1.0);
             t.fought += g;
+            t.fights += 1;
             g
         });
         if gain > 0.0 {

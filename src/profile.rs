@@ -265,6 +265,7 @@ pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
         ("us".to_string(), json!({ "text": "Yes, @player?", "options": [
             { "text": "I brought you something.", "actions": [ { "gift": true } ] },
             { "text": "What do you like?", "actions": [ { "tastes": true } ] },
+            { "text": "Remember when...?", "if": { "stage": "friend" }, "actions": [ { "reminisce": true } ] },
             { "text": "Would you go out with me?", "if": { "all": [ { "stage": "close" }, { "romance": "none" } ] }, "actions": [ { "ask_out": true } ] },
             { "text": "Will you marry me?", "if": { "romance": "sweetheart" }, "actions": [ { "propose": true } ] },
             { "text": "Come live with me, here.", "if": { "romance": "partner" }, "actions": [ { "place": "home" } ], "goto": "moved_in" },

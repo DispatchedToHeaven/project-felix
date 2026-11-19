@@ -677,6 +677,17 @@
           ]
         },
         {
+          "text": "Remember when...?",
+          "if": {
+            "stage": "friend"
+          },
+          "actions": [
+            {
+              "reminisce": true
+            }
+          ]
+        },
+        {
           "text": "Would you go out with me?",
           "if": {
             "all": [
