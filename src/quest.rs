@@ -22,6 +22,10 @@
 //! Chains and stories: `requires` lists quests the player must have done first (from anyone), so
 //! one NPC's quest opens another's; `scene` plays a scene when it is done (the NPC who ends it
 //! leads); `delivered` is what the one delivered to says.
+//!
+//! Steps: `steps` lists goals one after another, each with what it asks (as above), `say` (what
+//! the NPC says as the step begins), `progress`, `done` (said when the step is done) and `reward`
+//! (given then). The quest's own `reward` and `done` come at the end, after the last step.
 
 use crate::dialog::{self, Action};
 use crate::serde_json::{Value, json};
@@ -81,6 +85,8 @@ impl Goal {
 pub struct Quest {
     pub title: String,
     pub goal: Goal,
+    /// Its steps, when it has more than one (the first is `goal`).
+    pub steps: Vec<Step>,
     pub offer: String,
     pub progress: String,
     pub done: String,
@@ -113,13 +119,22 @@ fn point(v: Option<&Value>) -> Option<[f64; 3]> {
     Some([a[0].as_f64()?, a[1].as_f64()?, a[2].as_f64()?])
 }
 
-pub fn read(v: &Value) -> Result<Quest, String> {
-    let m = v.as_object().ok_or("not an object")?;
+/// One step of a quest of several.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Step {
+    pub goal: Goal,
+    pub say: String,
+    pub progress: String,
+    pub done: String,
+    pub reward: Vec<Action>,
+}
+
+fn read_goal(m: &crate::serde_json::Map<String, Value>) -> Result<Goal, String> {
     let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_string);
     let count = m.get("count").and_then(Value::as_u64).unwrap_or(1).clamp(1, 999) as u32;
     let radius = m.get("radius").and_then(Value::as_f64).unwrap_or(4.0).max(1.0);
     let id = |x: String| if x.contains(':') || x == "monster" || x == "animal" { x } else { format!("minecraft:{x}") };
-    let goal = if let Some(item) = s("bring").filter(|x| !x.trim().is_empty()) {
+    Ok(if let Some(item) = s("bring").filter(|x| !x.trim().is_empty()) {
         Goal::Bring { item: id(item.trim().to_string()), count }
     } else if let Some(target) = s("kill").filter(|x| !x.trim().is_empty()) {
         Goal::Kill { target: id(target.trim().to_string()), count }
@@ -133,6 +148,24 @@ pub fn read(v: &Value) -> Result<Quest, String> {
         Goal::Deliver { to, item: s("item").filter(|i| !i.trim().is_empty()).map(|i| id(i.trim().to_string())), count }
     } else {
         return Err("no bring, kill, go_to, walk or deliver_to".into());
+    })
+}
+
+pub fn read(v: &Value) -> Result<Quest, String> {
+    let m = v.as_object().ok_or("not an object")?;
+    let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_string);
+    let mut steps = Vec::new();
+    if let Some(list) = m.get("steps").and_then(Value::as_array) {
+        for (i, st) in list.iter().enumerate() {
+            let sm = st.as_object().ok_or(format!("step {}: not an object", i + 1))?;
+            let goal = read_goal(sm).map_err(|e| format!("step {}: {e}", i + 1))?;
+            let t = |k: &str| sm.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+            steps.push(Step { say: t("say"), progress: t("progress"), done: t("done"), reward: dialog::read_actions(sm.get("reward")).map_err(|e| format!("step {}: {e}", i + 1))?, goal });
+        }
+    }
+    let goal = match steps.first() {
+        Some(st) => st.goal.clone(),
+        None => read_goal(m)?,
     };
     let text = |k: &str, d: &str| s(k).filter(|x| !x.trim().is_empty()).unwrap_or_else(|| d.to_string());
     let title = text("title", &goal.describe());
@@ -143,6 +176,7 @@ pub fn read(v: &Value) -> Result<Quest, String> {
         fail: text("fail", "Never mind, then."),
         title,
         goal,
+        steps,
         time: m.get("time").and_then(Value::as_f64).map(|t| (t as f32).max(0.5)),
         reward: dialog::read_actions(m.get("reward"))?,
         repeat: m.get("repeat").and_then(Value::as_bool).unwrap_or(false),
@@ -156,6 +190,33 @@ pub fn read(v: &Value) -> Result<Quest, String> {
         gives: dialog::read_actions(m.get("gives"))?,
         delivered: text("delivered", "From @giver? Thank you, @player."),
     })
+}
+
+impl Quest {
+    /// How many steps it has (one without `steps`).
+    pub fn step_count(&self) -> usize {
+        self.steps.len().max(1)
+    }
+
+    /// The quest as step `step` of it has it: its goal, what is said along it, what it gives
+    /// (the quest's own reward and thanks come with the last).
+    pub fn view(&self, step: u32) -> Quest {
+        let Some(st) = self.steps.get(step as usize) else { return self.clone() };
+        let last = step as usize + 1 >= self.steps.len();
+        let mut q = self.clone();
+        q.goal = st.goal.clone();
+        if !st.progress.is_empty() {
+            q.progress = st.progress.clone();
+        }
+        let next = if last { None } else { self.steps.get(step as usize + 1) };
+        q.done = match (&st.done, next) {
+            (d, _) if !d.is_empty() => d.clone(),
+            (_, Some(n)) => if n.say.is_empty() { format!("Good. Now {}.", n.goal.describe()) } else { n.say.clone() },
+            _ => self.done.clone(),
+        };
+        q.reward = if last { st.reward.iter().chain(&self.reward).cloned().collect() } else { st.reward.clone() };
+        q
+    }
 }
 
 /// A list of quests: `{ "quests": [...] }`, or the list alone.
@@ -178,6 +239,8 @@ pub struct Active {
     pub deadline: Option<i64>,
     /// Where the NPC stood when it asked.
     pub start: [f64; 3],
+    /// The step it is at (from 0).
+    pub step: u32,
 }
 
 /// A player's quests: those under way and those done (`quest@npc`, not to be given again).
@@ -373,7 +436,7 @@ mod tests {
         let q = parse(br#"{ "bring": "apple" }"#).unwrap();
         let mut log = Log::default();
         assert!(log.may_take("a:apples", &q, 9));
-        log.active.push(Active { quest: "a:apples".into(), npc: 9, npc_name: "Ann".into(), progress: 0, deadline: None, start: [0.0; 3] });
+        log.active.push(Active { quest: "a:apples".into(), npc: 9, npc_name: "Ann".into(), progress: 0, deadline: None, start: [0.0; 3], step: 0 });
         assert!(!log.may_take("a:other", &q, 9), "one at a time from one NPC");
         assert!(log.may_take("a:apples", &q, 10));
         assert_eq!(log.finish(9, true, false).map(|a| a.npc_name), Some("Ann".into()));
@@ -391,7 +454,7 @@ mod tests {
         assert_eq!(second.gives.len(), 1);
         let mut log = Log::default();
         assert!(!log.may_take("a:second", &second, 2), "not before the first");
-        log.active.push(Active { quest: "a:first".into(), npc: 1, npc_name: "Ann".into(), progress: 0, deadline: None, start: [0.0; 3] });
+        log.active.push(Active { quest: "a:first".into(), npc: 1, npc_name: "Ann".into(), progress: 0, deadline: None, start: [0.0; 3], step: 0 });
         log.finish(1, true, true);
         assert!(log.has_done("a:first"));
         assert!(log.may_take("a:first", &first, 1) || first.repeat == false);

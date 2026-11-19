@@ -1,0 +1,12 @@
+{
+  "title": "The lost ring",
+  "offer": "I lost my ring in the woods, @player, and it's a long story. Will you help me?",
+  "done": "My ring! Oh, @player, thank you so much!",
+  "fail": "Never mind the ring. Maybe it's gone for good.",
+  "reward": [ { "give": "minecraft:emerald", "count": 5 }, { "relation": 10 } ],
+  "steps": [
+    { "bring": "minecraft:apple", "count": 2, "say": "First, I'm starving. Bring me 2 apples?", "done": "Thanks! Now, the woods are full of monsters. Clear one out for me?" },
+    { "kill": "monster", "count": 1, "progress": "Is the way clear yet?", "done": "Brave! The ring was in a bread tin, I just remembered. Bring me a loaf?", "reward": [ { "give": "minecraft:bread", "count": 1 } ] },
+    { "bring": "minecraft:bread", "count": 1, "progress": "The loaf, @player? The ring is in there." }
+  ]
+}

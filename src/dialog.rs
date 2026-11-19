@@ -46,7 +46,8 @@
 //! `close`, `sweetheart`, `partner`) and `romance` (`none`, `sweetheart`, `partner`); actions
 //! `gift` (the player gives it what they hold), `tastes` (it says what it loves), `ask_out`,
 //! `propose` (with a diamond), `part` (the player ends the romance), `reminisce` (it brings up a
-//! memory of them: when they met, fights, lands, a gift).
+//! memory of them: when they met, fights, lands, a gift). Quests: conditions `quest_done` and
+//! `quest_active` (a quest id).
 //! `@player` is the player's name; `@npc` is the NPC's name in texts and its UUID in commands.
 //!
 //! Long talks: a node with `"paged": true` says its `text` a line at a time, the player going on
@@ -125,6 +126,9 @@ pub enum Cond {
     /// The player is at least at this stage with it.
     Stage(String),
     Romance(String),
+    /// The player did that quest (for anyone), or has it under way.
+    QuestDone(String),
+    QuestActive(String),
     Not(Box<Cond>),
     All(Vec<Cond>),
     Any(Vec<Cond>),
@@ -255,6 +259,12 @@ pub trait Facts {
     fn romance(&self) -> &str {
         "none"
     }
+    fn quest_done(&self, _id: &str) -> bool {
+        false
+    }
+    fn quest_active(&self, _id: &str) -> bool {
+        false
+    }
 }
 
 /// A stage's rank, from 0 (a stranger) to 5 (partners).
@@ -305,6 +315,8 @@ impl Cond {
             Cond::Family(want) => f.has_family() == *want,
             Cond::Stage(s) => stage_rank(s).is_some_and(|r| f.stage() >= r),
             Cond::Romance(r) => f.romance() == r,
+            Cond::QuestDone(q) => f.quest_done(q),
+            Cond::QuestActive(q) => f.quest_active(q),
             Cond::Not(c) => !c.holds(f),
             Cond::All(list) => list.iter().all(|c| c.holds(f)),
             Cond::Any(list) => list.iter().any(|c| c.holds(f)),
@@ -359,6 +371,8 @@ pub fn describe_cond(c: &Cond) -> String {
         Cond::Family(b) => if *b { "has family".into() } else { "no family".into() },
         Cond::Stage(s) => format!("{s}+"),
         Cond::Romance(r) => format!("romance {r}"),
+        Cond::QuestDone(q) => format!("did {q}"),
+        Cond::QuestActive(q) => format!("doing {q}"),
         Cond::Not(c) => format!("not ({})", describe_cond(c)),
         Cond::All(l) => l.iter().map(describe_cond).collect::<Vec<_>>().join(" and "),
         Cond::Any(l) => l.iter().map(describe_cond).collect::<Vec<_>>().join(" or "),
@@ -543,6 +557,10 @@ pub fn read_cond(v: &Value) -> Result<Cond, String> {
         Ok(Cond::Stage(st))
     } else if let Some(r) = s("romance") {
         Ok(Cond::Romance(r))
+    } else if let Some(q) = s("quest_done") {
+        Ok(Cond::QuestDone(q))
+    } else if let Some(q) = s("quest_active") {
+        Ok(Cond::QuestActive(q))
     } else if let Some(n) = m.get("not") {
         Ok(Cond::Not(Box::new(read_cond(n)?)))
     } else if let Some(all) = list("all")? {

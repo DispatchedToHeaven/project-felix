@@ -205,6 +205,8 @@ struct PlayerFacts {
     family: bool,
     stage: u8,
     romance: &'static str,
+    quests_done: Vec<String>,
+    quests_active: Vec<String>,
 }
 
 impl Facts for PlayerFacts {
@@ -281,6 +283,12 @@ impl Facts for PlayerFacts {
     fn romance(&self) -> &str {
         self.romance
     }
+    fn quest_done(&self, id: &str) -> bool {
+        self.quests_done.iter().any(|q| q == id)
+    }
+    fn quest_active(&self, id: &str) -> bool {
+        self.quests_active.iter().any(|q| q == id)
+    }
 }
 
 fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: &str) -> PlayerFacts {
@@ -306,6 +314,7 @@ fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: &
     let fault = crate::heart::fault_of(npc.id(), player.uuid());
     let event = crate::events::id_at(host, npc).unwrap_or_default();
     let flags = crate::flags::all(host, player);
+    let (quests_done, quests_active) = crate::quests::log_ids(host, player);
     let (biome, time, weather) = crate::flags::surroundings(&*host, player);
     let now = npc.level(&*host).and_then(|l| l.game_time(&*host)).unwrap_or(0) as u64;
     let roll = (now.wrapping_mul(2_654_435_761).wrapping_add(u64::from(npc.id()).wrapping_mul(40_503)) >> 7) as u32 % 100;
@@ -313,7 +322,7 @@ fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: &
         crate::bond::Stage::Sweetheart => "sweetheart",
         crate::bond::Stage::Partner => "partner",
         _ => "none",
-    } }
+    }, quests_done, quests_active }
 }
 
 /// A UUID written with dashes, as commands take it.

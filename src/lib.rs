@@ -45,6 +45,8 @@
 //! - `voice` is how NPCs babble what they say (no mod API types); `voices` gives them theirs.
 //! - `dialog_edit` (no mod API types) and `dialog_editor` are the dialog editor; `dialogs` keeps
 //!   dialogs made in the game; `flags` is the players' talk memory and the extended view.
+//! - `quest_edit` (no mod API types) and `quest_editor` are the quest editor; `quest_store` keeps
+//!   quests made in the game.
 //! - `rules_edit` (no mod API types) and `rules_editor` are the rules editor; `rulesets` keeps
 //!   rules made in the game.
 //! - `village` is a village as a file (no mod API types); `villages` exports and imports them.
@@ -99,6 +101,9 @@ pub mod menu;
 pub mod models;
 pub mod profile;
 pub mod quest;
+pub mod quest_edit;
+pub mod quest_editor;
+pub mod quest_store;
 pub mod remark;
 pub mod quests;
 pub mod molang;
@@ -148,6 +153,7 @@ impl Hooks for Felix {
         char_editor::register(r);
         dialog_editor::register(r);
         rules_editor::register(r);
+        quest_editor::register(r);
         scene_editor::register(r);
         squad::register(r);
     }
@@ -207,11 +213,15 @@ impl Hooks for Felix {
         squad::register_commands(e);
         families::register_commands(e);
         bonds::register_commands(e);
+        quest_store::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = quest_store::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = bonds::run_command(host, e) {
@@ -293,6 +303,7 @@ impl Hooks for Felix {
             villages::level_tick(host);
             dialogs::level_tick(host);
             rulesets::level_tick(host);
+            quest_store::level_tick(host);
             builds::level_tick(host);
         }
     }
@@ -353,6 +364,10 @@ impl Hooks for Felix {
     }
 
     fn screen_render_post(&self, host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
+        if quest_editor::active() {
+            quest_editor::render(host, e);
+            return;
+        }
         if rules_editor::active() {
             rules_editor::render(host, e);
             return;
@@ -382,6 +397,9 @@ impl Hooks for Felix {
     }
 
     fn screen_mouse_button_pressed_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
+        if quest_editor::active() {
+            return quest_editor::mouse_pressed(host, e);
+        }
         if rules_editor::active() {
             return rules_editor::mouse_pressed(host, e);
         }
@@ -439,7 +457,9 @@ impl Hooks for Felix {
     }
 
     fn screen_mouse_scrolled_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseScrolledPreEvent<'_>) -> Flow {
-        if rules_editor::active() {
+        if quest_editor::active() {
+            quest_editor::mouse_scrolled(host, e.screen.mouse, e.scroll[1] > 0.0)
+        } else if rules_editor::active() {
             rules_editor::mouse_scrolled(host, e.screen.mouse, e.scroll[1] > 0.0)
         } else if dialog_editor::active() {
             dialog_editor::mouse_scrolled(host, e.screen.mouse, e.scroll[1] > 0.0)
@@ -457,7 +477,9 @@ impl Hooks for Felix {
     }
 
     fn screen_key_pressed_pre(&self, host: &dyn ClientHost, e: &mut ScreenKeyPressedPreEvent<'_>) -> Flow {
-        if rules_editor::active() {
+        if quest_editor::active() {
+            quest_editor::key_pressed(host, e)
+        } else if rules_editor::active() {
             rules_editor::key_pressed(host, e)
         } else if dialog_editor::active() {
             dialog_editor::key_pressed(host, e)
@@ -475,7 +497,9 @@ impl Hooks for Felix {
     }
 
     fn screen_char_typed_pre(&self, host: &dyn ClientHost, e: &mut ScreenCharTypedPreEvent<'_>) -> Flow {
-        if rules_editor::active() {
+        if quest_editor::active() {
+            quest_editor::char_typed(host, e)
+        } else if rules_editor::active() {
             rules_editor::char_typed(host, e)
         } else if dialog_editor::active() {
             dialog_editor::char_typed(host, e)
@@ -501,6 +525,7 @@ impl Hooks for Felix {
         char_editor::tick(host);
         dialog_editor::tick(host);
         rules_editor::tick(host);
+        quest_editor::tick(host);
         squad::client_tick(host);
         scene_editor::tick(host);
         skins::tick(host);
