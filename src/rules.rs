@@ -20,18 +20,22 @@
 //! hurt or killed an NPC it is friends with: the player is the event's), `{ "feels": "<mood>" }` (its
 //! mood turns to that, see `character`), `hears_rumor` (a friend told it what a player did: the
 //! player is the event's), `quest_done` / `quest_failed` (a player did, or failed, a quest it gave), `{ "starts": "<doing>" }`
-//! (its day has it start that: `work`, `sleep`…), `level_up`.
+//! (its day has it start that: `work`, `sleep`…), `level_up`, `{ "enters": "<biome>" }` (a player
+//! within `radius` comes into that biome: an id, or a word of it, as `snowy`), `{ "weather":
+//! "rain" | "thunder" | "clear" }` (the weather turns to that), `{ "at": "18:00" }` (the hour).
 //!
 //! If (optional; `not`, `all`, `any` combine them): `time` (`day` or `night`), `raining`, `mode`
 //! (`follow`, `wait`, `guard`), `health_below` (a fraction), `owner_near` (blocks), `owner` (the player
 //! of the event is its owner), `chance` (0 to 1), `target` (an entity type, or `monster`, `animal`,
 //! `player`), `tag` (the NPC has it), `player_tag`, `item` (+ `count`, the player has it), `mood`,
 //! `relation_above` / `relation_below` (how much it likes the player of the event), `doing` (what its
-//! day has it do now).
+//! day has it do now), `biome` (the event player's, else the NPC's), `weather`, `flag` (+ `is`: the
+//! player's memory, see `dialog`), `answer` (`<dialog>:<node>` + `is`: what the player answered).
 //!
 //! Then and else: `say` (a chat line to the players near the NPC), `tell` (to the player of the
 //! event only), `attack` (what it saw or what hurt), `look` (at it), `talk` (start its dialog with
-//! the player), and every dialog action (`command`, `animation`, `order`, `sound`, `give`, `tag`...).
+//! the player, walking up to them first), `come` (walks up to the player), `dialog` (walks up to
+//! the player and starts that dialog), and every dialog action (`command`, `animation`, `order`, `sound`, `give`, `tag`...).
 //! Texts and commands: `@player`, `@npc`, `@target`. A rule rests `cooldown` seconds (5) after it
 //! fires.
 
@@ -62,6 +66,12 @@ pub enum When {
     QuestFailed,
     Starts(String),
     LevelUp,
+    /// A player near comes into a biome (an id, or a word of it).
+    EntersBiome(String),
+    /// The weather turns to `rain`, `thunder` or `clear`.
+    WeatherTurns(String),
+    /// The hour comes (day time, 0 is 6:00).
+    At(i64),
 }
 
 impl When {
@@ -100,6 +110,11 @@ pub enum Cond {
     RelationAbove(i32),
     RelationBelow(i32),
     Doing(String),
+    Biome(String),
+    Weather(String),
+    Flag(String, Option<String>),
+    /// What the player answered at `<dialog>:<node>`.
+    Answer(String, String),
     Not(Box<Cond>),
     All(Vec<Cond>),
     Any(Vec<Cond>),
@@ -112,6 +127,7 @@ pub enum Do {
     Attack,
     Look,
     Talk,
+    Come,
     Act(Action),
 }
 
@@ -153,6 +169,23 @@ pub trait Facts {
     fn doing(&self) -> &str {
         ""
     }
+    /// The biome of the event's player (else the NPC's).
+    fn biome(&self) -> &str {
+        ""
+    }
+    /// `clear`, `rain` or `thunder`.
+    fn weather(&self) -> &str {
+        "clear"
+    }
+    /// What the event player's memory holds under `key`.
+    fn flag(&self, _key: &str) -> Option<&str> {
+        None
+    }
+}
+
+/// Whether weather `now` is what `want` asks (`rain` counts thunder too).
+pub fn weather_is(now: &str, want: &str) -> bool {
+    if want == "rain" { now != "clear" } else { now == want }
 }
 
 impl Cond {
@@ -173,6 +206,10 @@ impl Cond {
             Cond::RelationAbove(v) => f.relation().is_some_and(|r| r > *v),
             Cond::RelationBelow(v) => f.relation().is_some_and(|r| r < *v),
             Cond::Doing(d) => f.doing() == d,
+            Cond::Biome(b) => dialog::biome_is(f.biome(), b),
+            Cond::Weather(w) => weather_is(f.weather(), w),
+            Cond::Flag(k, v) => f.flag(k).is_some_and(|x| v.as_deref().is_none_or(|v| x == v)),
+            Cond::Answer(k, a) => f.flag(k) == Some(a.as_str()),
             Cond::Not(c) => !c.holds(f),
             Cond::All(list) => list.iter().all(|c| c.holds(f)),
             Cond::Any(list) => list.iter().any(|c| c.holds(f)),
@@ -217,7 +254,7 @@ fn read_rule(v: &Value) -> Result<Rule, String> {
     })
 }
 
-fn read_when(v: &Value) -> Result<When, String> {
+pub fn read_when(v: &Value) -> Result<When, String> {
     if let Some(s) = v.as_str() {
         return Ok(match s {
             "sees_monster" => When::SeesMonster,
@@ -262,12 +299,21 @@ fn read_when(v: &Value) -> Result<When, String> {
         Ok(When::Feels(f.trim().to_string()))
     } else if let Some(s) = m.get("every").and_then(Value::as_f64) {
         Ok(When::Every((s as f32).max(1.0)))
+    } else if let Some(b) = m.get("enters").and_then(Value::as_str).map(str::trim).filter(|b| !b.is_empty()) {
+        Ok(When::EntersBiome(b.to_string()))
+    } else if let Some(w) = m.get("weather").and_then(Value::as_str) {
+        match w.trim() {
+            w @ ("rain" | "thunder" | "clear") => Ok(When::WeatherTurns(w.to_string())),
+            w => Err(format!("weather is rain, thunder or clear, not {w}")),
+        }
+    } else if let Some(t) = m.get("at").and_then(Value::as_str) {
+        Ok(When::At(crate::routine::clock(t).ok_or(format!("\"at\" is an hour, as 18:00, not {t}"))?))
     } else {
         Err(format!("unknown \"when\": {v}"))
     }
 }
 
-fn read_cond(v: &Value) -> Result<Cond, String> {
+pub fn read_cond(v: &Value) -> Result<Cond, String> {
     let m = v.as_object().ok_or("a condition is not an object")?;
     let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_string);
     let list = |k: &str| -> Result<Vec<Cond>, String> { m.get(k).and_then(Value::as_array).ok_or(format!("{k} needs a list"))?.iter().map(read_cond).collect() };
@@ -305,6 +351,14 @@ fn read_cond(v: &Value) -> Result<Cond, String> {
         Cond::RelationBelow(v as i32)
     } else if let Some(d) = s("doing") {
         Cond::Doing(d)
+    } else if let Some(b) = s("biome") {
+        Cond::Biome(b)
+    } else if let Some(w) = s("weather") {
+        Cond::Weather(w)
+    } else if let Some(k) = s("flag") {
+        Cond::Flag(k, s("is"))
+    } else if let Some(k) = s("answer") {
+        Cond::Answer(k, s("is").ok_or("answer needs \"is\": a, b, c")?)
     } else if let Some(c) = m.get("not") {
         Cond::Not(Box::new(read_cond(c)?))
     } else if m.contains_key("all") {
@@ -337,6 +391,8 @@ fn read_dos(v: Option<&Value>) -> Result<Vec<Do>, String> {
                 Do::Look
             } else if m.contains_key("talk") {
                 Do::Talk
+            } else if m.contains_key("come") {
+                Do::Come
             } else {
                 let mut one = dialog::read_actions(Some(&Value::Array(vec![a.clone()])))?;
                 Do::Act(one.pop().ok_or("an empty action")?)

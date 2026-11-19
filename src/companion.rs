@@ -139,6 +139,8 @@ struct Server {
     unknown: Vec<u32>,
     /// What NPCs living by their day do at their post now.
     live: HashMap<u32, LiveDo>,
+    /// Where NPCs are sent to walk now, over their orders (to a player, say).
+    go: HashMap<u32, [f64; 3]>,
 }
 
 /// What a living NPC does at its post: goes with its owner instead, stays and walks about, rests
@@ -275,6 +277,7 @@ struct CompanionGoals;
 impl EntityPart for CompanionGoals {
     fn register_goals(&self, goals: &mut GoalRegistrar<'_>) {
         goals.add_goal(0, Present);
+        goals.add_goal(0, Go { t: 0 });
         goals.add_goal(1, Wait);
         goals.add_goal(1, KeepPost);
         goals.add_goal(1, Live { t: 0 });
@@ -296,6 +299,53 @@ impl Goal for Present {
     fn can_use(&mut self, cx: &mut GoalContext<'_>) -> bool {
         let _ = orders_of(cx.mob().entity().id());
         false
+    }
+}
+
+/// Sends NPC `id` walking to `to` over its orders (none: back to them).
+pub fn go_to(id: u32, to: Option<[f64; 3]>) {
+    if let Ok(mut s) = SERVER.lock() {
+        match to {
+            Some(p) => s.go.insert(id, p),
+            None => s.go.remove(&id),
+        };
+    }
+}
+
+fn going(id: u32) -> Option<[f64; 3]> {
+    SERVER.lock().ok()?.go.get(&id).copied()
+}
+
+/// Going somewhere it was sent (see [`go_to`]), whatever its orders.
+struct Go {
+    t: u32,
+}
+
+impl Goal for Go {
+    fn flags(&self) -> GoalFlags {
+        GoalFlags::MOVE.union(GoalFlags::JUMP)
+    }
+    fn can_use(&mut self, cx: &mut GoalContext<'_>) -> bool {
+        going(cx.mob().entity().id()).is_some()
+    }
+    fn can_continue(&mut self, cx: &mut GoalContext<'_>) -> bool {
+        self.can_use(cx)
+    }
+    fn tick(&mut self, cx: &mut GoalContext<'_>) {
+        self.t = self.t.wrapping_add(1);
+        let id = cx.mob().entity().id();
+        let (Some(to), Some(at)) = (going(id), cx.mob().entity().position(cx.host())) else { return };
+        if distance_sq(at, to) <= 2.0 * 2.0 {
+            cx.stop_navigation();
+        } else if self.t % 10 == 1 {
+            cx.move_to(to, 1.05);
+        }
+    }
+    fn stop(&mut self, cx: &mut GoalContext<'_>) {
+        cx.stop_navigation();
+    }
+    fn name(&self) -> &'static str {
+        "projectfelix:go"
     }
 }
 

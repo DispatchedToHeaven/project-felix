@@ -1,0 +1,56 @@
+{
+  "rules": [
+    {
+      "when": {
+        "enters": "snowy"
+      },
+      "radius": 24,
+      "cooldown": 120,
+      "if": {
+        "not": {
+          "flag": "cold_road_met"
+        }
+      },
+      "then": [
+        {
+          "say": "Oh! Snow, @player!"
+        },
+        {
+          "dialog": "projectfelix:cold_road"
+        },
+        {
+          "remember": "cold_road_met"
+        }
+      ]
+    },
+    {
+      "when": {
+        "enters": "snowy"
+      },
+      "radius": 24,
+      "cooldown": 600,
+      "if": {
+        "answer": "projectfelix:cold_road:ask",
+        "is": "b"
+      },
+      "then": [
+        {
+          "say": "You hate the cold, and here we are again, @player."
+        }
+      ]
+    },
+    {
+      "when": {
+        "weather": "thunder"
+      },
+      "then": [
+        {
+          "say": "Thunder! Let us find a roof, @player."
+        },
+        {
+          "come": true
+        }
+      ]
+    }
+  ]
+}

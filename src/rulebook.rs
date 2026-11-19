@@ -51,6 +51,24 @@ pub fn set_extra(name: &str, r: Vec<Rule>) {
     }
 }
 
+/// The data packs' rules files as they were, for the rules editor.
+static RAW: LazyLock<Mutex<HashMap<String, crate::serde_json::Value>>> = LazyLock::new(Default::default);
+
+/// Data pack rules `id`'s file.
+pub fn raw_rules(id: &str) -> Option<crate::serde_json::Value> {
+    RAW.lock().ok()?.get(id).cloned()
+}
+
+/// Every NPC reads its rules again (some were just changed).
+pub fn forget_minds() {
+    if let Ok(mut s) = STATE.lock() {
+        for m in s.minds.values_mut() {
+            m.rules_id = None;
+            m.fired.clear();
+        }
+    }
+}
+
 fn rules_named(id: &str) -> Option<Arc<Vec<Rule>>> {
     EXTRA.lock().ok().and_then(|e| e.get(id).cloned()).or_else(|| LOADED.lock().ok().and_then(|l| l.get(id).cloned()))
 }
@@ -73,6 +91,18 @@ struct Mind {
     day: Option<bool>,
     rain: Option<bool>,
     low: Option<bool>,
+    /// Whether each player was in a rule's biome at the last look, by (rule, player).
+    inside: HashMap<(usize, u128), bool>,
+    weather: Option<&'static str>,
+    time: Option<i64>,
+}
+
+/// An NPC walking up to a player: to talk (its own dialog, or this one), or only to come.
+struct Approach {
+    npc: u32,
+    player: PlayerRef,
+    talk: Option<String>,
+    until: i64,
 }
 
 #[derive(Default)]
@@ -81,6 +111,7 @@ struct State {
     minds: HashMap<u32, Mind>,
     heard: Vec<Heard>,
     seed: u64,
+    approaches: Vec<Approach>,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -148,11 +179,15 @@ struct Listener;
 impl ServerReloadListener for Listener {
     fn prepare(&self, cx: &ServerReloadContext) -> Result<Box<dyn ReloadApply>, ReloadResourceError> {
         let mut next = HashMap::new();
+        let mut raw = HashMap::new();
         for id in cx.list() {
             let Some(bytes) = cx.read(id) else { continue };
             match rules::parse(bytes) {
                 Ok(r) => {
                     next.insert(id.to_string(), Arc::new(r));
+                    if let Ok(v) = crate::serde_json::from_slice::<crate::serde_json::Value>(bytes) {
+                        raw.insert(id.to_string(), v);
+                    }
                 }
                 Err(e) => eprintln!("[projectfelix] rules {id} not loaded: {e}"),
             }
@@ -160,6 +195,9 @@ impl ServerReloadListener for Listener {
         Ok(<dyn ReloadApply>::new(move || {
             if let Ok(mut live) = LOADED.lock() {
                 *live = next;
+            }
+            if let Ok(mut r) = RAW.lock() {
+                *r = raw;
             }
         }))
     }
@@ -199,9 +237,21 @@ struct Facts<'a> {
     mood: String,
     relation: Option<i32>,
     doing: String,
+    biome: String,
+    weather: &'static str,
+    flags: HashMap<String, String>,
 }
 
 impl rules::Facts for Facts<'_> {
+    fn biome(&self) -> &str {
+        &self.biome
+    }
+    fn weather(&self) -> &str {
+        self.weather
+    }
+    fn flag(&self, key: &str) -> Option<&str> {
+        self.flags.get(key).map(String::as_str)
+    }
     fn mood(&self) -> &str {
         &self.mood
     }
@@ -297,7 +347,13 @@ fn fire(host: &mut dyn ServerHost, h: &Here, rule: &Rule, i: usize, ev: &Event, 
     mind.fired.insert(i, now);
     let mut player_tags = Vec::new();
     let mut player_items = HashMap::new();
+    let mut flags = HashMap::new();
+    let (biome, _, weather) = match ev.player {
+        Some(p) => crate::flags::surroundings(&*host, p),
+        None => (npc_biome(&*host, h.me), "", weather_of(&*host, h.me)),
+    };
     if let Some(p) = ev.player {
+        flags = crate::flags::all(host, p);
         player_tags = p.entity().tags(&*host).unwrap_or_default();
         for stack in p.inventory(&*host).unwrap_or_default() {
             *player_items.entry(stack.item().id(&*host)).or_insert(0) += stack.count();
@@ -318,8 +374,16 @@ fn fire(host: &mut dyn ServerHost, h: &Here, rule: &Rule, i: usize, ev: &Event, 
         mood: crate::heart::mood_of(h.me.id()),
         relation: ev.player.map(|p| crate::heart::relation_of(h.me.id(), p.uuid())),
         doing: crate::routines::doing(h.me.id()),
+        biome,
+        weather,
+        flags,
     };
     let dos = rule.decide(&facts).to_vec();
+    // Nothing to do (its condition failed, with no else): it doesn't rest for it.
+    if dos.is_empty() {
+        mind.fired.remove(&i);
+        return;
+    }
     run(host, h, ev, &dos);
 }
 
@@ -334,7 +398,8 @@ fn run(host: &mut dyn ServerHost, h: &Here, ev: &Event, dos: &[Do]) {
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .map(|(_, p)| p)
     };
-    let player_name = ev.player.or(owner).or_else(nearest).and_then(|p| p.name(&*host)).unwrap_or_default();
+    let someone = ev.player.or(owner).or_else(nearest);
+    let player_name = someone.and_then(|p| p.name(&*host)).unwrap_or_default();
     let target = if ev.target_name.is_empty() { "something".to_string() } else { ev.target_name.clone() };
     for d in dos {
         match d {
@@ -358,9 +423,14 @@ fn run(host: &mut dyn ServerHost, h: &Here, ev: &Event, dos: &[Do]) {
                     let _ = MobRef::new(h.me).look_at(host, [at[0], at[1] + 1.4, at[2]]);
                 }
             }
-            Do::Talk => {
-                if let Some(p) = ev.player {
-                    crate::talk::start(host, p, h.me.id());
+            Do::Talk | Do::Come => {
+                if let Some(p) = someone {
+                    approach(host, h.me, p, matches!(d, Do::Talk).then(String::new));
+                }
+            }
+            Do::Act(crate::dialog::Action::Dialog(id)) => {
+                if let Some(p) = someone {
+                    approach(host, h.me, p, Some(id.clone()));
                 }
             }
             Do::Act(a) => {
@@ -377,6 +447,65 @@ fn run(host: &mut dyn ServerHost, h: &Here, ev: &Event, dos: &[Do]) {
                 crate::talk::run_for(host, ev.player, h.me, &[a]);
             }
         }
+    }
+}
+
+/// NPC `me` walks up to `p`, then (with `talk`) talks: its own dialog (empty), or that one.
+fn approach(host: &mut dyn ServerHost, me: EntityRef, p: PlayerRef, talk: Option<String>) {
+    let now = me.level(&*host).and_then(|l| l.game_time(&*host)).unwrap_or(0);
+    if let Ok(mut s) = STATE.lock() {
+        s.approaches.retain(|a| a.npc != me.id());
+        s.approaches.push(Approach { npc: me.id(), player: p, talk, until: now + 600 });
+    }
+}
+
+/// The NPCs walking up to players: there, they talk (or stop); too long, they give up.
+fn walk_up(host: &mut dyn ServerHost, now: i64) {
+    let list = STATE.lock().map(|mut s| std::mem::take(&mut s.approaches)).unwrap_or_default();
+    let mut left = Vec::new();
+    for a in list {
+        let (Some(me), Some(to)) = (host.entity(a.npc), a.player.entity().position(&*host)) else {
+            companion::go_to(a.npc, None);
+            continue;
+        };
+        let Some(at) = me.position(&*host) else { continue };
+        if dist(at, to) <= 3.0 {
+            companion::go_to(a.npc, None);
+            let _ = MobRef::new(me).look_at(host, [to[0], to[1] + 1.5, to[2]]);
+            match a.talk.as_deref() {
+                Some("") => crate::talk::start(host, a.player, a.npc),
+                Some(id) => {
+                    if !crate::talk::start_dialog(host, a.player, me, id) {
+                        eprintln!("[projectfelix] rules: no dialog {id}");
+                    }
+                }
+                None => {}
+            }
+        } else if now > a.until || dist(at, to) > 64.0 {
+            companion::go_to(a.npc, None);
+        } else {
+            companion::go_to(a.npc, Some(to));
+            left.push(a);
+        }
+    }
+    if let Ok(mut s) = STATE.lock() {
+        s.approaches.extend(left);
+    }
+}
+
+fn npc_biome(host: &dyn mod_api::Host, me: EntityRef) -> String {
+    let (Some(level), Some(p)) = (me.level(host), me.position(host)) else { return String::new() };
+    level.biome_at(host, [p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32]).unwrap_or_default()
+}
+
+fn weather_of(host: &dyn mod_api::Host, me: EntityRef) -> &'static str {
+    let Some(level) = me.level(host) else { return "clear" };
+    if level.is_thundering(host) == Some(true) {
+        "thunder"
+    } else if level.is_raining(host) == Some(true) {
+        "rain"
+    } else {
+        "clear"
     }
 }
 
@@ -423,6 +552,7 @@ pub fn tick(host: &mut dyn ServerHost) {
     if let Ok(mut s) = STATE.lock() {
         s.minds = minds;
     }
+    walk_up(host, now);
 }
 
 fn look(host: &mut dyn ServerHost, h: &Here, rules: &[Rule], mind: &mut Mind, now: i64, heard: &[Heard], random: &mut dyn FnMut() -> f32) {
@@ -436,6 +566,10 @@ fn look(host: &mut dyn ServerHost, h: &Here, rules: &[Rule], mind: &mut Mind, no
     mind.day = Some(h.day);
     mind.rain = Some(h.rain);
     mind.low = Some(low);
+    let weather = weather_of(&*host, h.me);
+    let weather_before = mind.weather.replace(weather);
+    let tod = h.me.level(&*host).and_then(|l| l.day_time(&*host)).unwrap_or(0).rem_euclid(24000);
+    let time_before = mind.time.replace(tod);
     // Who is in sight, for the rules that look.
     let reach = rules.iter().filter(|r| r.when.sight()).map(|r| r.radius).fold(0.0, f64::max);
     let mut around: Vec<(EntityRef, String, &'static str, f64)> = Vec::new();
@@ -547,6 +681,35 @@ fn look(host: &mut dyn ServerHost, h: &Here, rules: &[Rule], mind: &mut Mind, no
                     {
                         events.push(other.and_then(|o| host.entity(o)));
                         break;
+                    }
+                }
+            }
+            When::EntersBiome(b) => {
+                let level = h.me.level(&*host);
+                for p in &h.players {
+                    let Some(at) = p.entity().position(&*host).filter(|at| dist(*at, h.at) <= rule.radius) else {
+                        mind.inside.remove(&(i, p.uuid()));
+                        continue;
+                    };
+                    let biome = level.and_then(|l| l.biome_at(&*host, [at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32])).unwrap_or_default();
+                    let now_in = crate::dialog::biome_is(&biome, b);
+                    let was = mind.inside.insert((i, p.uuid()), now_in);
+                    if now_in && was != Some(true) {
+                        events.push(Some(p.entity()));
+                    }
+                }
+            }
+            When::WeatherTurns(w) => {
+                if weather_before.is_some_and(|b| !rules::weather_is(b, w)) && rules::weather_is(weather, w) {
+                    events.push(None);
+                }
+            }
+            When::At(t) => {
+                if let Some(before) = time_before {
+                    let elapsed = (tod - before).rem_euclid(24000);
+                    let to_t = (*t - before).rem_euclid(24000);
+                    if elapsed < 2000 && to_t > 0 && to_t <= elapsed {
+                        events.push(None);
                     }
                 }
             }
