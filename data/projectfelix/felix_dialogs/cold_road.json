@@ -1,0 +1,45 @@
+{
+  "start": "intro",
+  "nodes": {
+    "intro": {
+      "text": [
+        "Brr, @player! Have you been out in the snow?",
+        "My grandmother used to say the cold keeps secrets.",
+        "She never told me which ones."
+      ],
+      "paged": true,
+      "animation": "animation.felix.wave",
+      "next": "ask"
+    },
+    "ask": {
+      "text": [ "Do you like the cold?" ],
+      "options": [
+        { "text": "I love it.", "actions": [ { "relation": 5 }, { "feel": "praise" } ], "goto": "love" },
+        { "text": "I hate it.", "actions": [ { "relation": -5 } ], "goto": "hate" },
+        { "text": "Tell me the secret.", "if": { "relation_above": 20 }, "goto": "secret" }
+      ]
+    },
+    "love": {
+      "text": [ "A kindred soul! Here, for your next snowball fight." ],
+      "actions": [ { "give": "minecraft:snowball", "count": 4 } ],
+      "next": "later"
+    },
+    "hate": { "text": [ "Hmph. Then you won't like it here much." ], "next": "later" },
+    "secret": {
+      "text": [ "Since you ask so nicely...", "The cold keeps the best apples. Grandmother hid hers in the snow.", "Don't tell anyone." ],
+      "paged": true,
+      "actions": [ { "remember": "cold_secret" } ],
+      "next": "later"
+    },
+    "later": {
+      "branch": [
+        { "if": { "answer": "ask", "is": "a" }, "goto": "warm" },
+        { "if": { "biome": "snowy" }, "goto": "snowing" }
+      ],
+      "next": "bye"
+    },
+    "warm": { "text": [ "Come back when it snows again, @player." ] },
+    "snowing": { "text": [ "And look: it's all snow around us right now!" ] },
+    "bye": { "text": [ "Stay warm, @player." ] }
+  }
+}

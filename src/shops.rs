@@ -206,7 +206,7 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
     text.retain(|t| !t.is_empty());
     options.push(choice("That's all.".into(), Vec::new()));
     let mut nodes = HashMap::new();
-    nodes.insert("stall".to_string(), Node { text, animation: None, actions: Vec::new(), options });
+    nodes.insert("stall".to_string(), Node { text, options, ..Node::default() });
     // The shop it came from goes with the stall's trades.
     let named = named.to_string();
     if let Ok(mut st) = STATE.lock() {

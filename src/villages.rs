@@ -148,6 +148,12 @@ fn export(host: &mut dyn ServerHost, player: PlayerRef, name: &str, radius: f64)
             entries.push(Entry { name: format!("characters/{n}.json"), data: crate::serde_json::to_vec_pretty(&v).unwrap_or_default() });
         }
     }
+    let dialogs = village.made_dialogs();
+    for (n, file) in crate::dialogs::made_all() {
+        if dialogs.contains(&format!("{}{n}", crate::dialogs::PREFIX)) {
+            entries.push(Entry { name: format!("dialogs/{n}.json"), data: crate::serde_json::to_vec_pretty(&file).unwrap_or_default() });
+        }
+    }
     for (n, text) in crate::scenes::made_all() {
         entries.push(Entry { name: format!("scenes/{n}.json"), data: text.into_bytes() });
     }
@@ -172,6 +178,8 @@ fn import(host: &mut dyn ServerHost, player: PlayerRef, name: &str) -> Result<St
             crate::custom::import_profile(host, &e.data).map(|_| ())
         } else if let Some(n) = e.name.strip_prefix("characters/").and_then(|n| n.strip_suffix(".json")) {
             crate::serde_json::from_slice(&e.data).map_err(|err| err.to_string()).and_then(|v| crate::heart::keep_character(host, n, v)).map(|_| ())
+        } else if let Some(n) = e.name.strip_prefix("dialogs/").and_then(|n| n.strip_suffix(".json")) {
+            crate::serde_json::from_slice(&e.data).map_err(|err| err.to_string()).and_then(|v| crate::dialogs::keep_brought(host, n, v)).map(|_| ())
         } else if let Some(n) = e.name.strip_prefix("scenes/").and_then(|n| n.strip_suffix(".json")) {
             crate::scenes::keep_scene(host, n, &String::from_utf8_lossy(&e.data)).map(|_| ())
         } else {

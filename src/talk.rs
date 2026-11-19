@@ -58,12 +58,23 @@ pub fn set_extra_dialog(name: &str, d: Dialog) {
     }
 }
 
-/// A player's conversation: with whom, which dialog, where in it, and which options they see.
+/// A button of the talk: an answer, the next line, going on, or the end.
+#[derive(Clone)]
+enum Btn {
+    Answer(usize),
+    Page(usize),
+    Next(String),
+    End,
+}
+
+/// A player's conversation: with whom, which dialog (its id: answers are remembered by it),
+/// where in it, and which buttons they see.
 struct Session {
     npc: u32,
     dialog: Arc<Dialog>,
+    id: String,
     node: String,
-    shown: Vec<usize>,
+    buttons: Vec<Btn>,
 }
 
 static SESSIONS: LazyLock<Mutex<HashMap<u128, Session>>> = LazyLock::new(Default::default);
@@ -75,11 +86,15 @@ struct Listener;
 impl ServerReloadListener for Listener {
     fn prepare(&self, cx: &ServerReloadContext) -> Result<Box<dyn ReloadApply>, ReloadResourceError> {
         let mut next = HashMap::new();
+        let mut raw = HashMap::new();
         for id in cx.list() {
             let Some(bytes) = cx.read(id) else { continue };
             match dialog::parse(bytes) {
                 Ok(d) => {
                     next.insert(id.to_string(), Arc::new(d));
+                    if let Ok(v) = crate::serde_json::from_slice::<crate::serde_json::Value>(bytes) {
+                        raw.insert(id.to_string(), v);
+                    }
                 }
                 Err(e) => eprintln!("[projectfelix] dialog {id} not loaded: {e}"),
             }
@@ -87,6 +102,9 @@ impl ServerReloadListener for Listener {
         Ok(<dyn ReloadApply>::new(move || {
             if let Ok(mut live) = DIALOGS.lock() {
                 *live = next;
+            }
+            if let Ok(mut r) = RAW.lock() {
+                *r = raw;
             }
         }))
     }
@@ -99,6 +117,14 @@ pub fn add_listener(e: &mut AddServerReloadListenersEvent<'_>) {
     if let Err(err) = e.listeners.add_listener(id, converter, Arc::new(Listener)) {
         eprintln!("[projectfelix] dialog listener not added: {err:?}");
     }
+}
+
+/// The data packs' dialog files as they were, for the dialog editor.
+static RAW: LazyLock<Mutex<HashMap<String, crate::serde_json::Value>>> = LazyLock::new(Default::default);
+
+/// Data pack dialog `id`'s file.
+pub fn raw_dialog(id: &str) -> Option<crate::serde_json::Value> {
+    RAW.lock().ok()?.get(id).cloned()
 }
 
 pub fn dialog_exists(id: &str) -> bool {
@@ -169,6 +195,12 @@ struct PlayerFacts {
     remembers: Vec<String>,
     fault: bool,
     event: String,
+    flags: HashMap<String, String>,
+    dialog: String,
+    biome: String,
+    time: &'static str,
+    weather: &'static str,
+    roll: u32,
 }
 
 impl Facts for PlayerFacts {
@@ -214,9 +246,28 @@ impl Facts for PlayerFacts {
     fn event(&self) -> &str {
         &self.event
     }
+    fn flag(&self, key: &str) -> Option<&str> {
+        self.flags.get(key).map(String::as_str)
+    }
+    fn answer(&self, node: &str) -> Option<&str> {
+        let key = if node.contains(':') { node.to_string() } else { format!("{}:{node}", self.dialog) };
+        self.flags.get(&key).map(String::as_str)
+    }
+    fn biome(&self) -> &str {
+        &self.biome
+    }
+    fn time_of_day(&self) -> &str {
+        self.time
+    }
+    fn weather(&self) -> &str {
+        self.weather
+    }
+    fn roll(&self) -> u32 {
+        self.roll
+    }
 }
 
-fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> PlayerFacts {
+fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: &str) -> PlayerFacts {
     let me = player.entity();
     let tags = me.tags(&*host).unwrap_or_default();
     let mut items = HashMap::new();
@@ -238,7 +289,11 @@ fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> Player
     let (met, remembers) = crate::heart::memory_of(npc.id(), player.uuid());
     let fault = crate::heart::fault_of(npc.id(), player.uuid());
     let event = crate::events::id_at(host, npc).unwrap_or_default();
-    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine, met, remembers, fault, event }
+    let flags = crate::flags::all(host, player);
+    let (biome, time, weather) = crate::flags::surroundings(&*host, player);
+    let now = npc.level(&*host).and_then(|l| l.game_time(&*host)).unwrap_or(0) as u64;
+    let roll = (now.wrapping_mul(2_654_435_761).wrapping_add(u64::from(npc.id()).wrapping_mul(40_503)) >> 7) as u32 % 100;
+    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine, met, remembers, fault, event, flags, dialog: dialog.to_string(), biome, time, weather, roll }
 }
 
 /// A UUID written with dashes, as commands take it.
@@ -280,7 +335,20 @@ fn talk(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
         return;
     };
     let start = dialog.start.clone();
-    enter(host, player, npc, dialog, &start);
+    enter(host, player, npc, dialog, &chosen, &start);
+}
+
+/// The dialog of id `id`: made in the game, an NPC's own, or a data pack's.
+pub fn dialog_named(id: &str) -> Option<Arc<Dialog>> {
+    EXTRA.lock().ok().and_then(|e| e.get(id).cloned()).or_else(|| DIALOGS.lock().ok().and_then(|d| d.get(id).cloned()))
+}
+
+/// Starts dialog `id` (its start) between `player` and NPC `npc`, as if the player had spoken.
+pub fn start_dialog(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, id: &str) -> bool {
+    let Some(d) = dialog_named(id) else { return false };
+    let start = d.start.clone();
+    enter(host, player, npc, d, id, &start);
+    true
 }
 
 fn choose(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
@@ -291,14 +359,33 @@ fn choose(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
         send_close(host, player);
         return;
     };
-    let Some(&index) = session.shown.get(pick as usize) else { return };
-    let Some(choice) = session.dialog.nodes.get(&session.node).and_then(|n| n.options.get(index)).cloned() else { return };
+    let Some(btn) = session.buttons.get(pick as usize).cloned() else { return };
+    let index = match btn {
+        Btn::Page(p) => {
+            show(host, player, npc, session.dialog, &session.id, &session.node, p, 0);
+            return;
+        }
+        Btn::Next(n) => {
+            show(host, player, npc, session.dialog, &session.id, &n, 0, 0);
+            return;
+        }
+        Btn::End => {
+            send_close(host, player);
+            return;
+        }
+        Btn::Answer(i) => i,
+    };
+    let Some(node) = session.dialog.nodes.get(&session.node).cloned() else { return };
+    let Some(choice) = node.options.get(index).cloned() else { return };
     // Things may have changed since the options were shown (an item given away): check again.
-    let f = facts(host, player, npc);
+    let f = facts(host, player, npc, &session.id);
     if !choice.shown(&f) {
-        let node = session.node.clone();
-        enter(host, player, npc, session.dialog, &node);
+        show(host, player, npc, session.dialog, &session.id, &session.node, 0, 0);
         return;
+    }
+    // What the player answered is remembered, for the talks after.
+    if node.options.len() >= 2 && !session.id.is_empty() {
+        crate::flags::set(host, player, &format!("{}:{}", session.id, session.node), &dialog::letter(index));
     }
     // Orders go through its character: it may take its time, or refuse.
     let mut actions = choice.actions.clone();
@@ -317,8 +404,15 @@ fn choose(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
     // A quest board opens in place of this dialog.
     let board = actions.iter().any(|a| matches!(a, Action::Quests(_) | Action::Shop(_) | Action::Trade(_)));
     run_for(host, Some(player), npc, &actions);
+    // Another dialog takes over.
+    if let Some(Action::Dialog(other)) = actions.iter().find(|a| matches!(a, Action::Dialog(_))) {
+        if !start_dialog(host, player, npc, other) {
+            send_close(host, player);
+        }
+        return;
+    }
     match &choice.goto {
-        Some(next) => enter(host, player, npc, session.dialog, next),
+        Some(next) => enter(host, player, npc, session.dialog, &session.id, next),
         None if board => {}
         None => send_close(host, player),
     }
@@ -326,33 +420,96 @@ fn choose(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
 
 /// Shows `player` node `node` of a dialog built on the spot (a quest board), as NPC `npc`'s.
 pub fn open(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Arc<Dialog>, node: &str) {
-    enter(host, player, npc, dialog, node);
+    enter(host, player, npc, dialog, "", node);
 }
 
-fn enter(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Arc<Dialog>, node_name: &str) {
-    let Some(node) = dialog.nodes.get(node_name).cloned() else { return };
-    if let Some(anim) = &node.animation {
-        run_for(host, Some(player), npc, &[Action::Animation(anim.clone())]);
+fn enter(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Arc<Dialog>, id: &str, node_name: &str) {
+    show(host, player, npc, dialog, id, node_name, 0, 0);
+}
+
+/// Shows `player` page `page` of node `node_name` (a branch node sends it on, at most so deep).
+#[allow(clippy::too_many_arguments)]
+fn show(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Arc<Dialog>, id: &str, node_name: &str, page: usize, depth: u8) {
+    let Some(node) = dialog.nodes.get(node_name).cloned() else {
+        send_close(host, player);
+        return;
+    };
+    if page == 0 {
+        if let Some(anim) = &node.animation {
+            run_for(host, Some(player), npc, &[Action::Animation(anim.clone())]);
+        }
+        run_for(host, Some(player), npc, &node.actions);
     }
-    run_for(host, Some(player), npc, &node.actions);
-    let f = facts(host, player, npc);
-    let shown: Vec<usize> = (0..node.options.len()).filter(|i| node.options[*i].shown(&f)).collect();
+    let f = facts(host, player, npc, id);
+    if !node.branch.is_empty() {
+        match dialog::route(&node, &f) {
+            Some(next) if depth < 16 => show(host, player, npc, dialog, id, &next, 0, depth + 1),
+            _ => send_close(host, player),
+        }
+        return;
+    }
+    let extended = crate::flags::extended(&*host, player);
     let name = player.name(&*host).unwrap_or_default();
-    let mut title = npc.name(&*host).unwrap_or_else(|| "NPC".into());
+    let fill_name = npc.name(&*host).unwrap_or_else(|| "NPC".into());
+    let paged = node.paged && node.text.len() > 1;
+    let last = !paged || page + 1 >= node.text.len();
+    let lines: Vec<String> = if paged { node.text.get(page).cloned().into_iter().collect() } else { node.text.clone() };
+    let more = node.more.clone().unwrap_or_else(|| "...".into());
+    let mut buttons = Vec::new();
+    let mut labels = Vec::new();
+    if !last {
+        buttons.push(Btn::Page(page + 1));
+        labels.push(more.clone());
+    } else {
+        for (i, o) in node.options.iter().enumerate().filter(|(_, o)| o.shown(&f)) {
+            let mut label = dialog::fill(&o.text, &name, &fill_name);
+            if extended {
+                let d = dialog::describe(o);
+                if !d.is_empty() {
+                    label = format!("{label}  [{d}]");
+                }
+            }
+            buttons.push(Btn::Answer(i));
+            labels.push(label);
+        }
+        if buttons.is_empty() {
+            match &node.next {
+                Some(n) => {
+                    buttons.push(Btn::Next(n.clone()));
+                    labels.push(if extended { format!("{more}  [> {n}]") } else { more });
+                }
+                None => {
+                    buttons.push(Btn::End);
+                    labels.push("Bye.".into());
+                }
+            }
+        }
+    }
+    // Who it is, and roughly how it stands with the player: no numbers but in the extended view.
+    let mut title = fill_name.clone();
     let level = crate::gear::level_of(host, npc);
-    let fill_name = title.clone();
-    let event_name = crate::events::name_at(host, npc).unwrap_or_else(|| "festival".into());
     if level > 0 {
         title = format!("{title} (level {level})");
     }
+    let word = crate::flags::standing_word(npc.id(), player.uuid());
+    if !word.is_empty() {
+        title = format!("{title} - {word}");
+    }
+    if extended {
+        let rel = crate::heart::relation_of(npc.id(), player.uuid());
+        let mood = crate::heart::mood_of(npc.id());
+        title = format!("{title}  [rel {rel}, {mood}, {}{node_name}{}]", if id.is_empty() { String::new() } else { format!("{id} ") }, if paged { format!(" {}/{}", page + 1, node.text.len()) } else { String::new() });
+    }
+    let event_name = crate::events::name_at(host, npc).unwrap_or_else(|| "festival".into());
+    let upset_by = crate::heart::upset_by_name(npc.id());
     let view = crate::serde_json::json!({
         "npc": npc.id(),
         "title": title,
-        "lines": node.text.iter().map(|t| dialog::fill(t, &name, &fill_name).replace("@upset_by", &crate::heart::upset_by_name(npc.id())).replace("@event", &event_name)).collect::<Vec<_>>(),
-        "options": shown.iter().map(|i| dialog::fill(&node.options[*i].text, &name, &fill_name)).collect::<Vec<_>>(),
+        "lines": lines.iter().map(|t| dialog::fill(t, &name, &fill_name).replace("@upset_by", &upset_by).replace("@event", &event_name)).collect::<Vec<_>>(),
+        "options": labels,
     });
     if let Ok(mut s) = SESSIONS.lock() {
-        s.insert(player.uuid(), Session { npc: npc.id(), dialog, node: node_name.to_string(), shown });
+        s.insert(player.uuid(), Session { npc: npc.id(), dialog, id: id.to_string(), node: node_name.to_string(), buttons });
     }
     let bytes = crate::serde_json::to_vec(&view).unwrap_or_default();
     let _ = player.send_payload(host, &PayloadId(VIEW.into()), PayloadBytes(bytes));
@@ -385,7 +542,26 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
             Action::Order(o) => {
                 companion::set_orders(host, npc, mode_named(o));
             }
-            Action::Feel(event) => crate::heart::feel(host, npc, player, event),
+            Action::Feel(event) => {
+                let before = player.map(|p| crate::heart::relation_of(npc.id(), p.uuid()));
+                crate::heart::feel(host, npc, player, event);
+                if let (Some(p), Some(b)) = (player, before)
+                    && crate::flags::extended(&*host, p)
+                {
+                    crate::flags::tell_change(host, npc, p, b, &format!("feels {event}"));
+                }
+            }
+            Action::Remember(key, value) => {
+                if let Some(p) = player {
+                    crate::flags::set(host, p, key, value);
+                }
+            }
+            Action::Forget(key) => {
+                if let Some(p) = player {
+                    crate::flags::forget(host, p, key);
+                }
+            }
+            Action::Dialog(_) => {}
             Action::News => {
                 if let Some(p) = player {
                     crate::heart::tell_news(host, npc, p);
@@ -439,7 +615,9 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
             }
             Action::Relation(delta) => {
                 if let Some(p) = player {
+                    let before = crate::heart::relation_of(npc.id(), p.uuid());
                     crate::heart::befriend(host, npc, p, *delta);
+                    crate::flags::tell_change(host, npc, p, before, &format!("relation {delta:+}"));
                 }
             }
             Action::Game(kind, vs_npc) => {

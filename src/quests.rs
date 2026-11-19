@@ -247,7 +247,7 @@ fn choice(text: &str, actions: Vec<Action>, goto: Option<&str>) -> Choice {
 }
 
 fn node(text: Vec<String>, options: Vec<Choice>) -> Node {
-    Node { text, animation: None, actions: Vec::new(), options }
+    Node { text, options, ..Node::default() }
 }
 
 /// The `quests` dialog action: what this NPC wants done, or how the player's quest for it goes.

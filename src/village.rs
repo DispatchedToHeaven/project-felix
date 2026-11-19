@@ -125,6 +125,14 @@ impl Village {
         Ok(Village { name: v.get("name").and_then(Value::as_str).unwrap_or("village").to_string(), npcs })
     }
 
+    /// The dialogs made in the game it needs (`felixdialog:…`).
+    pub fn made_dialogs(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.npcs.iter().filter_map(|n| n.dialog.clone()).filter(|d| d.starts_with("felixdialog:")).collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// The characters and scenes made in the game it needs (`felixchar:…`, `felixscene:…`).
     pub fn made_characters(&self) -> Vec<String> {
         let mut out: Vec<String> = self.npcs.iter().filter_map(|n| n.character.clone()).filter(|c| c.starts_with("felixchar:")).collect();

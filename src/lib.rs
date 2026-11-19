@@ -36,6 +36,8 @@
 //! - `event` is the village calendar (no mod API types); `events` gathers NPCs for its days.
 //! - `job` is what NPCs do at work (no mod API types); `jobs` has them farm, fell trees and fish.
 //! - `voice` is how NPCs babble what they say (no mod API types); `voices` gives them theirs.
+//! - `dialog_edit` (no mod API types) and `dialog_editor` are the dialog editor; `dialogs` keeps
+//!   dialogs made in the game; `flags` is the players' talk memory and the extended view.
 //! - `village` is a village as a file (no mod API types); `villages` exports and imports them.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
@@ -60,8 +62,12 @@ pub mod companion;
 pub mod creator;
 pub mod custom;
 pub mod dialog;
+pub mod dialog_edit;
+pub mod dialog_editor;
+pub mod dialogs;
 pub mod editor;
 pub mod event;
+pub mod flags;
 pub mod events;
 pub mod game_screen;
 pub mod games;
@@ -117,6 +123,7 @@ impl Hooks for Felix {
         sports_client::register(r);
         custom::register(r, std::sync::Arc::new(skins::FileHandler), std::sync::Arc::new(creator::OpenHandler));
         char_editor::register(r);
+        dialog_editor::register(r);
         scene_editor::register(r);
     }
 
@@ -166,11 +173,19 @@ impl Hooks for Felix {
         voices::register_commands(e);
         jobs::register_commands(e);
         events::register_commands(e);
+        flags::register_commands(e);
+        dialogs::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = dialogs::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = flags::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = events::run_command(host, e) {
@@ -226,6 +241,7 @@ impl Hooks for Felix {
             heart::level_tick(host);
             gear::level_tick(host);
             villages::level_tick(host);
+            dialogs::level_tick(host);
         }
     }
 
@@ -279,6 +295,10 @@ impl Hooks for Felix {
     }
 
     fn screen_render_post(&self, host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
+        if dialog_editor::active() {
+            dialog_editor::render(host, e);
+            return;
+        }
         if scene_editor::active() {
             scene_editor::render(host, e);
             return;
@@ -300,6 +320,9 @@ impl Hooks for Felix {
     }
 
     fn screen_mouse_button_pressed_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
+        if dialog_editor::active() {
+            return dialog_editor::mouse_pressed(host, e);
+        }
         if scene_editor::active() {
             return scene_editor::mouse_pressed(host, e);
         }
@@ -319,7 +342,9 @@ impl Hooks for Felix {
     }
 
     fn screen_mouse_dragged_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseDraggedPreEvent<'_>) -> Flow {
-        if scene_editor::active() {
+        if dialog_editor::active() {
+            dialog_editor::mouse_dragged(host, e)
+        } else if scene_editor::active() {
             scene_editor::mouse_dragged(host, e)
         } else if char_editor::active() {
             char_editor::mouse_dragged(host, e)
@@ -333,7 +358,9 @@ impl Hooks for Felix {
     }
 
     fn screen_mouse_button_released_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseButtonReleasedPreEvent<'_>) -> Flow {
-        if scene_editor::active() {
+        if dialog_editor::active() {
+            dialog_editor::mouse_released(host)
+        } else if scene_editor::active() {
             scene_editor::mouse_released(host)
         } else if char_editor::active() {
             char_editor::mouse_released(host)
@@ -347,7 +374,9 @@ impl Hooks for Felix {
     }
 
     fn screen_mouse_scrolled_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseScrolledPreEvent<'_>) -> Flow {
-        if scene_editor::active() {
+        if dialog_editor::active() {
+            dialog_editor::mouse_scrolled(host, e.screen.mouse, e.scroll[1] > 0.0)
+        } else if scene_editor::active() {
             scene_editor::mouse_scrolled(host, e.screen.mouse, e.scroll[1] > 0.0)
         } else if char_editor::active() {
             char_editor::mouse_scrolled(host, e.screen.mouse, e.scroll[1] > 0.0)
@@ -361,7 +390,9 @@ impl Hooks for Felix {
     }
 
     fn screen_key_pressed_pre(&self, host: &dyn ClientHost, e: &mut ScreenKeyPressedPreEvent<'_>) -> Flow {
-        if scene_editor::active() {
+        if dialog_editor::active() {
+            dialog_editor::key_pressed(host, e)
+        } else if scene_editor::active() {
             scene_editor::key_pressed(host, e)
         } else if char_editor::active() {
             char_editor::key_pressed(host, e)
@@ -375,7 +406,9 @@ impl Hooks for Felix {
     }
 
     fn screen_char_typed_pre(&self, host: &dyn ClientHost, e: &mut ScreenCharTypedPreEvent<'_>) -> Flow {
-        if scene_editor::active() {
+        if dialog_editor::active() {
+            dialog_editor::char_typed(host, e)
+        } else if scene_editor::active() {
             scene_editor::char_typed(host, e)
         } else if char_editor::active() {
             char_editor::char_typed(host, e)
@@ -395,6 +428,7 @@ impl Hooks for Felix {
         editor::tick(host);
         creator::tick(host);
         char_editor::tick(host);
+        dialog_editor::tick(host);
         scene_editor::tick(host);
         skins::tick(host);
         sports_client::tick(host);
