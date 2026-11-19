@@ -447,6 +447,30 @@ pub fn thresholds(id: u32) -> (i32, i32) {
     c.map_or((30, -50), |c| (c.friend_at, c.hate_at))
 }
 
+/// NPC `npc`'s character, unless it has the default.
+pub fn character_of(host: &mut dyn ServerHost, npc: EntityRef) -> Option<String> {
+    if !load(host, npc) {
+        return None;
+    }
+    STATE.lock().ok()?.live.get(&npc.id())?.heart.character.clone()
+}
+
+/// Keeps a character a village brought as `felixchar:<name>`, unless this world has one.
+pub fn keep_character(host: &mut dyn ServerHost, name: &str, file: Value) -> Result<String, String> {
+    let id = format!("{MADE_PREFIX}{name}");
+    if MADE.lock().is_ok_and(|m| m.characters.contains_key(&id)) {
+        return Ok(id);
+    }
+    let c = character::read(&file)?;
+    let bytes = crate::serde_json::to_vec_pretty(&file).unwrap_or_default();
+    let p = ConfigPath::new(&format!("{MADE_FOLDER}/{name}.json")).map_err(|e| format!("{e:?}"))?;
+    host.data_files().write(&p, &bytes).map_err(|e| format!("{e:?}"))?;
+    if let Ok(mut m) = MADE.lock() {
+        m.characters.insert(id.clone(), (Arc::new(c), file));
+    }
+    Ok(id)
+}
+
 /// A character made in the game, as its file (to go into an NPC's file).
 pub fn made_json(id: &str) -> Option<Value> {
     MADE.lock().ok()?.characters.get(id).map(|x| x.1.clone())

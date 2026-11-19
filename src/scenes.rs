@@ -233,6 +233,26 @@ pub fn level_tick(host: &mut dyn ServerHost) {
     }
 }
 
+/// Every scene made in the game: its name and file.
+pub fn made_all() -> Vec<(String, String)> {
+    MADE.lock().map(|m| m.scenes.iter().map(|(id, (_, t))| (id.trim_start_matches(MADE_PREFIX).to_string(), t.clone())).collect()).unwrap_or_default()
+}
+
+/// Keeps a scene a village brought as `felixscene:<name>`, unless this world has one.
+pub fn keep_scene(host: &mut dyn ServerHost, name: &str, text: &str) -> Result<String, String> {
+    let id = format!("{MADE_PREFIX}{name}");
+    if MADE.lock().is_ok_and(|m| m.scenes.contains_key(&id)) {
+        return Ok(id);
+    }
+    let s = scene::parse(text.as_bytes())?;
+    let p = ConfigPath::new(&format!("{MADE_FOLDER}/{name}.json")).map_err(|e| format!("{e:?}"))?;
+    host.data_files().write(&p, text.as_bytes()).map_err(|e| format!("{e:?}"))?;
+    if let Ok(mut m) = MADE.lock() {
+        m.scenes.insert(id.clone(), (Arc::new(s), text.to_string()));
+    }
+    Ok(id)
+}
+
 pub fn scene_exists(id: &str) -> bool {
     scene_named(id).is_some()
 }

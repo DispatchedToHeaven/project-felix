@@ -173,6 +173,23 @@ pub fn level_tick(host: &mut dyn ServerHost) {
     }
 }
 
+/// NPC file `id`, as kept.
+pub fn profile_file(id: &str) -> Option<Vec<u8>> {
+    SERVER.lock().ok()?.profiles.get(id).map(|x| x.1.to_vec())
+}
+
+/// Takes in an NPC file (a village brought it): kept, unless one of that id is here already.
+pub fn import_profile(host: &mut dyn ServerHost, bytes: &[u8]) -> Result<String, String> {
+    let p = Profile::unpack(bytes, &inflate)?;
+    if SERVER.lock().is_ok_and(|s| s.profiles.contains_key(&p.id)) {
+        return Ok(p.id);
+    }
+    let p = admit(bytes.to_vec())?;
+    let to = path(NPCS, &format!("{}{EXT}", p.id)).ok_or("bad id")?;
+    host.data_files().write(&to, bytes).map_err(|e| format!("{e:?}"))?;
+    Ok(p.id.clone())
+}
+
 /// Summons NPC `id` by `player`, theirs.
 fn summon(host: &mut dyn ServerHost, player: PlayerRef, id: &str) -> Result<u32, String> {
     let p = SERVER.lock().ok().and_then(|s| s.profiles.get(id).map(|x| x.0.clone())).ok_or_else(|| format!("no NPC {id}"))?;

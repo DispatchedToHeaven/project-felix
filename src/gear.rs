@@ -270,6 +270,13 @@ fn apply(host: &mut dyn ServerHost, npc: EntityRef, level: u32) {
     }
 }
 
+/// Sets NPC `npc`'s level (a village brought it).
+pub fn set_level(host: &mut dyn ServerHost, npc: EntityRef, level: u32) {
+    let level = level.min(MAX_LEVEL);
+    let _ = GROWTH.set(host, Holder::Entity(npc.id()), Growth { xp: 0, level });
+    apply(host, npc, level);
+}
+
 /// An NPC's level, for its dialog's title.
 pub fn level_of(host: &mut dyn ServerHost, npc: EntityRef) -> u32 {
     GROWTH.get(host, Holder::Entity(npc.id())).map(|g| g.level).unwrap_or(0)
