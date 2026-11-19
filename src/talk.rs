@@ -201,6 +201,7 @@ struct PlayerFacts {
     time: &'static str,
     weather: &'static str,
     roll: u32,
+    hungry: bool,
 }
 
 impl Facts for PlayerFacts {
@@ -265,6 +266,9 @@ impl Facts for PlayerFacts {
     fn roll(&self) -> u32 {
         self.roll
     }
+    fn hungry(&self) -> bool {
+        self.hungry
+    }
 }
 
 fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: &str) -> PlayerFacts {
@@ -293,7 +297,7 @@ fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: &
     let (biome, time, weather) = crate::flags::surroundings(&*host, player);
     let now = npc.level(&*host).and_then(|l| l.game_time(&*host)).unwrap_or(0) as u64;
     let roll = (now.wrapping_mul(2_654_435_761).wrapping_add(u64::from(npc.id()).wrapping_mul(40_503)) >> 7) as u32 % 100;
-    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine, met, remembers, fault, event, flags, dialog: dialog.to_string(), biome, time, weather, roll }
+    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine, met, remembers, fault, event, flags, dialog: dialog.to_string(), biome, time, weather, roll, hungry: crate::needs::food_of(npc.id()) <= crate::need::HUNGRY }
 }
 
 /// A UUID written with dashes, as commands take it.
@@ -491,14 +495,15 @@ fn show(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Ar
     if level > 0 {
         title = format!("{title} (level {level})");
     }
-    let word = crate::flags::standing_word(npc.id(), player.uuid());
-    if !word.is_empty() {
-        title = format!("{title} - {word}");
+    let food = crate::needs::food_of(npc.id());
+    let words: Vec<&str> = [crate::flags::standing_word(npc.id(), player.uuid()), crate::need::word(food)].into_iter().filter(|w| !w.is_empty()).collect();
+    if !words.is_empty() {
+        title = format!("{title} - {}", words.join(", "));
     }
     if extended {
         let rel = crate::heart::relation_of(npc.id(), player.uuid());
         let mood = crate::heart::mood_of(npc.id());
-        title = format!("{title}  [rel {rel}, {mood}, {}{node_name}{}]", if id.is_empty() { String::new() } else { format!("{id} ") }, if paged { format!(" {}/{}", page + 1, node.text.len()) } else { String::new() });
+        title = format!("{title}  [rel {rel}, {mood}, food {food}, {}{node_name}{}]", if id.is_empty() { String::new() } else { format!("{id} ") }, if paged { format!(" {}/{}", page + 1, node.text.len()) } else { String::new() });
     }
     let event_name = crate::events::name_at(host, npc).unwrap_or_else(|| "festival".into());
     let upset_by = crate::heart::upset_by_name(npc.id());
@@ -562,6 +567,11 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
                 }
             }
             Action::Dialog(_) => {}
+            Action::Feed => {
+                if let Some(p) = player {
+                    crate::needs::feed(host, npc, p);
+                }
+            }
             Action::News => {
                 if let Some(p) = player {
                     crate::heart::tell_news(host, npc, p);

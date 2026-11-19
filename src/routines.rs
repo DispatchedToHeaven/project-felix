@@ -21,8 +21,9 @@ const AWAKE: i64 = 1200;
 const IN_BED: f64 = 2.0;
 /// Ticks between its animation at work.
 const BUSY: i64 = 240;
-/// The entry an NPC is in while at an event (see `events`).
+/// The entry an NPC is in while at an event (see `events`), and out of the rain.
 const EVENT: usize = usize::MAX;
+const SHELTER: usize = usize::MAX - 1;
 pub const SLEEP: &str = "animation.felix.sleep";
 
 pub static ROUTINE: AttachmentType<Option<String>> = AttachmentType {
@@ -132,6 +133,8 @@ struct Day {
     /// The entry's job and place (see `jobs`).
     job: String,
     place: String,
+    /// The bed it sleeps in.
+    bed: Option<[i32; 3]>,
 }
 
 #[derive(Default)]
@@ -139,6 +142,8 @@ struct State {
     last: i64,
     days: HashMap<u32, Day>,
     hurt: Vec<u32>,
+    /// Beds taken, by the NPC in them.
+    beds: HashMap<[i32; 3], u32>,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -228,6 +233,38 @@ fn stop_sleep(host: &mut dyn ServerHost, npc: EntityRef) {
     if ACTION.get(host, Holder::Entity(npc.id())).ok().flatten().is_some_and(|p| p.animation == SLEEP) {
         let _ = ACTION.set(host, Holder::Entity(npc.id()), None);
     }
+    // Out of its bed, which is free again.
+    let had = STATE.lock().map(|mut s| {
+        let before = s.beds.len();
+        s.beds.retain(|_, n| *n != npc.id());
+        if let Some(d) = s.days.get_mut(&npc.id()) {
+            d.bed = None;
+        }
+        before != s.beds.len()
+    });
+    if matches!(had, Ok(true)) {
+        let _ = mod_api::LivingRef::new(npc).stop_sleeping(host);
+    }
+}
+
+/// A free bed (its head) within a few blocks of `at`, for NPC `id`.
+fn free_bed(host: &dyn mod_api::Host, npc: EntityRef, at: [f64; 3]) -> Option<[i32; 3]> {
+    let level = npc.level(host)?;
+    let taken: Vec<[i32; 3]> = STATE.lock().ok()?.beds.iter().filter(|(_, n)| **n != npc.id()).map(|(b, _)| *b).collect();
+    let (bx, by, bz) = (at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32);
+    let mut found = Vec::new();
+    for x in bx - 6..=bx + 6 {
+        for z in bz - 6..=bz + 6 {
+            for y in by - 2..=by + 2 {
+                let p = [x, y, z];
+                let id = level.block(host, p).map(|k| k.id(host)).unwrap_or_default();
+                if id.ends_with("_bed") && level.block_property(host, p, "part").as_deref() == Some("head") && !taken.contains(&p) {
+                    found.push(p);
+                }
+            }
+        }
+    }
+    crate::job::nearest(at, &found)
 }
 
 /// Plays `animation` on NPC `npc` (its work, say).
@@ -366,7 +403,44 @@ pub fn tick(host: &mut dyn ServerHost) {
             continue;
         }
         let (i, e) = r.now(t);
-        let at = place(host, me, &e.place);
+        // Rain: it goes home, unless it sleeps, follows or guards, or is home already.
+        let raining = me.level(&*host).and_then(|l| l.is_raining(&*host)) == Some(true);
+        if raining
+            && matches!(e.doing, Doing::Be | Doing::Play)
+            && e.place != "home"
+            && let Some(home) = place_named(host, me, "home")
+        {
+            if entry != Some(SHELTER) {
+                companion::set_live(host, me, home, LiveDo::Stay);
+                crate::heart::say_aloud(host, me, ["It's raining! I'm going inside.", "Rain! Home I go.", "Brr, wet. Let's get under a roof."][(id as usize) % 3]);
+                if let Ok(mut s) = STATE.lock()
+                    && let Some(d) = s.days.get_mut(&id)
+                {
+                    d.entry = Some(SHELTER);
+                    d.doing = "shelter".into();
+                    d.job.clear();
+                    d.place = "home".into();
+                }
+            }
+            continue;
+        }
+        let mut at = place(host, me, &e.place);
+        // To sleep: in a free bed near its home, if there is one.
+        if e.doing == Doing::Sleep {
+            let bed = match STATE.lock().ok().and_then(|s| s.days.get(&id).and_then(|d| d.bed)) {
+                Some(b) if entry == Some(i) => Some(b),
+                _ => free_bed(&*host, me, at),
+            };
+            if let Some(b) = bed {
+                if let Ok(mut s) = STATE.lock() {
+                    s.beds.insert(b, id);
+                    if let Some(d) = s.days.get_mut(&id) {
+                        d.bed = Some(b);
+                    }
+                }
+                at = [f64::from(b[0]) + 0.5, f64::from(b[1]), f64::from(b[2]) + 0.5];
+            }
+        }
         if entry != Some(i) {
             if asleep {
                 stop_sleep(host, me);
@@ -396,6 +470,9 @@ pub fn tick(host: &mut dyn ServerHost) {
         let near = me.position(&*host).is_some_and(|p| dist(p, at) <= IN_BED);
         match e.doing {
             Doing::Sleep if near && !asleep && now >= woke_until => {
+                if let Some(b) = STATE.lock().ok().and_then(|s| s.days.get(&id).and_then(|d| d.bed)) {
+                    let _ = mod_api::LivingRef::new(me).start_sleeping(host, b);
+                }
                 play(host, me, SLEEP);
                 if let Ok(mut s) = STATE.lock()
                     && let Some(d) = s.days.get_mut(&id)

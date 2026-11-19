@@ -39,7 +39,8 @@
 //! shop id, or `true` for its own), `gear` (`take`: what the player holds; `return`: all of it
 //! back), `stats` (it says its level, health, armour and hits).
 //! `remember` (+ `is`, default `yes`: the player's memory, for later talks and other NPCs),
-//! `forget`, `dialog` (goes on in another dialog, from its start).
+//! `forget`, `dialog` (goes on in another dialog, from its start), `feed` (the player gives it the
+//! best food they have, see `need`). Condition `hungry` (true or false).
 //! `@player` is the player's name; `@npc` is the NPC's name in texts and its UUID in commands.
 //!
 //! Long talks: a node with `"paged": true` says its `text` a line at a time, the player going on
@@ -113,6 +114,7 @@ pub enum Cond {
     Weather(String),
     /// Percent.
     Chance(u32),
+    Hungry(bool),
     Not(Box<Cond>),
     All(Vec<Cond>),
     Any(Vec<Cond>),
@@ -149,6 +151,7 @@ pub enum Action {
     Remember(String, String),
     Forget(String),
     Dialog(String),
+    Feed,
 }
 
 /// What conditions ask about the player and the NPC.
@@ -219,6 +222,10 @@ pub trait Facts {
     fn roll(&self) -> u32 {
         0
     }
+    /// Whether the NPC is hungry.
+    fn hungry(&self) -> bool {
+        false
+    }
 }
 
 /// Whether biome `id` is `want`: the same id, or (a word) a part of its name.
@@ -260,6 +267,7 @@ impl Cond {
                 other => f.weather() == other,
             },
             Cond::Chance(p) => f.roll() < *p,
+            Cond::Hungry(want) => f.hungry() == *want,
             Cond::Not(c) => !c.holds(f),
             Cond::All(list) => list.iter().all(|c| c.holds(f)),
             Cond::Any(list) => list.iter().any(|c| c.holds(f)),
@@ -310,6 +318,7 @@ pub fn describe_cond(c: &Cond) -> String {
         Cond::Time(t) => t.clone(),
         Cond::Weather(w) => w.clone(),
         Cond::Chance(p) => format!("{p}%"),
+        Cond::Hungry(b) => if *b { "hungry".into() } else { "not hungry".into() },
         Cond::Not(c) => format!("not ({})", describe_cond(c)),
         Cond::All(l) => l.iter().map(describe_cond).collect::<Vec<_>>().join(" and "),
         Cond::Any(l) => l.iter().map(describe_cond).collect::<Vec<_>>().join(" or "),
@@ -357,7 +366,7 @@ pub fn commands(action: &Action, player: &str, npc: &str) -> Vec<String> {
         Action::Tag(t) => vec![format!("tag {player} add {t}")],
         Action::Untag(t) => vec![format!("tag {player} remove {t}")],
         Action::Sound(s) => vec![format!("execute as {npc} at @s run playsound {s} neutral @a ~ ~ ~")],
-        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Place(_) | Action::Shop(_) | Action::Trade(_) | Action::Gear(_) | Action::Stats | Action::Remember(..) | Action::Forget(_) | Action::Dialog(_) => Vec::new(),
+        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Place(_) | Action::Shop(_) | Action::Trade(_) | Action::Gear(_) | Action::Stats | Action::Remember(..) | Action::Forget(_) | Action::Dialog(_) | Action::Feed => Vec::new(),
     }
 }
 
@@ -485,6 +494,8 @@ pub fn read_cond(v: &Value) -> Result<Cond, String> {
         Ok(Cond::Weather(w))
     } else if let Some(p) = m.get("chance").and_then(Value::as_f64) {
         Ok(Cond::Chance(p.clamp(0.0, 100.0) as u32))
+    } else if let Some(b) = m.get("hungry").and_then(Value::as_bool) {
+        Ok(Cond::Hungry(b))
     } else if let Some(n) = m.get("not") {
         Ok(Cond::Not(Box::new(read_cond(n)?)))
     } else if let Some(all) = list("all")? {
@@ -562,6 +573,8 @@ pub fn read_actions(v: Option<&Value>) -> Result<Vec<Action>, String> {
                 Action::Forget(k)
             } else if let Some(d) = s("dialog") {
                 Action::Dialog(d)
+            } else if m.contains_key("feed") {
+                Action::Feed
             } else {
                 return Err(format!("unknown action {a}"));
             })

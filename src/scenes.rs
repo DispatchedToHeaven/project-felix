@@ -168,7 +168,7 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, id: &str, player: Option
     let mut cast = Vec::new();
     for (role, (_, e)) in scene.cast.iter().zip(free) {
         let mode = ORDERS.get(host, Holder::Entity(e.id())).map(|o| o.mode).unwrap_or_default();
-        companion::set_orders(host, e, Mode::Wait);
+        companion::hold(host, e, mode);
         let p = scene::place_of(at, yaw, role.offset);
         let p = npc.level(&*host).map_or(p, |l| crate::villages::stand_at(&*host, l, p));
         if let Some(u) = e.uuid(host) {
@@ -177,7 +177,7 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, id: &str, player: Option
         cast.push((role.name.clone(), e.id(), mode));
     }
     let restore = ORDERS.get(host, Holder::Entity(npc.id())).map(|o| o.mode).unwrap_or_default();
-    companion::set_orders(host, npc, Mode::Wait);
+    companion::hold(host, npc, restore);
     let playing = Playing { id: id.to_string(), start: time, yaw, json };
     SCENE.set(host, Holder::Entity(npc.id()), Some(playing)).map_err(|e| format!("{e:?}"))?;
     let ends = time + (scene.length * 20.0).ceil() as i64;
@@ -220,10 +220,10 @@ pub fn level_tick(host: &mut dyn ServerHost) {
             continue;
         }
         let _ = SCENE.set(host, Holder::Entity(s.npc), None);
-        companion::set_orders(host, npc, s.restore);
+        companion::release(host, npc, s.restore);
         for (_, id, mode) in &s.cast {
             if let Some(e) = host.entity(*id) {
-                companion::set_orders(host, e, *mode);
+                companion::release(host, e, *mode);
             }
         }
         crate::talk::run_for(host, s.player, npc, &s.end);

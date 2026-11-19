@@ -863,7 +863,8 @@ pub fn order(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef, mode:
     };
     let player_name = player.name(&*host).unwrap_or_default();
     let m = c.mood(&mood).clone();
-    if random() >= c.obey_chance(&mood, value) {
+    // Hungry, it obeys worse (see `needs`).
+    if random() >= c.obey_chance(&mood, value) * crate::needs::obey_factor(npc.id()) {
         let line = pick(&m.refuse).cloned().unwrap_or_else(|| "No.".into());
         say(host, npc, &name, &fill(&line, &player_name, &name, ""));
         if let Some(a) = &m.animation {

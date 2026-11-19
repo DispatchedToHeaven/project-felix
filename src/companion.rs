@@ -87,6 +87,44 @@ pub static ORDERS: AttachmentType<Orders> = AttachmentType {
     sync: true,
 };
 
+/// The orders an NPC goes back to after a game, a match or a scene that holds it still. Kept with
+/// it, so a world closed during one doesn't leave it waiting for good.
+pub static HELD: AttachmentType<Option<Mode>> = AttachmentType {
+    namespace: "projectfelix",
+    name: "held",
+    default: || None,
+    codec: Some(AttachmentCodec {
+        encode: |m| {
+            let mut c = Compound::new();
+            if let Some(m) = m {
+                c.insert("mode".into(), Tag::Byte(m.byte() as i8));
+            }
+            Ok(c)
+        },
+        decode: |c: &Compound| match c.get(&"mode".into()) {
+            Some(Tag::Byte(b)) => Ok(Some(Mode::from_byte(*b as u8))),
+            _ => Ok(None),
+        },
+    }),
+    copy_on_death: false,
+    sync: false,
+};
+
+/// Holds NPC `npc` still (for a game, a match, a scene): its orders are kept to go back to.
+pub fn hold(host: &mut dyn ServerHost, npc: EntityRef, restore: Mode) {
+    if HELD.get(host, Holder::Entity(npc.id())).ok().flatten().is_none() {
+        let _ = HELD.set(host, Holder::Entity(npc.id()), Some(restore));
+    }
+    set_orders(host, npc, Mode::Wait);
+}
+
+/// Lets NPC `npc` go back to the orders it had (else `restore`).
+pub fn release(host: &mut dyn ServerHost, npc: EntityRef, restore: Mode) {
+    let restore = HELD.get(host, Holder::Entity(npc.id())).ok().flatten().unwrap_or(restore);
+    let _ = HELD.set(host, Holder::Entity(npc.id()), None);
+    set_orders(host, npc, restore);
+}
+
 /// How an NPC looks: its model (`projectfelix:felix`) and texture (`projectfelix:entity/felix`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Look {
@@ -237,7 +275,13 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         if host.entity(id).is_none() {
             continue;
         }
-        let Ok(o) = ORDERS.get(host, Holder::Entity(id)) else { continue };
+        let Ok(mut o) = ORDERS.get(host, Holder::Entity(id)) else { continue };
+        // Held when its world was closed: what held it is gone, so it goes back.
+        if let Some(m) = HELD.get(host, Holder::Entity(id)).ok().flatten() {
+            o.mode = m;
+            let _ = ORDERS.set(host, Holder::Entity(id), o);
+            let _ = HELD.set(host, Holder::Entity(id), None);
+        }
         if let Ok(mut s) = SERVER.lock() {
             s.orders.insert(id, o);
         }

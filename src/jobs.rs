@@ -184,12 +184,17 @@ fn find_chest(host: &mut dyn ServerHost, npc: EntityRef, level: LevelRef) -> Opt
         Some(p) => (p, 3),
         None => (crate::routines::place_named(host, npc, "work")?, 6),
     };
+    chest_near(&*host, level, at, r)
+}
+
+/// The chest or barrel nearest `at`, within `r` blocks sideways (two up and down).
+pub fn chest_near(host: &dyn mod_api::Host, level: LevelRef, at: [f64; 3], r: i32) -> Option<[i32; 3]> {
     let (bx, by, bz) = (at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32);
     let mut found = Vec::new();
     for x in bx - r..=bx + r {
         for z in bz - r..=bz + r {
             for y in by - 2..=by + 2 {
-                if matches!(block_at(&*host, level, [x, y, z]).as_str(), "minecraft:chest" | "minecraft:trapped_chest" | "minecraft:barrel") {
+                if matches!(block_at(host, level, [x, y, z]).as_str(), "minecraft:chest" | "minecraft:trapped_chest" | "minecraft:barrel") {
                     found.push([x, y, z]);
                 }
             }

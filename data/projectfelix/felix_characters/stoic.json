@@ -40,7 +40,8 @@
             "below": -30
           }
         ],
-        "friend_killed": "upset"
+        "friend_killed": "upset",
+        "hungry": "upset"
       },
       "chatter": [
         "@listener.",

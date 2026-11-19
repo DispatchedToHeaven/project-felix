@@ -240,7 +240,7 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, kind: GameKind, player: 
     let at = npc.position(&*host).ok_or("no NPC")?;
     let yaw = player.entity().position(&*host).map(|p| crate::scene::yaw_towards(at, p)).unwrap_or(0.0);
     let restore = ORDERS.get(host, Holder::Entity(npc.id())).map(|o| o.mode).unwrap_or_default();
-    companion::set_orders(host, npc, Mode::Wait);
+    companion::hold(host, npc, restore);
     let board = match kind {
         GameKind::Chess => Board::Chess(chess::Position::start()),
         GameKind::Checkers => Board::Checkers(checkers::Position::start()),
@@ -325,8 +325,8 @@ pub fn start_npcs(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef, kind: G
     if let Some(u) = b.uuid(host) {
         crate::talk::queue(format!("tp {} {:.2} {:.2} {:.2} {:.1} 0", crate::talk::uuid_text(u), spot[0], spot[1], spot[2], yaw + 180.0));
     }
-    companion::set_orders(host, a, Mode::Wait);
-    companion::set_orders(host, b, Mode::Wait);
+    companion::hold(host, a, restore);
+    companion::hold(host, b, restore_b);
     let board = match kind {
         GameKind::Chess => Board::Chess(chess::Position::start()),
         GameKind::Checkers => Board::Checkers(checkers::Position::start()),
@@ -565,11 +565,11 @@ pub fn level_tick(host: &mut dyn ServerHost) {
             }
             Step::Finish(restore, other) => {
                 let _ = TABLE.set(host, Holder::Entity(id), None);
-                companion::set_orders(host, npc, restore);
+                companion::release(host, npc, restore);
                 if let Some((o, m)) = other
                     && let Some(e) = host.entity(o)
                 {
-                    companion::set_orders(host, e, m);
+                    companion::release(host, e, m);
                 }
             }
         }

@@ -131,8 +131,8 @@ pub fn start_npcs(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef, sport: 
     let now = now_of(&*host, a);
     let restore = ORDERS.get(host, Holder::Entity(a.id())).map(|o| o.mode).unwrap_or_default();
     let restore_b = ORDERS.get(host, Holder::Entity(b.id())).map(|o| o.mode).unwrap_or_default();
-    companion::set_orders(host, a, Mode::Wait);
-    companion::set_orders(host, b, Mode::Wait);
+    companion::hold(host, a, restore);
+    companion::hold(host, b, restore_b);
     let r = yaw.to_radians();
     let d = sport.distance() as f64;
     let spot = [at[0] - r.sin() as f64 * d, at[1], at[2] + r.cos() as f64 * d];
@@ -161,7 +161,7 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, sport: Sport, player: Pl
     let yaw = crate::scene::yaw_towards(at, p);
     let now = now_of(&*host, npc);
     let restore = ORDERS.get(host, Holder::Entity(npc.id())).map(|o| o.mode).unwrap_or_default();
-    companion::set_orders(host, npc, Mode::Wait);
+    companion::hold(host, npc, restore);
     // The player's place: `distance` ahead of the NPC as it faces, turned back towards it.
     let r = yaw.to_radians();
     let d = sport.distance() as f64;
@@ -228,11 +228,11 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         react(host, npc, events, now);
         if let Some((restore, opp)) = finish {
             let _ = SPORT.set(host, Holder::Entity(id), None);
-            companion::set_orders(host, npc, restore);
+            companion::release(host, npc, restore);
             if let Opp::Npc(o, m) = opp
                 && let Some(e) = host.entity(o)
             {
-                companion::set_orders(host, e, m);
+                companion::release(host, e, m);
             }
         } else {
             sync(host, npc);

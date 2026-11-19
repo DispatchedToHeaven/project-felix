@@ -57,7 +57,8 @@
         "woken": "upset",
         "won_game": "happy",
         "lost_game": "upset",
-        "level_up": "happy"
+        "level_up": "happy",
+        "hungry": "upset"
       },
       "chatter": [
         "Nice day, isn't it, @listener?",

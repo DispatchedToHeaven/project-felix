@@ -34,6 +34,7 @@
 //!   editor in the world: the stage from above, the roles, the timeline.
 //! - `speech` shows what NPCs say over their heads (and copies some of it to chat).
 //! - `event` is the village calendar (no mod API types); `events` gathers NPCs for its days.
+//! - `need` is NPCs' food (no mod API types); `needs` feeds them and has them say when hungry.
 //! - `job` is what NPCs do at work (no mod API types); `jobs` has them farm, fell trees and fish.
 //! - `voice` is how NPCs babble what they say (no mod API types); `voices` gives them theirs.
 //! - `dialog_edit` (no mod API types) and `dialog_editor` are the dialog editor; `dialogs` keeps
@@ -75,6 +76,8 @@ pub mod game_screen;
 pub mod games;
 pub mod gear;
 pub mod heart;
+pub mod need;
+pub mod needs;
 pub mod job;
 pub mod jobs;
 pub mod geo;
@@ -182,11 +185,15 @@ impl Hooks for Felix {
         flags::register_commands(e);
         dialogs::register_commands(e);
         rulesets::register_commands(e);
+        needs::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = needs::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = rulesets::run_command(host, e) {
@@ -263,6 +270,7 @@ impl Hooks for Felix {
             routines::tick(host);
             jobs::tick(host);
             events::tick(host);
+            needs::tick(host);
             shops::tick(host);
             speech::tick(host);
             rulebook::tick(host);

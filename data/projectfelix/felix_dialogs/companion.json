@@ -195,6 +195,17 @@
           ]
         },
         {
+          "text": "Here, eat something.",
+          "if": {
+            "hungry": true
+          },
+          "actions": [
+            {
+              "feed": true
+            }
+          ]
+        },
+        {
           "text": "What's on today?",
           "if": {
             "event": "any"
