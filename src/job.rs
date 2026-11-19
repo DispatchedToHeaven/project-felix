@@ -3,6 +3,7 @@
 //! - `farm`: it harvests ripe wheat, carrots, potatoes and beetroots, and sows them again.
 //! - `wood`: it fells the trees there (a trunk standing on the ground), and plants a sapling.
 //! - `fish`: by water, it fishes now and then (the game's fishing loot).
+//! - `build`: it builds the plan it was given (see `plan`, `/felix build`), from its chest.
 //!
 //! What it gets goes in its chest: the chest (or barrel) nearest its `chest` place, else its
 //! `work` place. Its shop, if it has one, sells from that chest: the goods come from its work.
@@ -14,9 +15,10 @@ pub enum Job {
     Farm,
     Wood,
     Fish,
+    Build,
 }
 
-pub const JOBS: &[Job] = &[Job::Farm, Job::Wood, Job::Fish];
+pub const JOBS: &[Job] = &[Job::Farm, Job::Wood, Job::Fish, Job::Build];
 
 impl Job {
     pub fn parse(s: &str) -> Option<Job> {
@@ -24,6 +26,7 @@ impl Job {
             "farm" | "farmer" => Some(Job::Farm),
             "wood" | "woodcutter" | "lumberjack" => Some(Job::Wood),
             "fish" | "fisher" | "fisherman" => Some(Job::Fish),
+            "build" | "builder" => Some(Job::Build),
             _ => None,
         }
     }
@@ -33,6 +36,7 @@ impl Job {
             Job::Farm => "farm",
             Job::Wood => "wood",
             Job::Fish => "fish",
+            Job::Build => "build",
         }
     }
 
@@ -42,6 +46,7 @@ impl Job {
             Job::Farm => 30,
             Job::Wood => 160,
             Job::Fish => 500,
+            Job::Build => 10,
         }
     }
 
@@ -51,6 +56,7 @@ impl Job {
             Job::Farm => &["A fine crop this year.", "In they go again.", "Ripe and ready!"],
             Job::Wood => &["Timber!", "Another one down.", "A sapling for the next one."],
             Job::Fish => &["Got one!", "They're biting today.", "Quiet water, good fishing."],
+            Job::Build => &["Measure twice, cut once.", "Coming along nicely."],
         }
     }
 }

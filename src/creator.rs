@@ -311,6 +311,7 @@ impl Creator {
             "farm" => "farm (harvests and sows)".into(),
             "wood" => "wood (fells trees, plants saplings)".into(),
             "fish" => "fish (by water)".into(),
+            "build" => "build (/felix build: a plan)".into(),
             j => j.to_string(),
         }
     }

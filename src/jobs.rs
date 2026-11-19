@@ -106,6 +106,7 @@ fn scan(host: &dyn mod_api::Host, level: LevelRef, job: Job, at: [f64; 3]) -> Ve
                     Job::Farm => job::ripe(&id, level.block_property(host, p, "age").and_then(|a| a.parse().ok())).is_some(),
                     Job::Wood => job::is_log(&id) && job::is_soil(&block_at(host, level, [x, y - 1, z])),
                     Job::Fish => id == "minecraft:water" && block_at(host, level, [x, y + 1, z]) == "minecraft:air",
+                    Job::Build => false,
                 };
                 if found {
                     out.push(p);
@@ -123,6 +124,7 @@ fn still(host: &dyn mod_api::Host, level: LevelRef, job: Job, p: [i32; 3]) -> bo
         Job::Farm => job::ripe(&id, level.block_property(host, p, "age").and_then(|a| a.parse().ok())).is_some(),
         Job::Wood => job::is_log(&id),
         Job::Fish => id == "minecraft:water",
+        Job::Build => false,
     }
 }
 
@@ -168,6 +170,7 @@ fn act(host: &mut dyn ServerHost, me: EntityRef, level: LevelRef, job: Job, t: [
             }
             got
         }
+        Job::Build => Vec::new(),
         Job::Fish => {
             let at = center(t);
             let _ = level.play_sound(host, "minecraft:entity.fishing_bobber.splash", [at[0], at[1] + 1.0, at[2]], SoundSource::Neutral, 0.6, 1.0);
@@ -287,6 +290,11 @@ fn dist_xz(a: [f64; 3], b: [f64; 3]) -> f64 {
 
 /// One NPC's work this step.
 fn work(host: &mut dyn ServerHost, me: EntityRef, job: Job, place: &str) {
+    // A builder builds its site (see `builds`).
+    if job == Job::Build {
+        crate::builds::work(host, me);
+        return;
+    }
     let id = me.id();
     let Some(level) = me.level(&*host) else { return };
     let (Some(now), Some(pos)) = (level.game_time(&*host), me.position(&*host)) else { return };
@@ -390,7 +398,7 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
     }
     let name = companion::text_argument(e, "job").unwrap_or_default();
     let line = if name != "none" && Job::parse(&name).is_none() {
-        "Jobs: farm, wood, fish, none. An NPC works at its day's work, about its work place.".to_string()
+        "Jobs: farm, wood, fish, build, none. An NPC works at its day's work, about its work place.".to_string()
     } else {
         let npcs: Vec<EntityRef> = e
             .command

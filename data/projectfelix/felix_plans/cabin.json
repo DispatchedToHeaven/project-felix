@@ -1,0 +1,20 @@
+{
+  "name": "cabin",
+  "palette": {
+    "P": "minecraft:oak_planks",
+    "L": "minecraft:oak_log[axis=y]",
+    "G": "minecraft:glass_pane",
+    "D": "minecraft:oak_door[facing=north,half=lower,hinge=left]",
+    "d": "minecraft:oak_door[facing=north,half=upper,hinge=left]",
+    "S": "minecraft:oak_slab[type=bottom]",
+    "T": "minecraft:torch",
+    ".": "minecraft:air"
+  },
+  "layers": [
+    [ "PPPPP", "PPPPP", "PPPPP", "PPPPP", "PPPPP" ],
+    [ "LPPPL", "PT..P", "P...P", "P...P", "LPDPL" ],
+    [ "LPGPL", "P...P", "G...G", "P...P", "LPdPL" ],
+    [ "LPPPL", "P...P", "P...P", "P...P", "LPPPL" ],
+    [ "SSSSS", "SSSSS", "SSSSS", "SSSSS", "SSSSS" ]
+  ]
+}

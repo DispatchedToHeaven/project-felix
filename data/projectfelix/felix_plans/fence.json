@@ -1,0 +1,7 @@
+{
+  "name": "fence",
+  "palette": { "F": "minecraft:oak_fence", "G": "minecraft:oak_fence_gate[facing=south]" },
+  "layers": [
+    [ "FFFFFFF", "F     F", "F     F", "F     F", "F     F", "F     F", "FFFGFFF" ]
+  ]
+}

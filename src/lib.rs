@@ -35,6 +35,7 @@
 //! - `speech` shows what NPCs say over their heads (and copies some of it to chat).
 //! - `event` is the village calendar (no mod API types); `events` gathers NPCs for its days.
 //! - `need` is NPCs' food (no mod API types); `needs` feeds them and has them say when hungry.
+//! - `plan` is a building plan (no mod API types); `builds` has builders build them.
 //! - `job` is what NPCs do at work (no mod API types); `jobs` has them farm, fell trees and fish.
 //! - `voice` is how NPCs babble what they say (no mod API types); `voices` gives them theirs.
 //! - `dialog_edit` (no mod API types) and `dialog_editor` are the dialog editor; `dialogs` keeps
@@ -55,6 +56,7 @@ pub use mod_api::serde_json;
 
 pub mod anim;
 pub mod anim_edit;
+pub mod builds;
 pub mod checkers;
 pub mod chess;
 pub mod animations;
@@ -89,6 +91,7 @@ pub mod profile;
 pub mod quest;
 pub mod quests;
 pub mod molang;
+pub mod plan;
 pub mod npc;
 pub mod routine;
 pub mod routines;
@@ -153,6 +156,7 @@ impl Hooks for Felix {
         routines::add_listener(e);
         shops::add_listener(e);
         events::add_listener(e);
+        builds::add_listener(e);
     }
 
     fn register_gui_layers(&self, _cx: &RegistrationContext, e: &mut RegisterGuiLayersEvent<'_>) {
@@ -186,11 +190,15 @@ impl Hooks for Felix {
         dialogs::register_commands(e);
         rulesets::register_commands(e);
         needs::register_commands(e);
+        builds::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = builds::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = needs::run_command(host, e) {
@@ -260,6 +268,7 @@ impl Hooks for Felix {
             villages::level_tick(host);
             dialogs::level_tick(host);
             rulesets::level_tick(host);
+            builds::level_tick(host);
         }
     }
 

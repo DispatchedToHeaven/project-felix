@@ -1,0 +1,8 @@
+{
+  "name": "path",
+  "sink": 1,
+  "palette": { "P": "minecraft:dirt_path" },
+  "layers": [
+    [ "PPP", "PPP", "PPP", "PPP", "PPP", "PPP", "PPP", "PPP", "PPP" ]
+  ]
+}
