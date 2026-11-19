@@ -33,6 +33,7 @@
 //! - `scene_edit` is a scene as its editor holds it (no mod API types); `scene_editor` is the scene
 //!   editor in the world: the stage from above, the roles, the timeline.
 //! - `speech` shows what NPCs say over their heads (and copies some of it to chat).
+//! - `event` is the village calendar (no mod API types); `events` gathers NPCs for its days.
 //! - `job` is what NPCs do at work (no mod API types); `jobs` has them farm, fell trees and fish.
 //! - `voice` is how NPCs babble what they say (no mod API types); `voices` gives them theirs.
 //! - `village` is a village as a file (no mod API types); `villages` exports and imports them.
@@ -60,6 +61,8 @@ pub mod creator;
 pub mod custom;
 pub mod dialog;
 pub mod editor;
+pub mod event;
+pub mod events;
 pub mod game_screen;
 pub mod games;
 pub mod gear;
@@ -133,6 +136,7 @@ impl Hooks for Felix {
         quests::add_listener(e);
         routines::add_listener(e);
         shops::add_listener(e);
+        events::add_listener(e);
     }
 
     fn register_gui_layers(&self, _cx: &RegistrationContext, e: &mut RegisterGuiLayersEvent<'_>) {
@@ -161,11 +165,15 @@ impl Hooks for Felix {
         villages::register_commands(e);
         voices::register_commands(e);
         jobs::register_commands(e);
+        events::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = events::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = jobs::run_command(host, e) {
@@ -227,6 +235,7 @@ impl Hooks for Felix {
             quests::tick(host);
             routines::tick(host);
             jobs::tick(host);
+            events::tick(host);
             shops::tick(host);
             speech::tick(host);
             rulebook::tick(host);

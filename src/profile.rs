@@ -240,6 +240,7 @@ pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
         json!({ "text": "Have an apple.", "if": { "item": "minecraft:apple" }, "actions": [ { "take": "minecraft:apple" }, { "feel": "gift" } ], "goto": "thanks" }),
         json!({ "text": "I'm sorry.", "if": { "all": [ { "not": fine }, { "fault": true } ] }, "actions": [ { "feel": "apology" } ], "goto": "sorry" }),
         json!({ "text": "Who upset you?", "if": { "all": [ { "not": fine }, { "fault": false } ] }, "goto": "not_you" }),
+        json!({ "text": "What's on today?", "if": { "event": "any" }, "goto": "event_today" }),
         json!({ "text": "Heard any news?", "actions": [ { "news": true } ] }),
     ];
     let again = json!([ { "text": "Something else...", "goto": back }, { "text": "Bye." } ]);
@@ -248,6 +249,7 @@ pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
         ("feel_bad".to_string(), json!({ "text": "Not great, @player. Not great at all.", "options": again })),
         ("thanks".to_string(), json!({ "text": "For me? Thank you!", "options": again })),
         ("sorry".to_string(), json!({ "text": "...All right. Let's forget it.", "options": again })),
+        ("event_today".to_string(), json!({ "text": "It's the @event, @player! Everyone's here. Come and join us.", "options": again })),
         ("not_you".to_string(), json!({ "text": "It's not you, @player. @upset_by can say sorry, not you.", "options": again })),
     ];
     (options, nodes)

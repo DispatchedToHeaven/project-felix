@@ -1,0 +1,11 @@
+{
+  "title": "Flowers for the fair",
+  "bring": "minecraft:dandelion",
+  "count": 8,
+  "offer": "The square needs flowers, @player. Bring me 8 dandelions?",
+  "progress": "How are the flowers coming, @player?",
+  "done": "Lovely! The square looks like a fair now.",
+  "fail": "No flowers this year, then.",
+  "reward": [ { "give": "minecraft:emerald", "count": 2 }, { "give": "minecraft:cake", "count": 1 } ],
+  "repeat": true
+}

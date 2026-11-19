@@ -1,0 +1,11 @@
+{
+  "title": "Pies for the fair",
+  "bring": "minecraft:pumpkin_pie",
+  "count": 2,
+  "offer": "We're short of pies for the fair, @player. Could you bring 2?",
+  "progress": "Any pies yet, @player? The fair won't wait.",
+  "done": "Pies! The fair is saved. Thank you, @player!",
+  "fail": "No pies, then. Never mind.",
+  "reward": [ { "give": "minecraft:emerald", "count": 4 } ],
+  "repeat": true
+}

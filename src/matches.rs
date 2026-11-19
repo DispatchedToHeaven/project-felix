@@ -136,6 +136,8 @@ pub fn start_npcs(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef, sport: 
     let r = yaw.to_radians();
     let d = sport.distance() as f64;
     let spot = [at[0] - r.sin() as f64 * d, at[1], at[2] + r.cos() as f64 * d];
+    // On the ground, not in a tree or a wall.
+    let spot = a.level(&*host).map_or(spot, |l| crate::villages::stand_at(&*host, l, spot));
     if let Some(u) = b.uuid(host) {
         crate::talk::queue(format!("tp {} {:.2} {:.2} {:.2} {:.1} 0", crate::talk::uuid_text(u), spot[0], spot[1], spot[2], yaw + 180.0));
     }
@@ -164,6 +166,8 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, sport: Sport, player: Pl
     let r = yaw.to_radians();
     let d = sport.distance() as f64;
     let spot = [at[0] - r.sin() as f64 * d, at[1], at[2] + r.cos() as f64 * d];
+    // On the ground, not in a tree or a wall.
+    let spot = npc.level(&*host).map_or(spot, |l| crate::villages::stand_at(&*host, l, spot));
     let name = player.name(&*host).unwrap_or_default();
     crate::talk::queue(format!("tp {name} {:.2} {:.2} {:.2} {:.1} 8", spot[0], spot[1], spot[2], yaw + 180.0));
     let seed = now as u64 ^ (npc.id() as u64) << 20 ^ 0x9E37_79B9_7F4A_7C15;

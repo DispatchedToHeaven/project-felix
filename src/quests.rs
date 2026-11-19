@@ -209,6 +209,8 @@ fn fill(text: &str, player: &str, npc: &str) -> String {
 fn offered(host: &mut dyn ServerHost, npc: EntityRef, listed: &[String]) -> Vec<String> {
     let mut ids: Vec<String> = GIVES.get(host, Holder::Entity(npc.id())).ok().flatten().unwrap_or_default().split_whitespace().map(str::to_string).collect();
     ids.extend(listed.iter().cloned());
+    // The quests of the event it is at.
+    ids.extend(crate::events::quests_for(host, npc));
     if let Some(d) = crate::talk::DIALOG.get(host, Holder::Entity(npc.id())).ok().flatten()
         && let Some(own) = EXTRA.lock().ok().and_then(|e| e.1.get(&d).cloned())
     {

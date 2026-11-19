@@ -1,0 +1,19 @@
+{
+  "length": 16,
+  "cast": [
+    { "role": "left", "offset": [ -2, 0, 2 ], "turn": 200 },
+    { "role": "right", "offset": [ 2, 0, 2 ], "turn": 160 },
+    { "role": "back", "offset": [ 0, 0, 3.5 ], "turn": 180 }
+  ],
+  "timeline": [
+    { "at": 0.5, "who": "lead", "say": "Welcome, everyone, to the harvest fair!", "animation": "animation.felix.wave" },
+    { "at": 3, "who": "left", "say": "Hooray!", "animation": "animation.felix.cheer" },
+    { "at": 3.5, "who": "right", "animation": "animation.felix.cheer" },
+    { "at": 4, "who": "back", "say": "The best crops in years!", "animation": "animation.felix.cheer" },
+    { "at": 7, "who": "lead", "say": "Pies, flowers, and the lowest prices of the year!" },
+    { "at": 10, "who": "right", "say": "Let's dance!", "animation": "animation.felix.cheer" },
+    { "at": 11, "who": "left", "animation": "animation.felix.cheer" },
+    { "at": 11.5, "who": "back", "animation": "animation.felix.wave" },
+    { "at": 13.5, "who": "lead", "say": "Enjoy the fair!", "animation": "animation.felix.wave" }
+  ]
+}

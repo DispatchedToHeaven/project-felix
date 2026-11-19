@@ -1,0 +1,14 @@
+{
+  "name": "harvest fair",
+  "every": 7,
+  "day": 6,
+  "from": "10:00",
+  "until": "16:00",
+  "place": "meet",
+  "scene": "projectfelix:fair",
+  "scene_after": 20,
+  "say": [ "The harvest fair is on!", "To the fair!", "I wouldn't miss the fair." ],
+  "animation": "animation.felix.cheer",
+  "prices": 0.75,
+  "quests": [ "projectfelix:fair_pies", "projectfelix:fair_flowers" ]
+}

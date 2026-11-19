@@ -21,6 +21,8 @@ const AWAKE: i64 = 1200;
 const IN_BED: f64 = 2.0;
 /// Ticks between its animation at work.
 const BUSY: i64 = 240;
+/// The entry an NPC is in while at an event (see `events`).
+const EVENT: usize = usize::MAX;
 pub const SLEEP: &str = "animation.felix.sleep";
 
 pub static ROUTINE: AttachmentType<Option<String>> = AttachmentType {
@@ -331,6 +333,38 @@ pub fn tick(host: &mut dyn ServerHost) {
         }
         let Some(r) = rid.as_deref().and_then(routine_named) else { continue };
         let Some(t) = me.level(&*host).and_then(|l| l.day_time(&*host)) else { continue };
+        // An event on: it goes there, whatever its day has it do.
+        if let Some(g) = crate::events::gathering(host, me) {
+            if entry != Some(EVENT) {
+                if asleep {
+                    stop_sleep(host, me);
+                }
+                companion::set_live(host, me, g.spot, LiveDo::Stay);
+                if let Some(line) = &g.say {
+                    crate::heart::say_aloud(host, me, line);
+                }
+                crate::rulebook::notice(id, "starts:event", None);
+                if let Ok(mut s) = STATE.lock()
+                    && let Some(d) = s.days.get_mut(&id)
+                {
+                    d.entry = Some(EVENT);
+                    d.doing = "event".into();
+                    d.job.clear();
+                    d.place.clear();
+                    d.asleep = false;
+                }
+            } else if now - busy >= BUSY && !crate::scenes::busy(id) && me.position(&*host).is_some_and(|p| dist(p, g.spot) <= 5.0) {
+                if let Some(a) = &g.animation {
+                    play(host, me, a);
+                }
+                if let Ok(mut s) = STATE.lock()
+                    && let Some(d) = s.days.get_mut(&id)
+                {
+                    d.busy = now;
+                }
+            }
+            continue;
+        }
         let (i, e) = r.now(t);
         let at = place(host, me, &e.place);
         if entry != Some(i) {

@@ -170,6 +170,7 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, id: &str, player: Option
         let mode = ORDERS.get(host, Holder::Entity(e.id())).map(|o| o.mode).unwrap_or_default();
         companion::set_orders(host, e, Mode::Wait);
         let p = scene::place_of(at, yaw, role.offset);
+        let p = npc.level(&*host).map_or(p, |l| crate::villages::stand_at(&*host, l, p));
         if let Some(u) = e.uuid(host) {
             crate::talk::queue(format!("tp {} {:.2} {:.2} {:.2} {:.1} 0", crate::talk::uuid_text(u), p[0], p[1], p[2], yaw + role.turn));
         }

@@ -24,7 +24,8 @@
 //! `upset`), `relation_above` / `relation_below` (how much it likes the player), `doing` (what its
 //! day has it do: `work`, `sleep`…), `routine` (it has one), `met` (it has talked with the player before), `remembers` (news of
 //! the player and it: `gift`, `helped`, `hurt`, `let_down`…), `fault` (the player is the one who
-//! upset it, or no one in particular did), `not`, `all`, `any`. Text may name `@upset_by`.
+//! upset it, or no one in particular did), `event` (it is at an event: its id, or `any`), `not`,
+//! `all`, `any`. Text may name `@upset_by` and `@event`.
 //! Actions: `command` (run as the server console), `give` / `take` (+ `count`), `tag`, `untag`,
 //! `animation` (played on the NPC), `order` (`follow`, `wait`, `guard`), `sound` (at the NPC),
 //! `scene` (a scene from `felix_scenes`, played by the NPC), `game` (`chess` or `checkers`, with
@@ -81,6 +82,8 @@ pub enum Cond {
     Met(bool),
     /// Whether the player is the one who upset the NPC (or no one in particular did).
     Fault(bool),
+    /// The NPC is at an event: this one (its id or name), or `any`.
+    Event(String),
     Remembers(String),
     Not(Box<Cond>),
     All(Vec<Cond>),
@@ -157,6 +160,10 @@ pub trait Facts {
     fn fault(&self) -> bool {
         true
     }
+    /// The event the NPC is at (its id; empty: none).
+    fn event(&self) -> &str {
+        ""
+    }
 }
 
 impl Cond {
@@ -175,6 +182,10 @@ impl Cond {
             Cond::Routine(want) => f.has_routine() == *want,
             Cond::Met(want) => f.met() == *want,
             Cond::Fault(want) => f.fault() == *want,
+            Cond::Event(e) => {
+                let at = f.event();
+                !at.is_empty() && (e == "any" || at == e || at.rsplit(':').next() == Some(e.as_str()))
+            }
             Cond::Remembers(k) => f.remembers(k),
             Cond::Not(c) => !c.holds(f),
             Cond::All(list) => list.iter().all(|c| c.holds(f)),
@@ -296,6 +307,8 @@ fn read_cond(v: &Value) -> Result<Cond, String> {
         Ok(Cond::Routine(b))
     } else if let Some(b) = m.get("met").and_then(Value::as_bool) {
         Ok(Cond::Met(b))
+    } else if let Some(e) = s("event") {
+        Ok(Cond::Event(e))
     } else if let Some(b) = m.get("fault").and_then(Value::as_bool) {
         Ok(Cond::Fault(b))
     } else if let Some(k) = s("remembers") {

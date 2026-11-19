@@ -168,6 +168,7 @@ struct PlayerFacts {
     met: bool,
     remembers: Vec<String>,
     fault: bool,
+    event: String,
 }
 
 impl Facts for PlayerFacts {
@@ -210,6 +211,9 @@ impl Facts for PlayerFacts {
     fn fault(&self) -> bool {
         self.fault
     }
+    fn event(&self) -> &str {
+        &self.event
+    }
 }
 
 fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> PlayerFacts {
@@ -233,7 +237,8 @@ fn facts(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) -> Player
     let routine = crate::routines::has_routine(npc.id());
     let (met, remembers) = crate::heart::memory_of(npc.id(), player.uuid());
     let fault = crate::heart::fault_of(npc.id(), player.uuid());
-    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine, met, remembers, fault }
+    let event = crate::events::id_at(host, npc).unwrap_or_default();
+    PlayerFacts { game, in_game, tags, items, owner, mode, mood, relation, doing, routine, met, remembers, fault, event }
 }
 
 /// A UUID written with dashes, as commands take it.
@@ -336,13 +341,14 @@ fn enter(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: A
     let mut title = npc.name(&*host).unwrap_or_else(|| "NPC".into());
     let level = crate::gear::level_of(host, npc);
     let fill_name = title.clone();
+    let event_name = crate::events::name_at(host, npc).unwrap_or_else(|| "festival".into());
     if level > 0 {
         title = format!("{title} (level {level})");
     }
     let view = crate::serde_json::json!({
         "npc": npc.id(),
         "title": title,
-        "lines": node.text.iter().map(|t| dialog::fill(t, &name, &fill_name).replace("@upset_by", &crate::heart::upset_by_name(npc.id()))).collect::<Vec<_>>(),
+        "lines": node.text.iter().map(|t| dialog::fill(t, &name, &fill_name).replace("@upset_by", &crate::heart::upset_by_name(npc.id())).replace("@event", &event_name)).collect::<Vec<_>>(),
         "options": shown.iter().map(|i| dialog::fill(&node.options[*i].text, &name, &fill_name)).collect::<Vec<_>>(),
     });
     if let Ok(mut s) = SESSIONS.lock() {

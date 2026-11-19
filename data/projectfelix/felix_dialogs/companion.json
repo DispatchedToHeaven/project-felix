@@ -195,6 +195,13 @@
           ]
         },
         {
+          "text": "What's on today?",
+          "if": {
+            "event": "any"
+          },
+          "goto": "event_today"
+        },
+        {
           "text": "Heard any news?",
           "actions": [
             {
@@ -599,6 +606,18 @@
     },
     "not_you": {
       "text": "It's not you, @player. @upset_by can say sorry, not you.",
+      "options": [
+        {
+          "text": "Something else...",
+          "goto": "main"
+        },
+        {
+          "text": "Bye."
+        }
+      ]
+    },
+    "event_today": {
+      "text": "It's the @event, @player! Everyone's here. Come and join us.",
       "options": [
         {
           "text": "Something else...",

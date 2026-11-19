@@ -321,6 +321,7 @@ pub fn start_npcs(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef, kind: G
     // Across the table, facing it.
     let r = yaw.to_radians();
     let spot = [at[0] - r.sin() as f64 * 2.2, at[1], at[2] + r.cos() as f64 * 2.2];
+    let spot = a.level(&*host).map_or(spot, |l| crate::villages::stand_at(&*host, l, spot));
     if let Some(u) = b.uuid(host) {
         crate::talk::queue(format!("tp {} {:.2} {:.2} {:.2} {:.1} 0", crate::talk::uuid_text(u), spot[0], spot[1], spot[2], yaw + 180.0));
     }

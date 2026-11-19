@@ -58,7 +58,13 @@ fn ground(host: &dyn Host, level: LevelRef, p: [f64; 3]) -> [f64; 3] {
     p
 }
 
-/// The height nearest `y` an NPC can stand at in the column of `x`, `z` (a block's middle).
+/// Where an NPC put at `p` stands: there, on the ground nearest up or down, else the nearest
+/// ground about it (not in a tree, a wall or water). For NPCs moved for a game or a scene.
+pub fn stand_at(host: &dyn Host, level: LevelRef, p: [f64; 3]) -> [f64; 3] {
+    column(host, level, p[0], p[2], p[1]).map_or_else(|| ground(host, level, p), |y| [p[0], y, p[2]])
+}
+
+/// The height nearest `y` an NPC can stand at in the column of `x`, `z`.
 fn column(host: &dyn Host, level: LevelRef, x: f64, z: f64, y: f64) -> Option<f64> {
     let r = 0.3;
     let stand = |cell: i32| -> Option<f64> {

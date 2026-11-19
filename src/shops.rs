@@ -154,7 +154,7 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
             let doing = crate::routines::doing(npc.id());
             let (friend_at, hate_at) = crate::heart::thresholds(npc.id());
             let standing = Standing::of(crate::heart::relation_of(npc.id(), player.uuid()), friend_at, hate_at);
-            if !s.hours.is_empty() && !doing.is_empty() && doing != s.hours {
+            if !s.hours.is_empty() && !doing.is_empty() && doing != s.hours && doing != "event" {
                 text.push(format!("The shop is closed, @player. Come back while I'm at {}.", s.hours));
             } else if standing == Standing::Hates {
                 text.push("I don't trade with you, @player.".into());
@@ -169,6 +169,10 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
                     }
                     .into(),
                 );
+                // At an event it sells for less.
+                if let Some(e) = crate::events::name_at(host, npc).filter(|_| crate::events::price(host, npc, 100) < 100) {
+                    text.push(format!("({e} prices!)"));
+                }
                 let money = shop::short(&s.currency);
                 // An NPC with a job sells what its chest holds (see `jobs`).
                 let chest = crate::jobs::chest_of(host, npc);
@@ -182,7 +186,7 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
                     if n == Some(0) {
                         continue;
                     }
-                    let price = standing.pays(o.price).unwrap_or(o.price);
+                    let price = crate::events::price(host, npc, standing.pays(o.price).unwrap_or(o.price));
                     let stock = n.map(|n| format!(" ({n} left)")).unwrap_or_default();
                     options.push(choice(format!("Buy {} {} for {price} {money}{stock}", o.count, shop::short(&o.item)), vec![Action::Trade(i as i32)]));
                 }
@@ -253,6 +257,7 @@ pub fn trade(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, n: i3
         }
     } else {
         let Some(price) = standing.pays(o.price) else { return };
+        let price = crate::events::price(host, npc, price);
         if items_of(host, player, &s.currency) < price {
             crate::heart::say_aloud(host, npc, &format!("That's {price} {money}, {name}. You're short."));
             false

@@ -1,0 +1,11 @@
+{
+  "name": "market day",
+  "every": 3,
+  "day": 1,
+  "from": "7:00",
+  "until": "11:00",
+  "place": "market",
+  "say": [ "Market day!", "Off to the market." ],
+  "animation": "animation.felix.wave",
+  "prices": 0.85
+}
