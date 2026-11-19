@@ -385,7 +385,7 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
                     }
                 }
             }
-            Action::Stats => crate::gear::tell_stats(host, npc),
+            Action::Stats => crate::gear::tell_stats(host, npc, player),
             Action::Shop(id) => {
                 if let Some(p) = player {
                     crate::shops::board(host, p, npc, id);

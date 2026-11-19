@@ -86,6 +86,8 @@ impl EntityRenderer for NpcRenderer {
             }
         });
         draw.pop();
+        // What it says, over its head.
+        crate::speech::draw(draw, entity.id, 2.0 * living.scale * living.age_scale, now);
         Ok(())
     }
 }

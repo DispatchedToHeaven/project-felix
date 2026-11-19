@@ -32,6 +32,7 @@
 //! - `gear` is what companions wear and hold, and how they grow with what they kill.
 //! - `scene_edit` is a scene as its editor holds it (no mod API types); `scene_editor` is the scene
 //!   editor in the world: the stage from above, the roles, the timeline.
+//! - `speech` shows what NPCs say over their heads (and copies some of it to chat).
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
     ScreenKeyPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
@@ -83,6 +84,7 @@ pub mod shop;
 pub mod shops;
 pub mod skin;
 pub mod skins;
+pub mod speech;
 pub mod sports;
 pub mod sports_client;
 pub mod sync;
@@ -146,11 +148,15 @@ impl Hooks for Felix {
         routines::register_commands(e);
         shops::register_commands(e);
         gear::register_commands(e);
+        speech::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = speech::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = scenes::run_command(host, e) {
@@ -199,6 +205,7 @@ impl Hooks for Felix {
             quests::tick(host);
             routines::tick(host);
             shops::tick(host);
+            speech::tick(host);
             rulebook::tick(host);
         }
     }
@@ -350,6 +357,7 @@ impl Hooks for Felix {
     fn client_tick_post(&self, host: &mut dyn ClientHost, _e: &mut ClientTickPostEvent) {
         runtime::tick(host);
         gear::client_tick(&*host);
+        speech::client_tick(&*host);
         menu::tick(host);
         game_screen::tick(host);
         editor::tick(host);

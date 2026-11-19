@@ -480,13 +480,33 @@ fn player_from(host: &dyn mod_api::Host, e: EntityRef) -> Option<PlayerRef> {
 
 /// Says `line` aloud: to every player near the NPC.
 fn say(host: &mut dyn ServerHost, me: EntityRef, name: &str, line: &str) {
+    crate::speech::show(host, me, line);
+    let copy = crate::speech::chat_copy();
+    if copy == crate::speech::ChatCopy::None {
+        return;
+    }
     let Some(at) = me.position(&*host) else { return };
     let players = me.level(&*host).and_then(|l| l.online_players(&*host)).unwrap_or_default();
     for p in players {
-        if p.entity().position(&*host).is_some_and(|x| dist(x, at) <= VOICE) {
+        if !p.entity().position(&*host).is_some_and(|x| dist(x, at) <= VOICE) {
+            continue;
+        }
+        // A line that names the player is said to them: it goes to their chat too.
+        let named = p.name(&*host).is_some_and(|n| !n.is_empty() && line.contains(&n));
+        if copy == crate::speech::ChatCopy::All || named {
             let _ = p.tell(host, Text::literal(format!("<{name}> {line}")));
         }
     }
+}
+
+/// NPC `npc` says `line` to `player`: over its head, and in their chat.
+pub fn say_to(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef, line: &str) {
+    crate::speech::show(host, npc, line);
+    if crate::speech::chat_copy() == crate::speech::ChatCopy::None {
+        return;
+    }
+    let name = STATE.lock().ok().and_then(|s| s.live.get(&npc.id()).map(|l| l.name.clone())).or_else(|| npc.name(&*host)).unwrap_or_else(|| "NPC".into());
+    let _ = player.tell(host, Text::literal(format!("<{name}> {line}")));
 }
 
 fn fill(line: &str, player: &str, npc: &str, about: &str) -> String {
@@ -1125,7 +1145,8 @@ pub fn tell_news(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) {
         Some(n) => n.line(&name, &player_name),
         None => format!("Nothing new, {player_name}."),
     };
-    say(host, npc, &name, &line);
+    let _ = name;
+    say_to(host, npc, player, &line);
 }
 
 // ---- commands -------------------------------------------------------------------------------------------------

@@ -17,8 +17,6 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 /// Ticks between looks around.
 const SCAN: i64 = 10;
-/// How far `say` carries.
-const VOICE: f64 = 24.0;
 
 /// The rules an NPC follows; none: those of its file, if it was made in the game.
 pub static RULES: AttachmentType<Option<String>> = AttachmentType {
@@ -338,19 +336,15 @@ fn run(host: &mut dyn ServerHost, h: &Here, ev: &Event, dos: &[Do]) {
     };
     let player_name = ev.player.or(owner).or_else(nearest).and_then(|p| p.name(&*host)).unwrap_or_default();
     let target = if ev.target_name.is_empty() { "something".to_string() } else { ev.target_name.clone() };
-    let line = |t: &str| Text::literal(format!("<{npc_name}> {}", rules::fill(t, &player_name, &npc_name, &target)));
     for d in dos {
         match d {
             Do::Say(t) => {
-                for p in &h.players {
-                    if p.entity().position(&*host).is_some_and(|at| dist(at, h.at) <= VOICE) {
-                        let _ = p.tell(host, line(t));
-                    }
-                }
+                // Over its head; in chat as the chat setting says.
+                crate::heart::say_aloud(host, h.me, &rules::fill(t, &player_name, &npc_name, &target));
             }
             Do::Tell(t) => {
                 if let Some(p) = ev.player {
-                    let _ = p.tell(host, line(t));
+                    crate::heart::say_to(host, h.me, p, &rules::fill(t, &player_name, &npc_name, &target));
                 }
             }
             Do::Attack => {

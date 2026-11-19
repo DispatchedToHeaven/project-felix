@@ -276,7 +276,8 @@ pub fn level_of(host: &mut dyn ServerHost, npc: EntityRef) -> u32 {
 }
 
 /// The `stats` action: it says how strong it is.
-pub fn tell_stats(host: &mut dyn ServerHost, npc: EntityRef) {
+/// How strong NPC `npc` is, in its words.
+pub fn stats_line(host: &mut dyn ServerHost, npc: EntityRef) -> String {
     let g = GROWTH.get(host, Holder::Entity(npc.id())).unwrap_or_default();
     let l = LivingRef::new(npc);
     let health = l.health(&*host).unwrap_or(0.0);
@@ -286,7 +287,16 @@ pub fn tell_stats(host: &mut dyn ServerHost, npc: EntityRef) {
     let hits = BASE_DAMAGE + 0.5 * g.level as f64 + weapon_bonus(&item(EquipmentSlot::MainHand));
     let next = if g.level >= MAX_LEVEL { "as strong as I get".to_string() } else { format!("{}/{} to the next", g.xp, need(g.level)) };
     let held = l.equipment(&*host, EquipmentSlot::MainHand).filter(|s| s.count() > 0).map(|s| format!(", holding a {}", short(&item_id(&*host, &s)))).unwrap_or_default();
-    crate::heart::say_aloud(host, npc, &format!("Level {} ({next}). Health {health:.0}/{max:.0}, armour {armour:.0}, I hit for {hits:.1}{held}.", g.level));
+    format!("Level {} ({next}). Health {health:.0}/{max:.0}, armour {armour:.0}, I hit for {hits:.1}{held}.", g.level)
+}
+
+/// The `stats` action: it tells the player how strong it is.
+pub fn tell_stats(host: &mut dyn ServerHost, npc: EntityRef, player: Option<PlayerRef>) {
+    let line = stats_line(host, npc);
+    match player {
+        Some(p) => crate::heart::say_to(host, npc, p, &line),
+        None => crate::heart::say_aloud(host, npc, &line),
+    }
 }
 
 pub fn register_commands(e: &mut RegisterCommandsEvent<'_>) {
@@ -324,7 +334,11 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
             let xp = number("xp").unwrap_or(0);
             add_xp(host, npc, xp);
         }
-        _ => tell_stats(host, npc),
+        _ => {
+            let line = stats_line(host, npc);
+            crate::speech::show(host, npc, &line);
+            let _ = host.commands().feedback(Text::literal(line));
+        }
     }
     Flow::Cancel
 }
