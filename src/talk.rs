@@ -261,6 +261,7 @@ fn talk(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
     if !crate::heart::talks_to(host, npc, player) {
         return;
     }
+    crate::quests::on_talk(host, npc, player);
     let chosen = DIALOG.get(host, Holder::Entity(id)).ok().flatten().unwrap_or_else(|| DEFAULT_DIALOG.into());
     let extra = EXTRA.lock().ok().and_then(|e| e.get(&chosen).cloned());
     let found = extra.or_else(|| DIALOGS.lock().ok().and_then(|d| d.get(&chosen).or_else(|| d.get(DEFAULT_DIALOG)).cloned()));

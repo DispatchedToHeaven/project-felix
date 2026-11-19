@@ -313,6 +313,8 @@ pub fn take(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, id: &s
     let start = npc.position(&*host).unwrap_or([0.0; 3]);
     log.active.push(Active { quest: id.to_string(), npc: uuid, npc_name: npc_name.clone(), progress: 0, deadline: q.time.map(|t| now + (t * 1200.0) as i64), start });
     set_log(host, player, log);
+    // What it hands over for the quest (a letter to carry).
+    crate::talk::run_for(host, Some(player), npc, &q.gives);
     if matches!(q.goal, Goal::Walk { .. }) {
         // It comes along.
         crate::companion::set_orders(host, npc, crate::companion::Mode::Follow);
@@ -329,7 +331,10 @@ fn end(host: &mut dyn ServerHost, player: PlayerRef, npc: Option<EntityRef>, a: 
     set_log(host, player, log);
     let player_name = player.name(&*host).unwrap_or_default();
     let line = fill(if done { &q.done } else { &q.fail }, &player_name, &a.npc_name);
+    // A delivery's thanks are the one delivered to's (said already).
+    let delivered = done && matches!(q.goal, Goal::Deliver { .. });
     match npc {
+        Some(_) if delivered => {}
         Some(n) => crate::heart::say_aloud(host, n, &line),
         None => {
             let _ = player.tell(host, Text::literal(format!("<{}> {line}", a.npc_name)));
@@ -344,6 +349,49 @@ fn end(host: &mut dyn ServerHost, player: PlayerRef, npc: Option<EntityRef>, a: 
         }
         crate::heart::feel(host, n, Some(player), event);
         crate::rulebook::notice(n.id(), event, Some(player.entity().id()));
+        // The story goes on: its scene, led by this NPC.
+        if done
+            && let Some(scene) = &q.scene
+            && let Err(e) = crate::scenes::start(host, n, scene, Some(player))
+        {
+            eprintln!("[projectfelix] quest scene {scene}: {e}");
+        }
+    }
+}
+
+/// Whether NPC `npc` is the one `to` names: by its name, or `#tag` it has.
+fn is_addressee(host: &dyn mod_api::Host, npc: EntityRef, to: &str) -> bool {
+    match to.strip_prefix('#') {
+        Some(tag) => npc.tags(host).unwrap_or_default().iter().any(|t| t == tag),
+        None => npc.name(host).is_some_and(|n| n.eq_ignore_ascii_case(to.trim())),
+    }
+}
+
+/// Talk starts: a player bringing NPC `npc` a delivery hands it over, and the quest is done.
+pub fn on_talk(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) {
+    let Some(uuid) = npc.uuid(host) else { return };
+    let log = log_of(host, player);
+    let player_name = player.name(&*host).unwrap_or_default();
+    for a in log.active {
+        let Some(q) = quest_named(&a.quest) else { continue };
+        let Goal::Deliver { to, item, count } = &q.goal else { continue };
+        if a.npc == uuid || !is_addressee(&*host, npc, to) {
+            continue;
+        }
+        if let Some(i) = item {
+            if items_of(host, player, i) < *count {
+                crate::heart::say_to(host, npc, player, &format!("Weren't you to bring me something from {}, {player_name}?", a.npc_name));
+                continue;
+            }
+            crate::talk::queue(format!("clear {player_name} {i} {count}"));
+        }
+        let line = fill(&q.delivered, &player_name, &npc.name(&*host).unwrap_or_default()).replace("@giver", &a.npc_name);
+        crate::heart::say_to(host, npc, player, &line);
+        end(host, player, Some(npc), &a, &q, true);
+        // The one who sent it is glad too, if it is about.
+        if let Some(giver) = crate::heart::npc_by_uuid(a.npc).and_then(|g| host.entity(g)) {
+            crate::heart::feel(host, giver, Some(player), "quest_done");
+        }
     }
 }
 

@@ -1,0 +1,14 @@
+{
+  "title": "The harvest festival",
+  "bring": "minecraft:wheat",
+  "count": 12,
+  "offer": "We're holding a harvest festival, @player! Could you bring 12 wheat for the bread?",
+  "progress": "Any wheat yet, @player?",
+  "done": "Wonderful! Now everyone needs to hear about it.",
+  "reward": [
+    {
+      "give": "minecraft:bread",
+      "count": 4
+    }
+  ]
+}

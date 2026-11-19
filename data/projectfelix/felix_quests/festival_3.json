@@ -1,0 +1,21 @@
+{
+  "title": "Keep the festival safe",
+  "requires": "projectfelix:festival_2",
+  "kill": "monster",
+  "count": 3,
+  "time": 20,
+  "offer": "The guests are coming tonight. Keep 3 monsters away from the square, @player?",
+  "progress": "The night is long. How many so far?",
+  "done": "The festival can begin!",
+  "scene": "projectfelix:greeting",
+  "reward": [
+    {
+      "give": "minecraft:cake",
+      "count": 1
+    },
+    {
+      "give": "minecraft:emerald",
+      "count": 3
+    }
+  ]
+}

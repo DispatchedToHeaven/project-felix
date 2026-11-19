@@ -1,0 +1,21 @@
+{
+  "title": "Invitations",
+  "requires": "projectfelix:festival_1",
+  "deliver_to": "#felix_guest",
+  "item": "minecraft:paper",
+  "gives": [
+    {
+      "give": "minecraft:paper",
+      "count": 1
+    }
+  ],
+  "offer": "Could you take this invitation to our guest, @player? You will know them by the ribbon.",
+  "progress": "Did the invitation arrive?",
+  "delivered": "An invitation from @giver? To the festival? I would love to come!",
+  "reward": [
+    {
+      "give": "minecraft:emerald",
+      "count": 2
+    }
+  ]
+}

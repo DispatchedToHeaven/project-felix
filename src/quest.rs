@@ -14,8 +14,14 @@
 //! What it asks: `bring` (an item, `count` of it, taken when the player hands it in), `kill` (an
 //! entity type, or `monster` / `animal`, `count` of them), `go_to` (`[x, y, z]`, within `radius`),
 //! `walk` (the NPC, following the player, `distance` blocks from where it was asked, or `to`
-//! `[x, y, z]` within `radius`). `time`: minutes to do it in (none: no hurry). `reward`: dialog
-//! actions, run when it is done. Its character takes `quest_done` and `quest_failed` as events.
+//! `[x, y, z]` within `radius`), `deliver_to` (an NPC by name, or `#tag` for any NPC with that tag:
+//! the player talks to it, handing over `item` if there is one). `time`: minutes to do it in (none:
+//! no hurry). `reward`: dialog actions, run when it is done; `gives`: when it is taken (a letter to
+//! carry). Its character takes `quest_done` and `quest_failed` as events.
+//!
+//! Chains and stories: `requires` lists quests the player must have done first (from anyone), so
+//! one NPC's quest opens another's; `scene` plays a scene when it is done (the NPC who ends it
+//! leads); `delivered` is what the one delivered to says.
 
 use crate::dialog::{self, Action};
 use crate::serde_json::{Value, json};
@@ -27,6 +33,8 @@ pub enum Goal {
     GoTo { at: [f64; 3], radius: f64 },
     /// `to`: a place; none: `distance` blocks from where the NPC was.
     Walk { to: Option<[f64; 3]>, distance: f64, radius: f64 },
+    /// To an NPC by name, or `#tag`; with an item to hand over, maybe.
+    Deliver { to: String, item: Option<String>, count: u32 },
 }
 
 impl Goal {
@@ -52,6 +60,8 @@ impl Goal {
             Goal::GoTo { at, .. } => format!("go to {:.0} {:.0} {:.0}", at[0], at[1], at[2]),
             Goal::Walk { to: Some(at), .. } => format!("walk @npc to {:.0} {:.0} {:.0}", at[0], at[1], at[2]),
             Goal::Walk { distance, .. } => format!("walk @npc {distance:.0} blocks away"),
+            Goal::Deliver { to, item: Some(i), count } => format!("take {count} {} to {}", short(i), to.trim_start_matches('#')),
+            Goal::Deliver { to, item: None, .. } => format!("take word to {}", to.trim_start_matches('#')),
         }
     }
 
@@ -80,6 +90,14 @@ pub struct Quest {
     pub reward: Vec<Action>,
     pub repeat: bool,
     pub min_relation: i32,
+    /// Quests the player must have done first.
+    pub requires: Vec<String>,
+    /// A scene played when it is done.
+    pub scene: Option<String>,
+    /// Dialog actions run when it is taken.
+    pub gives: Vec<Action>,
+    /// What the one delivered to says (`@giver`: who sent it).
+    pub delivered: String,
 }
 
 pub fn parse(bytes: &[u8]) -> Result<Quest, String> {
@@ -111,8 +129,10 @@ pub fn read(v: &Value) -> Result<Quest, String> {
         let to = point(m.get("to"));
         let distance = m.get("distance").and_then(Value::as_f64).unwrap_or(32.0).max(4.0);
         Goal::Walk { to, distance, radius }
+    } else if let Some(to) = s("deliver_to").map(|t| t.trim().to_string()).filter(|t| !t.is_empty() && t != "#") {
+        Goal::Deliver { to, item: s("item").filter(|i| !i.trim().is_empty()).map(|i| id(i.trim().to_string())), count }
     } else {
-        return Err("no bring, kill, go_to or walk".into());
+        return Err("no bring, kill, go_to, walk or deliver_to".into());
     };
     let text = |k: &str, d: &str| s(k).filter(|x| !x.trim().is_empty()).unwrap_or_else(|| d.to_string());
     let title = text("title", &goal.describe());
@@ -127,6 +147,14 @@ pub fn read(v: &Value) -> Result<Quest, String> {
         reward: dialog::read_actions(m.get("reward"))?,
         repeat: m.get("repeat").and_then(Value::as_bool).unwrap_or(false),
         min_relation: m.get("min_relation").and_then(Value::as_f64).unwrap_or(-100.0) as i32,
+        requires: match m.get("requires") {
+            Some(Value::String(r)) => vec![r.clone()],
+            Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+            _ => Vec::new(),
+        },
+        scene: s("scene").filter(|x| !x.trim().is_empty()),
+        gives: dialog::read_actions(m.get("gives"))?,
+        delivered: text("delivered", "From @giver? Thank you, @player."),
     })
 }
 
@@ -173,14 +201,25 @@ impl Log {
 
     /// Whether `quest` from `npc` may be taken now.
     pub fn may_take(&self, quest: &str, q: &Quest, npc: u128) -> bool {
-        self.active.len() < MAX_ACTIVE && self.with(npc).is_none() && (q.repeat || !self.done.contains(&done_key(quest, npc)))
+        self.active.len() < MAX_ACTIVE
+            && self.with(npc).is_none()
+            && (q.repeat || !self.done.contains(&done_key(quest, npc)))
+            && q.requires.iter().all(|r| self.has_done(r))
+    }
+
+    /// Whether the player did `quest`, for anyone.
+    pub fn has_done(&self, quest: &str) -> bool {
+        let prefix = format!("{quest}@");
+        self.done.iter().any(|d| d.starts_with(&prefix))
     }
 
     /// Ends the quest from `npc` (done: remembered, unless it repeats).
     pub fn finish(&mut self, npc: u128, done: bool, repeat: bool) -> Option<Active> {
         let i = self.active.iter().position(|a| a.npc == npc)?;
         let a = self.active.remove(i);
-        if done && !repeat {
+        // Done is remembered (for chains), repeating ones too: they don't ask it.
+        if done && !self.done.contains(&done_key(&a.quest, npc)) {
+            let _ = repeat;
             self.done.push(done_key(&a.quest, npc));
             if self.done.len() > 256 {
                 self.done.remove(0);
@@ -193,7 +232,7 @@ impl Log {
 // ---- the maker's rows ----------------------------------------------------------------------------------
 
 /// The kinds the maker offers, and what their word is.
-pub const KINDS: &[(&str, &str)] = &[("bring", "item"), ("kill", "entity type"), ("go to", "x y z"), ("walk me", "blocks")];
+pub const KINDS: &[(&str, &str)] = &[("bring", "item"), ("kill", "entity type"), ("go to", "x y z"), ("walk me", "blocks"), ("deliver to", "NPC name")];
 
 /// A quest as the maker shows it: a kind and its word, how many, what the NPC says, the reward.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -204,6 +243,8 @@ pub struct Row {
     pub offer: String,
     /// An item and how many: `minecraft:emerald 2`.
     pub reward: String,
+    /// A quest the player must have done first (its id).
+    pub after: String,
 }
 
 impl Row {
@@ -226,10 +267,19 @@ impl Row {
                 }
                 m.insert("go_to".into(), json!(p));
             }
-            _ => {
+            3 => {
                 m.insert("walk".into(), json!(true));
                 m.insert("distance".into(), json!(what.parse::<f64>().unwrap_or(32.0)));
             }
+            _ => {
+                if what.is_empty() {
+                    return Err("\"deliver to\" needs an NPC's name".into());
+                }
+                m.insert("deliver_to".into(), json!(what));
+            }
+        }
+        if !self.after.trim().is_empty() {
+            m.insert("requires".into(), json!(self.after.trim()));
         }
         if !self.offer.trim().is_empty() {
             m.insert("offer".into(), json!(self.offer.trim()));
@@ -245,9 +295,14 @@ impl Row {
     /// A quest back as a row, when a row can show it (else None: it is kept as it is).
     pub fn from_json(v: &Value) -> Option<Row> {
         let m = v.as_object()?;
-        if m.keys().any(|k| !["bring", "kill", "count", "go_to", "walk", "distance", "offer", "reward"].contains(&k.as_str())) {
+        if m.keys().any(|k| !["bring", "kill", "count", "go_to", "walk", "distance", "offer", "reward", "deliver_to", "requires"].contains(&k.as_str())) {
             return None;
         }
+        let after = match m.get("requires") {
+            None => String::new(),
+            Some(Value::String(r)) => r.clone(),
+            Some(_) => return None,
+        };
         let count = m.get("count").and_then(Value::as_u64).map(|c| c.to_string()).unwrap_or_default();
         let (kind, what) = if let Some(i) = m.get("bring").and_then(Value::as_str) {
             (0, i.to_string())
@@ -257,6 +312,8 @@ impl Row {
             (2, format!("{} {} {}", p[0], p[1], p[2]))
         } else if m.contains_key("walk") {
             (3, m.get("distance").and_then(Value::as_f64).map(|d| d.to_string()).unwrap_or_default())
+        } else if let Some(t) = m.get("deliver_to").and_then(Value::as_str) {
+            (4, t.to_string())
         } else {
             return None;
         };
@@ -273,7 +330,7 @@ impl Row {
             _ => return None,
         };
         let offer = m.get("offer").and_then(Value::as_str).unwrap_or_default().to_string();
-        Some(Row { kind, what, count, offer, reward })
+        Some(Row { kind, what, count, offer, reward, after })
     }
 }
 
@@ -325,12 +382,33 @@ mod tests {
     }
 
     #[test]
+    fn chains() {
+        let first = parse(br#"{ "bring": "apple" }"#).unwrap();
+        let second = parse(br##"{ "deliver_to": "#felix_guest", "item": "paper", "requires": "a:first", "gives": [ { "give": "minecraft:paper" } ], "scene": "a:party" }"##).unwrap();
+        assert_eq!(second.goal, Goal::Deliver { to: "#felix_guest".into(), item: Some("minecraft:paper".into()), count: 1 });
+        assert_eq!(second.goal.describe(), "take 1 paper to felix_guest");
+        assert_eq!(second.scene.as_deref(), Some("a:party"));
+        assert_eq!(second.gives.len(), 1);
+        let mut log = Log::default();
+        assert!(!log.may_take("a:second", &second, 2), "not before the first");
+        log.active.push(Active { quest: "a:first".into(), npc: 1, npc_name: "Ann".into(), progress: 0, deadline: None, start: [0.0; 3] });
+        log.finish(1, true, true);
+        assert!(log.has_done("a:first"));
+        assert!(log.may_take("a:first", &first, 1) || first.repeat == false);
+        assert!(log.may_take("a:second", &second, 2), "the chain goes on, at another NPC");
+        for s in [include_str!("../data/projectfelix/felix_quests/festival_1.json"), include_str!("../data/projectfelix/felix_quests/festival_2.json"), include_str!("../data/projectfelix/felix_quests/festival_3.json")] {
+            parse(s.as_bytes()).unwrap();
+        }
+    }
+
+    #[test]
     fn rows_round_trip() {
         let rows = [
-            Row { kind: 0, what: "minecraft:apple".into(), count: "5".into(), offer: "Apples, @player?".into(), reward: "minecraft:emerald 2".into() },
-            Row { kind: 1, what: "monster".into(), count: "3".into(), offer: String::new(), reward: "minecraft:bread".into() },
-            Row { kind: 2, what: "10 64 -20".into(), count: String::new(), offer: String::new(), reward: String::new() },
-            Row { kind: 3, what: "40".into(), count: String::new(), offer: "A walk?".into(), reward: String::new() },
+            Row { kind: 0, what: "minecraft:apple".into(), count: "5".into(), offer: "Apples, @player?".into(), reward: "minecraft:emerald 2".into(), after: String::new() },
+            Row { kind: 1, what: "monster".into(), count: "3".into(), offer: String::new(), reward: "minecraft:bread".into(), after: String::new() },
+            Row { kind: 2, what: "10 64 -20".into(), count: String::new(), offer: String::new(), reward: String::new(), after: String::new() },
+            Row { kind: 3, what: "40".into(), count: String::new(), offer: "A walk?".into(), reward: String::new(), after: String::new() },
+            Row { kind: 4, what: "Bob".into(), count: String::new(), offer: "Tell Bob, @player?".into(), reward: String::new(), after: "felixnpc:ann/0".into() },
         ];
         for row in rows {
             let v = row.to_json().unwrap();

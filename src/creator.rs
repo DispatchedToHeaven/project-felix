@@ -41,7 +41,7 @@ const KEPT_SKIN: &str = "(the skin it has)";
 const NO_SKIN: &str = "(the model's texture)";
 /// Rule texts are fields from here on: three a rule (the event's word, then's, else's).
 const RULE_TEXT: usize = 100;
-/// Quest `n`'s fields: its word, count, offer, reward.
+/// Quest `n`'s fields: its word, count, offer, reward, the quest before it.
 const QUEST_TEXT: usize = 200;
 pub const MAX_QUESTS: usize = 3;
 /// Offer `n`'s fields: item, count, price.
@@ -301,12 +301,13 @@ impl Creator {
             });
         }
         if let Some(j) = i.checked_sub(QUEST_TEXT) {
-            let q = self.quests.get_mut(j / 4)?;
-            return Some(match j % 4 {
+            let q = self.quests.get_mut(j / 5)?;
+            return Some(match j % 5 {
                 0 => &mut q.what,
                 1 => &mut q.count,
                 2 => &mut q.offer,
-                _ => &mut q.reward,
+                3 => &mut q.reward,
+                _ => &mut q.after,
             });
         }
         let j = i.checked_sub(RULE_TEXT)?;
@@ -329,12 +330,12 @@ impl Creator {
         if self.page == 2 {
             let mut o = Vec::new();
             for (n, q) in self.quests.iter().enumerate() {
-                let base = QUEST_TEXT + n * 4;
+                let base = QUEST_TEXT + n * 5;
                 o.push(base);
                 if q.kind < 2 {
                     o.push(base + 1);
                 }
-                o.extend([base + 2, base + 3]);
+                o.extend([base + 4, base + 2, base + 3]);
             }
             return o;
         }
@@ -759,13 +760,14 @@ fn draw_quests(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], Do)>, c:
     y += 12.0;
     let h = ROW - 2.0;
     for (n, q) in c.quests.iter().enumerate() {
-        let base = QUEST_TEXT + n * 4;
+        let base = QUEST_TEXT + n * 5;
         let focus = |k: usize| c.focus == Some(base + k);
         draw.fill([x0 - 2.0, y - 2.0, W + 4.0, 2.0 * ROW + 2.0], 0x4030_3048);
         picker(draw, buttons, [x0, y, 64.0, h], KINDS[q.kind].0, Do::Kind(n), mouse);
-        hint_field(draw, buttons, [x0 + 67.0, y, 150.0, h], &q.what, KINDS[q.kind].1, focus(0), Do::Field(base), mouse, blink);
+        hint_field(draw, buttons, [x0 + 67.0, y, 110.0, h], &q.what, KINDS[q.kind].1, focus(0), Do::Field(base), mouse, blink);
+        hint_field(draw, buttons, [x0 + 217.0, y, 98.0, h], &q.after, "after quest (id)", focus(4), Do::Field(base + 4), mouse, blink);
         if q.kind < 2 {
-            hint_field(draw, buttons, [x0 + 220.0, y, 40.0, h], &q.count, "count", focus(1), Do::Field(base + 1), mouse, blink);
+            hint_field(draw, buttons, [x0 + 180.0, y, 34.0, h], &q.count, "count", focus(1), Do::Field(base + 1), mouse, blink);
         }
         button(draw, buttons, [x0 + W - 12.0, y, 12.0, h], "x", Do::DelQuest(n), mouse);
         y += ROW;
