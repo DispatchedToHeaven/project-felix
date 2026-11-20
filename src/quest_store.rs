@@ -133,12 +133,8 @@ impl IPayloadHandler for SaveQuest {
         }
         if v.get("try").and_then(Value::as_bool) == Some(true) {
             match crate::dialogs::nearest_npc(&*host, player) {
+                // Offered once by the NPC nearest: what it gives stays as it was.
                 Some(npc) => {
-                    let mut ids: Vec<String> = crate::quests::GIVES.get(host, Holder::Entity(npc.id())).ok().flatten().unwrap_or_default().split_whitespace().map(str::to_string).collect();
-                    if !ids.contains(&id) {
-                        ids.push(id.clone());
-                    }
-                    let _ = crate::quests::GIVES.set(host, Holder::Entity(npc.id()), Some(ids.join(" ")));
                     crate::quests::board(host, player, npc, std::slice::from_ref(&id));
                     return Ok(());
                 }

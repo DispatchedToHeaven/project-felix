@@ -300,10 +300,14 @@ fn lines_of(v: Option<&Value>) -> Vec<String> {
     }
 }
 
-/// Where box `i` of `n` stands when the file doesn't say: in rows.
-fn grid(i: usize) -> [f32; 2] {
+/// Where box `i` of `n` stands when the file doesn't say: in rows, closer together the more there
+/// are, all on the canvas.
+fn grid(i: usize, n: usize) -> [f32; 2] {
     let cols = ((CANVAS[0] - 4.0) / (BOX[0] + 2.0)).floor().max(1.0) as usize;
-    [4.0 + (i % cols) as f32 * (BOX[0] + 2.0), 4.0 + (i / cols) as f32 * (BOX[1] + 14.0)]
+    let rows = n.div_ceil(cols).max(1);
+    let room = CANVAS[1] - 14.0 - BOX[1];
+    let step = if rows > 1 { (room / (rows - 1) as f32).min(BOX[1] + 14.0) } else { 0.0 };
+    [4.0 + (i % cols) as f32 * (BOX[0] + 2.0), (4.0 + (i / cols) as f32 * step).min(4.0 + room).round()]
 }
 
 impl DialogEd {
@@ -362,7 +366,7 @@ impl DialogEd {
                     .and_then(|l| l.get(name))
                     .and_then(Value::as_array)
                     .and_then(|a| Some([a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32]))
-                    .unwrap_or_else(|| grid(i));
+                    .unwrap_or_else(|| grid(i, raw.len()));
                 NodeEd {
                     name: name.clone(),
                     at,

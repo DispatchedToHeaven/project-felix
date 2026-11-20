@@ -140,9 +140,15 @@ impl IPayloadHandler for SaveRules {
         if v.get("try").and_then(Value::as_bool) == Some(true) {
             match crate::dialogs::nearest_npc(&*host, player) {
                 Some(npc) => {
+                    // It follows them from now on: what it followed before is said, to go back to.
+                    let before = crate::rulebook::RULES.get(host, mod_api::Holder::Entity(npc.id())).ok().flatten();
                     let _ = crate::rulebook::RULES.set(host, mod_api::Holder::Entity(npc.id()), Some(id.clone()));
                     let name = npc.name(&*host).unwrap_or_else(|| "NPC".into());
-                    tell(host, format!("Kept as {id}: {name} follows them now."));
+                    let back = match before.filter(|b| *b != id) {
+                        Some(b) => format!(" (it followed {b}: /felix rules <npc> {b} puts them back)"),
+                        None => String::new(),
+                    };
+                    tell(host, format!("Kept as {id}: {name} follows them now{back}."));
                     return Ok(());
                 }
                 None => tell(host, "No NPC near to try them on.".into()),

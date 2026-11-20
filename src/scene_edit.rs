@@ -12,6 +12,8 @@ pub struct CastEd {
     pub at: [f32; 2],
     /// Degrees from the way the lead faces.
     pub turn: f32,
+    /// Up, blocks (on a stair, a cart): kept as the file has it.
+    pub up: f32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -59,7 +61,7 @@ impl SceneEd {
                     .map(|r| {
                         let o = r.get("offset").and_then(Value::as_array);
                         let n = |i: usize| o.and_then(|o| o.get(i)).and_then(Value::as_f64).unwrap_or(0.0) as f32;
-                        CastEd { role: r.get("role").and_then(Value::as_str).unwrap_or("").to_string(), at: [n(0), n(2)], turn: r.get("turn").and_then(Value::as_f64).unwrap_or(180.0) as f32 }
+                        CastEd { role: r.get("role").and_then(Value::as_str).unwrap_or("").to_string(), at: [n(0), n(2)], up: n(1), turn: r.get("turn").and_then(Value::as_f64).unwrap_or(180.0) as f32 }
                     })
                     .collect()
             })
@@ -102,7 +104,7 @@ impl SceneEd {
             let cast: Vec<Value> = self
                 .cast
                 .iter()
-                .map(|c| json!({ "role": c.role.trim(), "offset": [ (c.at[0] * 10.0).round() / 10.0, 0, (c.at[1] * 10.0).round() / 10.0 ], "turn": c.turn }))
+                .map(|c| json!({ "role": c.role.trim(), "offset": [ (c.at[0] * 10.0).round() / 10.0, c.up, (c.at[1] * 10.0).round() / 10.0 ], "turn": c.turn }))
                 .collect();
             m.insert("cast".into(), Value::Array(cast));
         }
@@ -137,7 +139,7 @@ impl SceneEd {
             k += 1;
         }
         let side = if self.cast.len() % 2 == 0 { 1.5 } else { -1.5 };
-        self.cast.push(CastEd { role: format!("actor{k}"), at: [side, 1.5 + self.cast.len() as f32 * 0.5], turn: 180.0 });
+        self.cast.push(CastEd { role: format!("actor{k}"), at: [side, 1.5 + self.cast.len() as f32 * 0.5], turn: 180.0, up: 0.0 });
         self.cast.len() - 1
     }
 

@@ -46,6 +46,7 @@
 //! - `dialog_edit` (no mod API types) and `dialog_editor` are the dialog editor; `dialogs` keeps
 //!   dialogs made in the game; `flags` is the players' talk memory and the extended view.
 //! - `saves`: what is made in the game is kept with its world.
+//! - `textfield` is a line being typed in an editor: caret, selection, keys (no mod API types).
 //! - `settle` (no mod API types) and `settlements` are the Felix settlements the world makes.
 //! - `market` (no mod API types) and `markets` are the village market: purses, the baker, trade
 //!   between NPCs, prices by supply.
@@ -134,6 +135,7 @@ pub mod scenes;
 pub mod shop;
 pub mod shops;
 pub mod skin;
+pub mod textfield;
 pub mod skins;
 pub mod speech;
 pub mod saves;
@@ -491,6 +493,9 @@ impl Hooks for Felix {
     }
 
     fn screen_mouse_button_pressed_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
+        if e.button == 0 {
+            creator::typing_click(e.screen.mouse);
+        }
         if book_screen::active() {
             return book_screen::mouse_pressed(host, e);
         }

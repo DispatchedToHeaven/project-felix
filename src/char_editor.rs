@@ -86,6 +86,12 @@ struct Editor {
     shown: bool,
     close: bool,
     outbox: Vec<Vec<u8>>,
+    /// What it was when opened or last saved, and whether closing unsaved was warned of.
+    saved: CharEd,
+    warned: bool,
+    /// What it was before each change, for Ctrl+Z, and what was undone, for Ctrl+Y.
+    history: Vec<CharEd>,
+    future: Vec<CharEd>,
 }
 
 static EDITOR: LazyLock<Mutex<Option<Editor>>> = LazyLock::new(Default::default);
@@ -153,11 +159,17 @@ impl IPayloadHandler for OpenHandler {
             drag: None,
             canvas: [0.0; 2],
             buttons: Vec::new(),
-            status: "Drag the moods; pick one to change it. Save keeps it as felixchar:<name>.".into(),
+            status: "Drag the moods; pick one to change it. Ctrl+Z undoes, Ctrl+Y redoes. Save keeps it as felixchar:<name>.".into(),
             shown,
             close: false,
             outbox: Vec::new(),
+            saved: Default::default(),
+            warned: false,
+            history: Vec::new(),
+            future: Vec::new(),
         };
+        let mut e = e;
+        e.saved = e.ed.clone();
         if let Ok(mut lock) = EDITOR.lock() {
             *lock = Some(e);
         }
@@ -226,12 +238,46 @@ impl Editor {
         o
     }
 
+    /// Keeps what it is now, to go back to.
+    fn remember(&mut self) {
+        if self.history.last() != Some(&self.ed) {
+            self.history.push(self.ed.clone());
+            self.future.clear();
+            if self.history.len() > 40 {
+                self.history.remove(0);
+            }
+        }
+    }
+
+    fn undo(&mut self) {
+        if let Some(before) = self.history.pop() {
+            self.future.push(std::mem::replace(&mut self.ed, before));
+            self.selected = self.selected.min(self.ed.moods.len().saturating_sub(1));
+            self.focus = None;
+            self.status = format!("Undone ({} more back)", self.history.len());
+        }
+    }
+
+    fn redo(&mut self) {
+        if let Some(next) = self.future.pop() {
+            self.history.push(std::mem::replace(&mut self.ed, next));
+            self.selected = self.selected.min(self.ed.moods.len().saturating_sub(1));
+            self.focus = None;
+            self.status = format!("Redone ({} more on)", self.future.len());
+        }
+    }
+
+    fn dirty(&self) -> bool {
+        self.ed != self.saved
+    }
+
     fn save(&mut self) {
         match self.ed.to_json() {
             Ok(file) => {
                 let name = crate::profile::make_id(self.save_as.trim());
                 let body = json!({ "name": name, "file": file });
                 self.outbox.push(crate::serde_json::to_vec(&body).unwrap_or_default());
+                self.saved = self.ed.clone();
                 self.status = format!("Sent: felixchar:{name}");
             }
             Err(e) => self.status = e,
@@ -244,7 +290,16 @@ fn cycle(i: usize, by: i32, n: usize) -> usize {
 }
 
 fn act(e: &mut Editor, what: Do, by: i32) {
+    if !matches!(what, Do::Close) {
+        e.warned = false;
+    }
     let n = e.ed.moods.len();
+    // What it was, to go back to: before a change, and before typing in another field.
+    match what {
+        Do::Field(f) if e.focus != Some(f) => e.remember(),
+        Do::Field(_) | Do::Tab(_) | Do::Save | Do::Close => {}
+        _ => e.remember(),
+    }
     match what {
         Do::Field(f) => e.focus = Some(f),
         Do::Tab(t) => {
@@ -306,7 +361,7 @@ fn act(e: &mut Editor, what: Do, by: i32) {
             }
         }
         Do::Save => e.save(),
-        Do::Close => e.close = true,
+        Do::Close => e.close = crate::creator::may_close(e.dirty(), &mut e.warned, &mut e.status),
     }
 }
 
@@ -524,6 +579,7 @@ pub fn mouse_pressed(host: &dyn ClientHost, ev: &mut ScreenMouseButtonPressedPre
             e.selected = i;
             e.focus = None;
             let at = e.ed.moods[i].at;
+            e.remember();
             e.drag = Some([p[0] - at[0], p[1] - at[1]]);
         }
         None => e.focus = None,
@@ -573,12 +629,7 @@ pub fn mouse_scrolled(host: &dyn ClientHost, mouse: [f32; 2], up: bool) -> Flow 
 fn type_text(e: &mut Editor, text: &str) {
     let Some(f) = e.focus else { return };
     let Some(s) = e.text(f) else { return };
-    for ch in text.chars().filter(|ch| !ch.is_control()) {
-        if s.chars().count() >= 240 {
-            break;
-        }
-        s.push(ch);
-    }
+    crate::creator::type_in(s, text, 240);
 }
 
 pub fn char_typed(host: &dyn ClientHost, ev: &mut ScreenCharTypedPreEvent<'_>) -> Flow {
@@ -599,17 +650,17 @@ pub fn key_pressed(host: &dyn ClientHost, ev: &mut ScreenKeyPressedPreEvent<'_>)
     let Some(e) = lock.as_mut() else { return Flow::Continue };
     let ctrl = ev.modifiers & 2 != 0 && ev.modifiers & 4 == 0;
     let shift = ev.modifiers & 1 != 0;
+    if ev.key == "key.keyboard.escape" {
+        let dirty = e.dirty();
+        return if crate::creator::may_close(dirty, &mut e.warned, &mut e.status) { Flow::Continue } else { Flow::Cancel };
+    }
+    e.warned = false;
+    if let Some(s) = e.focus.and_then(|f| e.text(f))
+        && crate::creator::typing_key(host, s, ev.key, ev.modifiers, 240)
+    {
+        return Flow::Cancel;
+    }
     match ev.key {
-        "key.keyboard.escape" => return Flow::Continue,
-        "key.keyboard.backspace" => {
-            if let Some(s) = e.focus.and_then(|f| e.text(f)) {
-                if ctrl {
-                    s.clear();
-                } else {
-                    s.pop();
-                }
-            }
-        }
         "key.keyboard.tab" | "key.keyboard.enter" | "key.keyboard.keypad.enter" => {
             let order = e.order();
             let at = e.focus.and_then(|f| order.iter().position(|x| *x == f));
@@ -619,13 +670,11 @@ pub fn key_pressed(host: &dyn ClientHost, ev: &mut ScreenKeyPressedPreEvent<'_>)
                 None => 0,
             };
             e.focus = order.get(next).copied();
-        }
-        "key.keyboard.v" if ctrl => {
-            if let Some(text) = host.clipboard_text() {
-                type_text(e, &text);
-            }
+            crate::creator::typing_reset();
         }
         "key.keyboard.s" if ctrl => e.save(),
+        "key.keyboard.z" if ctrl && !shift => e.undo(),
+        "key.keyboard.y" | "key.keyboard.z" if ctrl => e.redo(),
         _ => {}
     }
     Flow::Cancel

@@ -26,6 +26,7 @@ use mod_api::{
     ScreenCharTypedPreEvent, ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent, ScreenMouseScrolledPreEvent,
     ScreenRenderPostEvent, SoundPlay,
 };
+use crate::textfield::{self, Caret, Key};
 use std::sync::{Arc, LazyLock, Mutex};
 
 const SCREEN: &str = "projectfelix";
@@ -132,6 +133,9 @@ struct Creator {
     shown: bool,
     close: bool,
     outbox: Vec<Vec<u8>>,
+    /// What it was when opened or last saved, and whether closing unsaved was warned of.
+    saved: String,
+    warned: bool,
 }
 
 static CREATOR: LazyLock<Mutex<Option<Creator>>> = LazyLock::new(Default::default);
@@ -308,7 +312,11 @@ impl IPayloadHandler for OpenHandler {
             shown,
             close: false,
             outbox: Vec::new(),
+            saved: String::new(),
+            warned: false,
         };
+        let mut c = c;
+        c.saved = c.fingerprint();
         if let Ok(mut lock) = CREATOR.lock() {
             *lock = Some(c);
         }
@@ -317,6 +325,14 @@ impl IPayloadHandler for OpenHandler {
 }
 
 impl Creator {
+    /// All it would save, to tell whether something changed.
+    fn fingerprint(&self) -> String {
+        format!(
+            "{:?}|{:?}|{:?}|{:?}|{} {} {} {} {} {} {} {}|{:?}",
+            self.fields, self.rules, self.quests, self.offers, self.model, self.skin, self.character, self.routine, self.voice, self.job, self.dialog_set, self.rules_set, self.own_model.as_ref().map(Vec::len)
+        )
+    }
+
     fn routine_name(&self) -> String {
         match self.routines.get(self.routine).map(String::as_str).unwrap_or("") {
             "" => "(none: it follows its owner)".into(),
@@ -505,6 +521,7 @@ impl Creator {
                 let mut bytes = vec![u8::from(spawn) | (u8::from(self.editing.is_some()) << 1)];
                 bytes.extend(file);
                 self.outbox.push(bytes);
+                self.saved = self.fingerprint();
                 self.status = format!("Sent {} ({})", p.name, p.id);
                 self.editing = Some(p.id);
                 if spawn {
@@ -540,6 +557,103 @@ pub fn tick(host: &mut dyn ClientHost) {
 
 pub(crate) fn inside(r: [f32; 4], at: [f32; 2]) -> bool {
     at[0] >= r[0] && at[0] < r[0] + r[2] && at[1] >= r[1] && at[1] < r[1] + r[3]
+}
+
+// ---- typing, for every editor ------------------------------------------------------------------
+
+/// The field being typed in (one editor is open at a time): its caret, what of it is shown, and
+/// the clicks and keys that move the caret to another.
+#[derive(Default)]
+struct Typing {
+    caret: Caret,
+    /// The first character shown.
+    start: usize,
+    /// Where the field typed in was last drawn.
+    rect: Option<[f32; 4]>,
+    /// A click to place the caret by, once the field it fell in is drawn; and whether it was the
+    /// second of a double click (a word).
+    click: Option<[f32; 2]>,
+    double: bool,
+    last_click: Option<([f32; 2], std::time::Instant)>,
+    /// The focus moved by a key: the caret goes to the end of the next field.
+    reset: bool,
+}
+
+static TYPING: LazyLock<Mutex<Typing>> = LazyLock::new(Default::default);
+
+/// The focus moved to another field by a key (Tab, Enter): the caret is at its end.
+pub(crate) fn typing_reset() {
+    if let Ok(mut t) = TYPING.lock() {
+        t.reset = true;
+        t.click = None;
+    }
+}
+
+/// A click on an editor's screen: if it falls in a field, the caret goes there (a double click
+/// takes the word).
+pub(crate) fn typing_click(at: [f32; 2]) {
+    if let Ok(mut t) = TYPING.lock() {
+        let now = std::time::Instant::now();
+        t.double = t.last_click.is_some_and(|(p, when)| (p[0] - at[0]).abs() < 3.0 && (p[1] - at[1]).abs() < 3.0 && now.duration_since(when).as_millis() < 350);
+        t.last_click = Some((at, now));
+        t.click = Some(at);
+    }
+}
+
+/// Types `s` at the caret of the field typed in (`text`), as much as fits in `max` characters.
+pub(crate) fn type_in(text: &mut String, s: &str, max: usize) {
+    if let Ok(mut t) = TYPING.lock() {
+        textfield::insert(text, &mut t.caret, s, max);
+    }
+}
+
+/// A key in the field typed in (`text`): the arrows, Home and End (with Shift: selecting),
+/// Backspace and Delete (with Ctrl: a word), Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V. Whether it was one.
+pub(crate) fn typing_key(host: &dyn ClientHost, text: &mut String, key: &str, modifiers: u32, max: usize) -> bool {
+    let ctrl = modifiers & 2 != 0 && modifiers & 4 == 0;
+    let shift = modifiers & 1 != 0;
+    let Ok(mut t) = TYPING.lock() else { return false };
+    let k = match key {
+        "key.keyboard.left" => Key::Left,
+        "key.keyboard.right" => Key::Right,
+        "key.keyboard.home" => Key::Home,
+        "key.keyboard.end" => Key::End,
+        "key.keyboard.backspace" => Key::Back,
+        "key.keyboard.delete" => Key::Delete,
+        "key.keyboard.a" if ctrl => Key::All,
+        "key.keyboard.c" if ctrl => {
+            t.caret.clamp(text);
+            if let Some(s) = textfield::selected(text, &t.caret) {
+                host.set_clipboard_text(&s);
+            }
+            return true;
+        }
+        "key.keyboard.x" if ctrl => {
+            if let Some(s) = textfield::cut(text, &mut t.caret) {
+                host.set_clipboard_text(&s);
+            }
+            return true;
+        }
+        "key.keyboard.v" if ctrl => {
+            if let Some(s) = host.clipboard_text() {
+                textfield::insert(text, &mut t.caret, &s, max);
+            }
+            return true;
+        }
+        _ => return false,
+    };
+    textfield::key(text, &mut t.caret, k, shift, ctrl);
+    true
+}
+
+/// Closing with changes not saved: the first time it says so (and stays), the second it closes.
+pub(crate) fn may_close(dirty: bool, warned: &mut bool, status: &mut String) -> bool {
+    if dirty && !*warned {
+        *warned = true;
+        *status = "Not saved! Esc or Close again to close anyway; Ctrl+S saves.".into();
+        return false;
+    }
+    true
 }
 
 /// The end of `text` that fits `width` (the end is where the typing is).
@@ -579,14 +693,59 @@ pub(crate) fn button<T>(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4],
 pub(crate) fn field<T>(draw: &mut dyn DrawContext, buttons: &mut Vec<([f32; 4], T)>, r: [f32; 4], text: &str, focus: bool, what: T, mouse: [f32; 2], blink: bool) {
     draw.fill(r, if focus { 0xF018_1820 } else if inside(r, mouse) { 0xE038_3C4C } else { 0xC020_2430 });
     draw.fill([r[0], r[1] + r[3] - 1.0, r[2], 1.0], if focus { 0xFFFF_D86A } else { 0xFF50_5060 });
-    // The end where the typing is; the start otherwise.
-    let shown = if focus { tail(draw, text, r[2] - 8.0) } else { head(draw, text, r[2] - 8.0) };
-    draw.text(&shown, [r[0] + 3.0, r[1] + 3.0], 0xFFFF_FFFF, false);
-    if focus && blink {
-        let x = r[0] + 3.0 + draw.text_width(&shown);
-        draw.fill([x, r[1] + 2.0, 1.0, 9.0], 0xFFFF_FFFF);
+    if focus {
+        typed_field(draw, r, text, blink);
+    } else {
+        draw.text(&head(draw, text, r[2] - 8.0), [r[0] + 3.0, r[1] + 3.0], 0xFFFF_FFFF, false);
     }
     buttons.push((r, what));
+}
+
+/// The field typed in: as much as fits about the caret, the selection, the caret.
+fn typed_field(draw: &mut dyn DrawContext, r: [f32; 4], text: &str, blink: bool) {
+    let Ok(mut t) = TYPING.lock() else { return };
+    let room = r[2] - 8.0;
+    let fresh = t.rect != Some(r);
+    // A field shown before it had the focus showed its start.
+    let start = if fresh { 0 } else { t.start };
+    match t.click.take() {
+        Some(m) if inside(r, m) => {
+            let at = textfield::at_x(text, start, m[0] - r[0] - 3.0, &|s| draw.text_width(s));
+            t.caret = if t.double {
+                let (a, b) = textfield::word_at(text, at);
+                Caret { at: b, anchor: (a != b).then_some(a) }
+            } else {
+                Caret { at, anchor: None }
+            };
+            t.reset = false;
+        }
+        _ if t.reset || fresh => {
+            t.caret = Caret::end(text);
+            t.reset = false;
+        }
+        _ => {}
+    }
+    t.caret.clamp(text);
+    t.rect = Some(r);
+    let start = textfield::window(text, t.caret.at, start, &|s| draw.text_width(s) <= room);
+    t.start = start;
+    let n = textfield::len(text);
+    let mut end = start;
+    while end < n && draw.text_width(textfield::slice(text, start, end + 1)) <= room {
+        end += 1;
+    }
+    let x_of = |i: usize, draw: &dyn DrawContext| r[0] + 3.0 + draw.text_width(textfield::slice(text, start, i.clamp(start, end)));
+    if let Some((a, b)) = t.caret.range() {
+        let (xa, xb) = (x_of(a, draw), x_of(b, draw));
+        if xb > xa {
+            draw.fill([xa, r[1] + 2.0, xb - xa, 9.0], 0xC030_60C0);
+        }
+    }
+    draw.text(textfield::slice(text, start, end), [r[0] + 3.0, r[1] + 3.0], 0xFFFF_FFFF, false);
+    if blink {
+        let x = x_of(t.caret.at, draw);
+        draw.fill([x, r[1] + 2.0, 1.0, 9.0], 0xFFFF_FFFF);
+    }
 }
 
 /// A picker: a click takes the next choice, the wheel moves either way.
@@ -898,7 +1057,7 @@ fn act(host: &dyn ClientHost, c: &mut Creator, what: Do, by: i32) {
             c.skin = cycle(c.skin, by, c.skins.len() + 1);
         }
         Do::Save(spawn) => c.save(host, spawn),
-        Do::Close => c.close = true,
+        Do::Close => c.close = may_close(c.fingerprint() != c.saved, &mut c.warned, &mut c.status),
         Do::Page(p) => {
             c.page = if c.page == p { 0 } else { p };
             c.focus = c.order().first().copied();
@@ -980,6 +1139,9 @@ pub fn mouse_pressed(host: &dyn ClientHost, e: &mut ScreenMouseButtonPressedPreE
     let mouse = e.screen.mouse;
     match c.buttons.iter().rev().find(|(r, _)| inside(*r, mouse)).map(|(_, w)| *w) {
         Some(what) => {
+            if !matches!(what, Do::Close) {
+                c.warned = false;
+            }
             if !matches!(what, Do::Field(_)) {
                 host.play_local_sound(&SoundPlay::ui("minecraft:ui.button.click"), 0);
             }
@@ -1006,12 +1168,7 @@ pub fn mouse_scrolled(host: &dyn ClientHost, e: &mut ScreenMouseScrolledPreEvent
 fn type_text(c: &mut Creator, text: &str) {
     let Some(i) = c.focus else { return };
     let Some(field) = c.text(i) else { return };
-    for ch in text.chars().filter(|ch| !ch.is_control()) {
-        if field.chars().count() >= max_len(i) {
-            break;
-        }
-        field.push(ch);
-    }
+    type_in(field, text, max_len(i));
 }
 
 pub fn char_typed(host: &dyn ClientHost, e: &mut ScreenCharTypedPreEvent<'_>) -> Flow {
@@ -1032,18 +1189,19 @@ pub fn key_pressed(host: &dyn ClientHost, e: &mut ScreenKeyPressedPreEvent<'_>) 
     let Some(c) = lock.as_mut() else { return Flow::Continue };
     let ctrl = e.modifiers & 2 != 0 && e.modifiers & 4 == 0;
     let shift = e.modifiers & 1 != 0;
+    if e.key == "key.keyboard.escape" {
+        // Escape goes to the screen, which closes (unless something is not saved).
+        let dirty = c.fingerprint() != c.saved;
+        return if may_close(dirty, &mut c.warned, &mut c.status) { Flow::Continue } else { Flow::Cancel };
+    }
+    c.warned = false;
+    if let Some(i) = c.focus
+        && let Some(f) = c.text(i)
+        && typing_key(host, f, e.key, e.modifiers, max_len(i))
+    {
+        return Flow::Cancel;
+    }
     match e.key {
-        // Escape goes to the screen, which closes.
-        "key.keyboard.escape" => return Flow::Continue,
-        "key.keyboard.backspace" => {
-            if let Some(f) = c.focus.and_then(|i| c.text(i)) {
-                if ctrl {
-                    f.clear();
-                } else {
-                    f.pop();
-                }
-            }
-        }
         "key.keyboard.tab" | "key.keyboard.enter" | "key.keyboard.keypad.enter" => {
             let order = c.order();
             if !order.is_empty() {
@@ -1054,11 +1212,7 @@ pub fn key_pressed(host: &dyn ClientHost, e: &mut ScreenKeyPressedPreEvent<'_>) 
                     None => 0,
                 };
                 c.focus = Some(order[next]);
-            }
-        }
-        "key.keyboard.v" if ctrl => {
-            if let Some(text) = host.clipboard_text() {
-                type_text(c, &text);
+                typing_reset();
             }
         }
         "key.keyboard.s" if ctrl => c.save(host, false),

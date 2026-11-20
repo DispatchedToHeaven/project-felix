@@ -66,6 +66,12 @@ struct Editor {
     shown: bool,
     close: bool,
     outbox: Vec<Vec<u8>>,
+    /// What it was when opened or last saved, and whether closing unsaved was warned of.
+    saved: SceneEd,
+    warned: bool,
+    /// What it was before each change, for Ctrl+Z, and what was undone, for Ctrl+Y.
+    history: Vec<SceneEd>,
+    future: Vec<SceneEd>,
 }
 
 static EDITOR: LazyLock<Mutex<Option<Editor>>> = LazyLock::new(Default::default);
@@ -81,8 +87,10 @@ impl IPayloadHandler for OpenHandler {
         let Ok(host) = context.client_host() else { return Ok(()) };
         let Ok(v) = crate::serde_json::from_slice::<Value>(&payload.0) else { return Ok(()) };
         let ed = v.get("file").filter(|f| !f.is_null()).map(SceneEd::from_json).unwrap_or_else(SceneEd::blank);
-        let mut anims: Vec<String> = crate::animations::names().into_iter().filter(|a| a.starts_with("animation.felix.")).collect();
-        anims.sort();
+        // Felix's first, then every other model's.
+        let mut anims: Vec<String> = crate::animations::names();
+        anims.sort_by_key(|a| (!a.starts_with("animation.felix."), a.clone()));
+        anims.dedup();
         anims.insert(0, String::new());
         crate::menu::yield_screen();
         let shown = host.mod_screen() == Some(SCREEN) || host.mod_screen_open(SCREEN);
@@ -102,7 +110,13 @@ impl IPayloadHandler for OpenHandler {
             shown,
             close: false,
             outbox: Vec::new(),
+            saved: Default::default(),
+            warned: false,
+            history: Vec::new(),
+            future: Vec::new(),
         };
+        let mut e = e;
+        e.saved = e.ed.clone();
         if let Ok(mut lock) = EDITOR.lock() {
             *lock = Some(e);
         }
@@ -133,12 +147,46 @@ impl Editor {
         o
     }
 
+    /// Keeps what it is now, to go back to.
+    fn remember(&mut self) {
+        if self.history.last() != Some(&self.ed) {
+            self.history.push(self.ed.clone());
+            self.future.clear();
+            if self.history.len() > 40 {
+                self.history.remove(0);
+            }
+        }
+    }
+
+    fn undo(&mut self) {
+        if let Some(before) = self.history.pop() {
+            self.future.push(std::mem::replace(&mut self.ed, before));
+            self.selected = self.selected.filter(|s| *s < self.ed.cast.len());
+            self.focus = None;
+            self.status = format!("Undone ({} more back)", self.history.len());
+        }
+    }
+
+    fn redo(&mut self) {
+        if let Some(next) = self.future.pop() {
+            self.history.push(std::mem::replace(&mut self.ed, next));
+            self.selected = self.selected.filter(|s| *s < self.ed.cast.len());
+            self.focus = None;
+            self.status = format!("Redone ({} more on)", self.future.len());
+        }
+    }
+
+    fn dirty(&self) -> bool {
+        self.ed != self.saved
+    }
+
     fn save(&mut self, play: bool) {
         match self.ed.to_json() {
             Ok(file) => {
                 let name = crate::profile::make_id(self.save_as.trim());
                 let body = json!({ "name": name, "file": file, "play": play });
                 self.outbox.push(crate::serde_json::to_vec(&body).unwrap_or_default());
+                self.saved = self.ed.clone();
                 self.status = format!("Sent: felixscene:{name}{}", if play { ", to play" } else { "" });
                 if play {
                     self.close = true;
@@ -158,10 +206,23 @@ fn cycle(i: usize, by: i32, n: usize) -> usize {
 }
 
 fn short_anim(a: &str) -> String {
-    if a.is_empty() { "(none)".into() } else { a.strip_prefix("animation.felix.").unwrap_or(a).to_string() }
+    if a.is_empty() {
+        "(none)".into()
+    } else {
+        a.strip_prefix("animation.felix.").or_else(|| a.strip_prefix("animation.")).unwrap_or(a).to_string()
+    }
 }
 
 fn act(e: &mut Editor, what: Do, by: i32) {
+    if !matches!(what, Do::Close) {
+        e.warned = false;
+    }
+    // What it was, to go back to: before a change, and before typing in another field.
+    match what {
+        Do::Field(f) if e.focus != Some(f) => e.remember(),
+        Do::Field(_) | Do::Save(_) | Do::Close => {}
+        _ => e.remember(),
+    }
     match what {
         Do::Field(f) => e.focus = Some(f),
         Do::LeadAnim => {
@@ -210,7 +271,7 @@ fn act(e: &mut Editor, what: Do, by: i32) {
             }
         }
         Do::Save(play) => e.save(play),
-        Do::Close => e.close = true,
+        Do::Close => e.close = crate::creator::may_close(e.dirty(), &mut e.warned, &mut e.status),
     }
 }
 
@@ -296,6 +357,7 @@ pub fn render(host: &dyn ClientHost, ev: &mut ScreenRenderPostEvent<'_>) {
     y += 10.0;
     e.list = [x, y, W - 156.0, ROWS as f32 * ROW];
     let names = e.ed.who_names();
+    e.scroll = e.scroll.min(e.ed.cues.len().saturating_sub(ROWS));
     let end = (e.scroll + ROWS).min(e.ed.cues.len());
     for i in e.scroll..end {
         let c = e.ed.cues[i].clone();
@@ -350,6 +412,7 @@ pub fn mouse_pressed(host: &dyn ClientHost, ev: &mut ScreenMouseButtonPressedPre
     e.focus = None;
     if let Some(i) = role_at(e, mouse) {
         e.selected = Some(i);
+        e.remember();
         e.drag = true;
     } else if inside([e.stage[0], e.stage[1], STAGE[0], STAGE[1]], mouse) {
         e.selected = None;
@@ -412,12 +475,7 @@ pub fn mouse_scrolled(host: &dyn ClientHost, mouse: [f32; 2], up: bool) -> Flow 
 fn type_text(e: &mut Editor, text: &str) {
     let Some(f) = e.focus else { return };
     let Some(s) = e.text(f) else { return };
-    for ch in text.chars().filter(|ch| !ch.is_control()) {
-        if s.chars().count() >= 200 {
-            break;
-        }
-        s.push(ch);
-    }
+    crate::creator::type_in(s, text, 200);
 }
 
 pub fn char_typed(host: &dyn ClientHost, ev: &mut ScreenCharTypedPreEvent<'_>) -> Flow {
@@ -438,17 +496,17 @@ pub fn key_pressed(host: &dyn ClientHost, ev: &mut ScreenKeyPressedPreEvent<'_>)
     let Some(e) = lock.as_mut() else { return Flow::Continue };
     let ctrl = ev.modifiers & 2 != 0 && ev.modifiers & 4 == 0;
     let shift = ev.modifiers & 1 != 0;
+    if ev.key == "key.keyboard.escape" {
+        let dirty = e.dirty();
+        return if crate::creator::may_close(dirty, &mut e.warned, &mut e.status) { Flow::Continue } else { Flow::Cancel };
+    }
+    e.warned = false;
+    if let Some(s) = e.focus.and_then(|f| e.text(f))
+        && crate::creator::typing_key(host, s, ev.key, ev.modifiers, 200)
+    {
+        return Flow::Cancel;
+    }
     match ev.key {
-        "key.keyboard.escape" => return Flow::Continue,
-        "key.keyboard.backspace" => {
-            if let Some(s) = e.focus.and_then(|f| e.text(f)) {
-                if ctrl {
-                    s.clear();
-                } else {
-                    s.pop();
-                }
-            }
-        }
         "key.keyboard.tab" | "key.keyboard.enter" | "key.keyboard.keypad.enter" => {
             let order = e.order();
             let at = e.focus.and_then(|f| order.iter().position(|x| *x == f));
@@ -458,13 +516,11 @@ pub fn key_pressed(host: &dyn ClientHost, ev: &mut ScreenKeyPressedPreEvent<'_>)
                 None => 0,
             };
             e.focus = order.get(next).copied();
-        }
-        "key.keyboard.v" if ctrl => {
-            if let Some(text) = host.clipboard_text() {
-                type_text(e, &text);
-            }
+            crate::creator::typing_reset();
         }
         "key.keyboard.s" if ctrl => e.save(false),
+        "key.keyboard.z" if ctrl && !shift => e.undo(),
+        "key.keyboard.y" | "key.keyboard.z" if ctrl => e.redo(),
         _ => {}
     }
     Flow::Cancel
