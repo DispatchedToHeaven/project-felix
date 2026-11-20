@@ -199,7 +199,11 @@ pub fn bake(host: &mut dyn ServerHost, me: EntityRef, at: Option<[f64; 3]>) {
     if !crate::jobs::take(host, chest, from, n) {
         return;
     }
-    if crate::jobs::put_item(host, chest, to, 1) == 0 {
+    let made = crate::jobs::put_item(host, chest, to, 1) != 0;
+    if made {
+        crate::skills::practice(host, me, crate::skill::Skill::Cooking, 150.0);
+    }
+    if !made {
         crate::jobs::put_item(host, chest, from, n);
         if may_say(me.id(), now, 3000) {
             crate::heart::say_aloud(host, me, "My shelves are full!");

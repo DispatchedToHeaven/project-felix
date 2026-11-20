@@ -137,7 +137,14 @@ pub fn felt(host: &mut dyn ServerHost, npc: EntityRef, event: &str, counts: bool
     let (thought, fun) = match event {
         "gift" => (Some("gift"), None),
         "praise" => (Some("praised"), Some((mind::TALK, 6.0))),
-        "talk" => (Some("talked"), Some((mind::TALK, 12.0))),
+        "talk" => {
+            crate::skills::practice(host, npc, crate::skill::Skill::Talking, 60.0);
+            (Some("talked"), Some((mind::TALK, 12.0)))
+        }
+        "trade" => {
+            crate::skills::practice(host, npc, crate::skill::Skill::Trading, 100.0);
+            (None, None)
+        }
         "apology" => (Some("apology"), None),
         "scold" => (Some("scolded"), None),
         "hurt_by_player" => (Some("hurt"), None),
@@ -293,6 +300,10 @@ fn current(host: &mut dyn ServerHost, npc: EntityRef, m: &mut Mind, traits: &[Tr
     }
     if crate::families::partner_name(host, npc).is_some() {
         out.push("with_love");
+    }
+    // Doing work it likes (see `skills`).
+    if let Some(t) = crate::skills::work_thought(host, npc) {
+        out.push(t);
     }
     out
 }
@@ -560,9 +571,20 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
             }
             vec![format!("{} NPCs now have mood {mood:.0}", npcs.len())]
         }
+        ["felix", "mind", "break"] if word.as_deref() == Some("none") => {
+            for n in &npcs {
+                let now = now_of(&*host, *n);
+                let mut m = get(host, *n);
+                if m.brk.is_some() {
+                    m.brk = Some((Break::Binge, now));
+                }
+                put(host, *n, m);
+            }
+            vec![format!("{} NPCs come out of it at their next look", npcs.len())]
+        }
         ["felix", "mind", "break"] => {
             let Some(b) = word.as_deref().and_then(Break::parse) else {
-                let _ = host.commands().feedback(Text::literal("Breaks: sulk, hide, binge, snap, tantrum, daze, leave, freeze."));
+                let _ = host.commands().feedback(Text::literal("Breaks: sulk, hide, binge, snap, tantrum, daze, leave, freeze (none: it ends)."));
                 return Flow::Cancel;
             };
             for n in &npcs {

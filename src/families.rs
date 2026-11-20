@@ -162,6 +162,12 @@ pub fn on_death(host: &mut dyn ServerHost, victim: u32) {
     let _ = FAMILY.set(host, Holder::Entity(o.id()), f);
 }
 
+/// Whether NPC `e` is a child (born in the village, not grown up yet).
+pub fn is_child(host: &mut dyn ServerHost, e: EntityRef) -> bool {
+    let f = family_of(host, e);
+    f.child && !f.grown
+}
+
 /// NPCs `a` and `b` become a couple, in `a`'s home (else `b`'s).
 pub fn couple(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef) -> bool {
     let (Some(ua), Some(ub)) = (a.uuid(host), b.uuid(host)) else { return false };

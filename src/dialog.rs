@@ -37,7 +37,7 @@
 //! for its own), `quest` (the player takes that quest), `hand_in`, `give_up` (the quest for this NPC),
 //! `place` (its place of that name, `home`, `work`…, is where the player stands), `shop` (its stall: a
 //! shop id, or `true` for its own), `gear` (`take`: what the player holds; `return`: all of it
-//! back), `stats` (it says its level, health, armour and hits), `mind` (it says how it feels).
+//! back), `stats` (it says its level, health, armour and hits), `mind` (it says how it feels), `skills` (its past and what it is good at).
 //! `remember` (+ `is`, default `yes`: the player's memory, for later talks and other NPCs),
 //! `forget`, `dialog` (goes on in another dialog, from its start), `feed` (the player gives it the
 //! best food they have, see `need`), `family` (it tells the player about its family, see
@@ -164,6 +164,8 @@ pub enum Action {
     Stats,
     /// It says how it feels: its mood, what is on its mind, its traits.
     Mind,
+    /// It tells its past and what it is good at.
+    Skills,
     Remember(String, String),
     Forget(String),
     Dialog(String),
@@ -422,7 +424,7 @@ pub fn commands(action: &Action, player: &str, npc: &str) -> Vec<String> {
         Action::Tag(t) => vec![format!("tag {player} add {t}")],
         Action::Untag(t) => vec![format!("tag {player} remove {t}")],
         Action::Sound(s) => vec![format!("execute as {npc} at @s run playsound {s} neutral @a ~ ~ ~")],
-        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Place(_) | Action::Shop(_) | Action::Trade(_) | Action::Gear(_) | Action::Stats | Action::Mind | Action::Remember(..) | Action::Forget(_) | Action::Dialog(_) | Action::Feed | Action::Family | Action::Gift | Action::Tastes | Action::AskOut | Action::Propose | Action::Part | Action::Reminisce => Vec::new(),
+        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Place(_) | Action::Shop(_) | Action::Trade(_) | Action::Gear(_) | Action::Stats | Action::Mind | Action::Skills | Action::Remember(..) | Action::Forget(_) | Action::Dialog(_) | Action::Feed | Action::Family | Action::Gift | Action::Tastes | Action::AskOut | Action::Propose | Action::Part | Action::Reminisce => Vec::new(),
     }
 }
 
@@ -620,6 +622,8 @@ pub fn read_actions(v: Option<&Value>) -> Result<Vec<Action>, String> {
                 Action::Stats
             } else if m.contains_key("mind") {
                 Action::Mind
+            } else if m.contains_key("skills") {
+                Action::Skills
             } else if let Some(sh) = m.get("shop") {
                 Action::Shop(sh.as_str().unwrap_or("").to_string())
             } else if let Some(t) = m.get("trade").and_then(Value::as_i64) {

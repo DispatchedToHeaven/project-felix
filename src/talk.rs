@@ -740,6 +740,11 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
                     crate::minds::tell(host, npc, p);
                 }
             }
+            Action::Skills => {
+                if let Some(p) = player {
+                    crate::skills::tell(host, npc, p);
+                }
+            }
             Action::Shop(id) => {
                 if let Some(p) = player {
                     crate::shops::board(host, p, npc, id);

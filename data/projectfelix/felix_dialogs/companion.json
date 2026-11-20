@@ -96,6 +96,14 @@
           ]
         },
         {
+          "text": "What are you good at?",
+          "actions": [
+            {
+              "skills": true
+            }
+          ]
+        },
+        {
           "text": "Have an apple.",
           "if": {
             "item": "minecraft:apple"

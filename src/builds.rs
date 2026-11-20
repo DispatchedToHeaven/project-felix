@@ -310,6 +310,7 @@ pub fn work(host: &mut dyn ServerHost, me: EntityRef) {
                 }
             }
             crate::talk::queue(format!("execute in {} run setblock {} {} {} {state}", level.dimension_id(), at[0], at[1], at[2]));
+            crate::skills::practice(host, me, crate::skill::Skill::Building, 40.0);
             let _ = level.play_sound(host, "minecraft:block.wood.place", centre, SoundSource::Blocks, 0.6, 1.0);
         }
     }

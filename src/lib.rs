@@ -37,6 +37,9 @@
 //! - `need` is NPCs' food (no mod API types); `needs` feeds them and has them say when hungry.
 //! - `mind` is an NPC's mind: thoughts, mood, rest and fun, traits, breaks and inspirations (no
 //!   mod API types); `minds` keeps them on the server and has NPCs live by them.
+//! - `skill` is what an NPC is good at, what it loves doing, and its past (no mod API types);
+//!   `skills` has it learn by doing, work by its skill, and tell of it.
+//! - `doors` opens the wooden doors and gates NPCs come to, and shuts them after.
 //! - `remark` is what companions say on the way (no mod API types); `companions` has them say it
 //!   and help their hurt player.
 //! - `bond` is how close an NPC and a player are, up to romance (no mod API types); `bonds` keeps it.
@@ -108,6 +111,9 @@ pub mod need;
 pub mod needs;
 pub mod mind;
 pub mod minds;
+pub mod skill;
+pub mod skills;
+pub mod doors;
 pub mod job;
 pub mod jobs;
 pub mod geo;
@@ -232,6 +238,7 @@ impl Hooks for Felix {
         rulesets::register_commands(e);
         needs::register_commands(e);
         minds::register_commands(e);
+        skills::register_commands(e);
         builds::register_commands(e);
         squad::register_commands(e);
         families::register_commands(e);
@@ -269,6 +276,9 @@ impl Hooks for Felix {
             return Flow::Cancel;
         }
         if let Flow::Cancel = builds::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = skills::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = minds::run_command(host, e) {
@@ -353,6 +363,8 @@ impl Hooks for Felix {
             }
             needs::tick(host);
             minds::tick(host);
+            skills::tick(host);
+            doors::tick(host);
             squad::tick(host);
             families::tick(host);
             bonds::tick(host);
@@ -387,6 +399,7 @@ impl Hooks for Felix {
             scenes::gone(host, e.entity);
             companion::forget(e.entity);
             minds::forget(e.entity);
+            skills::forget(e.entity);
             gear::forget(e.entity);
             speech::forget(e.entity);
             builds::forget(e.entity);
@@ -422,6 +435,8 @@ impl Hooks for Felix {
         matches::clear();
         needs::clear();
         minds::clear();
+        skills::clear();
+        doors::clear();
         quests::clear();
         routines::clear();
         rulebook::clear();

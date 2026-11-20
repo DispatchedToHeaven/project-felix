@@ -194,6 +194,8 @@ pub const THOUGHTS: &[Thought] = &[
     t("night_day", "Awake in daylight", -4.0, 0, 1),
     t("night_good", "Loves the night", 6.0, 0, 1),
     t("with_love", "Has someone", 4.0, 0, 1),
+    t("work_like", "Doing work it likes", 5.0, 0, 1),
+    t("work_love", "Doing work it loves", 9.0, 0, 1),
     t("cheerful", "Cheerful", 6.0, 0, 1),
     t("gloomy", "Gloomy", -6.0, 0, 1),
 ];

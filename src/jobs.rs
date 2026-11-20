@@ -309,6 +309,11 @@ fn dist_xz(a: [f64; 3], b: [f64; 3]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
 
+/// The job NPC `id` is at now, if it is working.
+pub fn working_job(id: u32) -> Option<Job> {
+    STATE.lock().ok()?.working.get(&id)?.job
+}
+
 /// One NPC's work this step.
 fn work(host: &mut dyn ServerHost, me: EntityRef, job: Job, place: &str) {
     // A builder builds its site (see `builds`).
@@ -337,11 +342,24 @@ fn work(host: &mut dyn ServerHost, me: EntityRef, job: Job, place: &str) {
         if dist_xz(pos, stand) <= reach && (pos[1] - stand[1]).abs() <= 4.0 {
             w.target = None;
             // Hard workers (and the inspired) are quicker, lazy ones slower.
-            let rest = (job.rest() as f32 / crate::minds::work_factor(host, me)) as i64;
+            // And the more skilled (see `skills`).
+            let speed = crate::minds::work_factor(host, me) * crate::skills::work_speed(host, me, job.name());
+            let rest = (job.rest() as f32 / speed) as i64;
             w.next = now + rest + if job == Job::Fish { now % 400 + i64::from(id) % 300 } else { 0 };
             if still(&*host, level, job, t) {
-                let got = act(host, me, level, job, t);
+                let mut got = act(host, me, level, job, t);
                 w.done += 1;
+                // It gets better at it; skilled, it brings more (see `skills`).
+                if !got.is_empty() {
+                    if let Some(s) = crate::skill::Skill::of_job(job.name()) {
+                        crate::skills::practice(host, me, s, 120.0);
+                    }
+                    let bonus = crate::skills::bonus(host, me, job.name());
+                    if ((now as u64).wrapping_mul(2_654_435_761) ^ u64::from(id)) % 1000 < (bonus * 1000.0) as u64 {
+                        let n = got[0].count();
+                        let _ = got[0].set_count(n + 1);
+                    }
+                }
                 if w.done % 6 == 1 && !got.is_empty() {
                     let lines = job.lines();
                     crate::heart::say_aloud(host, me, lines[(now as usize / 20) % lines.len()]);

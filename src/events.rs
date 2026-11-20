@@ -288,6 +288,9 @@ fn event_of(host: &mut dyn ServerHost, npc: EntityRef) -> Option<Arc<Event>> {
 /// What NPC `npc` sells for `base` now (less at an event).
 pub fn price(host: &mut dyn ServerHost, npc: EntityRef, base: u32) -> u32 {
     let p = event_of(host, npc).map_or(base, |e| e.price(base));
+    // A shrewd trader asks more, a poor one less (see `skills`).
+    let lvl = crate::skills::level(host, npc, crate::skill::Skill::Trading) as f32;
+    let p = ((p as f32 * (0.9 + 0.01 * lvl)).round() as u32).max(1);
     // In a generous mood, a fifth off (see `minds`).
     if crate::minds::inspired(npc.id()) == Some(crate::mind::Inspiration::Trade) { (p * 4 / 5).max(1) } else { p }
 }
