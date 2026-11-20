@@ -640,7 +640,7 @@ fn feel_at(host: &mut dyn ServerHost, id: u32, event: &str, player: Option<Playe
     }
     let now = now_of(&*host, me);
     let who = player.map(|p| (p.uuid(), p.name(&*host).unwrap_or_default()));
-    let (c, labels, next, name) = {
+    let (c, labels, next, name, counts) = {
         let Ok(mut s) = STATE.lock() else { return };
         let gate = match &who {
             Some((u, _)) => {
@@ -691,8 +691,10 @@ fn feel_at(host: &mut dyn ServerHost, id: u32, event: &str, player: Option<Playe
         // Kind words said too often move neither its liking nor its mood (it sees through it).
         let flattered = !gate && c.delta(event) > 0;
         let next = if (event == "apology" && !theirs) || flattered { None } else { c.next(&l.heart.mood, event, relation).map(str::to_string) };
-        (c, labels, next, l.name.clone())
+        (c, labels, next, l.name.clone(), gate)
     };
+    // What it thinks of it (see `minds`).
+    crate::minds::felt(host, me, event, counts);
     if let (Some(p), Some((label, worse))) = (player, labels) {
         let line = match (label, worse) {
             ("friend", _) => format!("{name} counts you a friend now."),
@@ -851,9 +853,14 @@ pub fn talks_to(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) ->
         let value = l.heart.value(player.uuid()).unwrap_or_else(|| base_for(l, &c, player.uuid(), None));
         (c, value, l.name.clone())
     };
+    // In a break it won't talk (see `minds`).
+    if crate::minds::shuts_out(host, npc) {
+        return false;
+    }
     if value > c.hate_at {
         feel(host, npc, Some(player), "talk");
         greet(host, npc, player);
+        crate::minds::on_talk(host, npc, player);
         return true;
     }
     let player_name = player.name(&*host).unwrap_or_default();
@@ -916,7 +923,7 @@ pub fn order(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef, mode:
     let player_name = player.name(&*host).unwrap_or_default();
     let m = c.mood(&mood).clone();
     // Hungry, it obeys worse (see `needs`).
-    if random() >= c.obey_chance(&mood, value) * crate::needs::obey_factor(npc.id()) {
+    if random() >= c.obey_chance(&mood, value) * crate::needs::obey_factor(npc.id()) * crate::minds::obey_factor(npc.id()) {
         let line = pick(&m.refuse).cloned().unwrap_or_else(|| "No.".into());
         say(host, npc, &name, &fill(&line, &player_name, &name, ""));
         if let Some(a) = &m.animation {
@@ -1268,6 +1275,8 @@ fn talk(host: &mut dyn ServerHost, a: u32, b: u32, now: i64) -> bool {
         if let Some(p) = other.position(&*host) {
             let _ = MobRef::new(me).look_at(host, [p[0], p[1] + 1.6, p[2]]);
         }
+        // A chat is fun for both (see `minds`).
+        crate::minds::enjoy(host, me, crate::mind::TALK, 8.0);
     }
     let name_of = |id: u32| STATE.lock().ok().and_then(|s| s.live.get(&id).map(|l| l.name.clone())).unwrap_or_else(|| "NPC".into());
     match plan {

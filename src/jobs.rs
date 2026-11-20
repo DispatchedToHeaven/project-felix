@@ -336,7 +336,9 @@ fn work(host: &mut dyn ServerHost, me: EntityRef, job: Job, place: &str) {
         let reach = if job == Job::Fish { 2.5 } else { 2.8 };
         if dist_xz(pos, stand) <= reach && (pos[1] - stand[1]).abs() <= 4.0 {
             w.target = None;
-            w.next = now + job.rest() + if job == Job::Fish { now % 400 + i64::from(id) % 300 } else { 0 };
+            // Hard workers (and the inspired) are quicker, lazy ones slower.
+            let rest = (job.rest() as f32 / crate::minds::work_factor(host, me)) as i64;
+            w.next = now + rest + if job == Job::Fish { now % 400 + i64::from(id) % 300 } else { 0 };
             if still(&*host, level, job, t) {
                 let got = act(host, me, level, job, t);
                 w.done += 1;
@@ -404,6 +406,10 @@ pub fn tick(host: &mut dyn ServerHost) {
     let mut busy = Vec::new();
     for (id, entry_job, place) in at_work {
         let Some(me) = host.entity(id) else { continue };
+        // In a break it does no work (see `minds`).
+        if crate::minds::breaking(id).is_some() {
+            continue;
+        }
         let Some(job) = entry_job.as_deref().and_then(Job::parse).or_else(|| job_of(host, me)) else { continue };
         busy.push(id);
         work(host, me, job, &place);

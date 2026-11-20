@@ -151,7 +151,11 @@ fn leave_old(host: &mut dyn ServerHost, e: EntityRef, new: u128) {
 /// `living_death`: an NPC died, and its partner (if here) has none now.
 pub fn on_death(host: &mut dyn ServerHost, victim: u32) {
     let Some(v) = host.entity(victim).filter(|v| companion::is_npc(&*host, *v)) else { return };
-    let Some((partner, _)) = family_of(host, v).partner else { return };
+    // Its family grieves, those who saw it remember (see `minds`).
+    let f = family_of(host, v);
+    let kin: Vec<u128> = f.partner.iter().chain(&f.children).chain(&f.parents).map(|(u, _)| *u).collect();
+    crate::minds::on_death(host, v, &kin);
+    let Some((partner, _)) = f.partner else { return };
     let Some(o) = crate::heart::npc_by_uuid(partner).and_then(|id| host.entity(id)) else { return };
     let mut f = family_of(host, o);
     f.partner = None;

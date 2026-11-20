@@ -195,6 +195,11 @@ pub fn asleep(id: u32) -> bool {
     STATE.lock().ok().and_then(|s| s.days.get(&id).map(|d| d.asleep)).unwrap_or(false)
 }
 
+/// The bed NPC `id` sleeps in now, if it does.
+pub fn bed_of(id: u32) -> Option<[i32; 3]> {
+    STATE.lock().ok().and_then(|s| s.days.get(&id).and_then(|d| d.bed))
+}
+
 /// Whether NPC `id` has a routine (as last read).
 pub fn has_routine(id: u32) -> bool {
     STATE.lock().ok().and_then(|s| s.days.get(&id).map(|d| d.routine.is_some())).unwrap_or(false)

@@ -245,8 +245,8 @@ impl Profile {
 pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
     let fine = json!({ "any": [ { "mood": "calm" }, { "mood": "happy" } ] });
     let options = vec![
-        json!({ "text": "How are you?", "if": fine, "goto": "feel_fine" }),
-        json!({ "text": "How are you?", "if": { "not": fine }, "goto": "feel_bad" }),
+        // It says how it really feels: its mood, what is on its mind, its traits (see `minds`).
+        json!({ "text": "How are you?", "actions": [ { "mind": true } ] }),
         json!({ "text": "Have an apple.", "if": { "item": "minecraft:apple" }, "actions": [ { "take": "minecraft:apple" }, { "feel": "gift" } ], "goto": "thanks" }),
         json!({ "text": "I'm sorry.", "if": { "all": [ { "not": fine }, { "fault": true } ] }, "actions": [ { "feel": "apology" } ], "goto": "sorry" }),
         json!({ "text": "Who upset you?", "if": { "all": [ { "not": fine }, { "fault": false } ] }, "goto": "not_you" }),
@@ -258,8 +258,6 @@ pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
     ];
     let again = json!([ { "text": "Something else...", "goto": back }, { "text": "Bye." } ]);
     let nodes = vec![
-        ("feel_fine".to_string(), json!({ "text": "I'm fine, thanks for asking.", "options": again })),
-        ("feel_bad".to_string(), json!({ "text": "Not great, @player. Not great at all.", "options": again })),
         ("thanks".to_string(), json!({ "text": "For me? Thank you!", "options": again })),
         ("sorry".to_string(), json!({ "text": "...All right. Let's forget it.", "options": again })),
         ("us".to_string(), json!({ "text": "Yes, @player?", "options": [

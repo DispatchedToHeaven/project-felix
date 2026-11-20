@@ -287,7 +287,9 @@ fn event_of(host: &mut dyn ServerHost, npc: EntityRef) -> Option<Arc<Event>> {
 
 /// What NPC `npc` sells for `base` now (less at an event).
 pub fn price(host: &mut dyn ServerHost, npc: EntityRef, base: u32) -> u32 {
-    event_of(host, npc).map_or(base, |e| e.price(base))
+    let p = event_of(host, npc).map_or(base, |e| e.price(base));
+    // In a generous mood, a fifth off (see `minds`).
+    if crate::minds::inspired(npc.id()) == Some(crate::mind::Inspiration::Trade) { (p * 4 / 5).max(1) } else { p }
 }
 
 /// The quests NPC `npc` offers for the event it is at.

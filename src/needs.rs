@@ -115,6 +115,18 @@ pub fn eat(host: &mut dyn ServerHost, npc: EntityRef, points: u8) {
     }
 }
 
+/// NPC `npc` eats the best thing in its pantry; false if there is nothing.
+pub fn eat_from_pantry(host: &mut dyn ServerHost, npc: EntityRef) -> bool {
+    let Some(p) = pantry(host, npc) else { return false };
+    let Some((item, points)) = FOODS.iter().find(|f| crate::jobs::amount(host, p, f.0) > 0).copied() else { return false };
+    if !crate::jobs::take(host, p, item, 1) {
+        return false;
+    }
+    eat(host, npc, points);
+    crate::minds::ate(host, npc, item);
+    true
+}
+
 /// A player feeds NPC `npc` from their own food: the best they have.
 pub fn feed(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) {
     let name = player.name(&*host).unwrap_or_default();
@@ -128,6 +140,7 @@ pub fn feed(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) {
     };
     crate::talk::queue(format!("clear {name} {item} 1"));
     eat(host, npc, *points);
+    crate::minds::ate(host, npc, item);
     crate::heart::say_to(host, npc, player, "Mmm. That hit the spot.");
     crate::heart::feel(host, npc, Some(player), "gift");
 }
@@ -156,6 +169,7 @@ pub fn tick(host: &mut dyn ServerHost) {
                 }
                 food = (food + points).min(FULL);
                 eat_effects(host, npc);
+                crate::minds::ate(host, npc, item);
                 if food > EATS_AT {
                     break;
                 }
