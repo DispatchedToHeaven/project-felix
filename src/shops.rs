@@ -333,12 +333,10 @@ pub fn tick(host: &mut dyn ServerHost) {
         if st.reopen.is_empty() {
             return;
         }
-        let Some(now) = st.reopen.first().and_then(|r| host.entity(r.1)).map(|e| now_of(&*host, e)) else {
-            st.reopen.clear();
-            return;
-        };
-        let (due, wait): (Vec<_>, Vec<_>) = std::mem::take(&mut st.reopen).into_iter().partition(|r| r.3 <= now);
-        st.reopen = wait;
+        let Some(now) = host.level(crate::pace::level()).and_then(|l| l.game_time(&*host)) else { return };
+        // Due, and its NPC in the level ticking now (one whose NPC was lost goes after a while).
+        let (due, wait): (Vec<_>, Vec<_>) = std::mem::take(&mut st.reopen).into_iter().partition(|r| r.3 <= now && crate::pace::here(&*host, r.1));
+        st.reopen = wait.into_iter().filter(|r| now - r.3 < 400).collect();
         due.into_iter().map(|r| (r.0, r.1, r.2)).collect()
     };
     for (p, npc, named) in due {

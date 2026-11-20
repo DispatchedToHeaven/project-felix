@@ -131,7 +131,6 @@ enum Seat {
 }
 
 struct Game {
-    npc: u32,
     kind: GameKind,
     board: Board,
     history: Vec<String>,
@@ -144,7 +143,6 @@ struct Game {
     moved: i64,
     ended: Option<i64>,
     restore: Mode,
-    yaw: f32,
     thinking: Option<Arc<Mutex<Option<NpcMove>>>>,
     /// The other NPC and its orders to go back to.
     other: Option<(u32, Mode)>,
@@ -296,7 +294,6 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, kind: GameKind, player: 
         GameKind::Checkers => Board::Checkers(checkers::Position::start()),
     };
     let game = Game {
-        npc: npc.id(),
         kind,
         history: Vec::new(),
         board,
@@ -308,7 +305,6 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, kind: GameKind, player: 
         moved: now,
         ended: None,
         restore,
-        yaw,
         thinking: None,
         other: None,
         watchers: Vec::new(),
@@ -390,7 +386,6 @@ pub fn start_npcs(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef, kind: G
         GameKind::Checkers => Board::Checkers(checkers::Position::start()),
     };
     let mut game = Game {
-        npc: a.id(),
         kind,
         history: Vec::new(),
         board,
@@ -402,7 +397,6 @@ pub fn start_npcs(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef, kind: G
         moved: now,
         ended: None,
         restore,
-        yaw,
         thinking: None,
         other: Some((b.id(), restore_b)),
         watchers: Vec::new(),

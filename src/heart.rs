@@ -390,7 +390,7 @@ impl Live {
 
 enum Heard {
     Hurt { victim: u32, by: u32 },
-    Died { victim: u32, uuid: u128, name: String, at: [f64; 3], killer: u32 },
+    Died { victim: u32, uuid: u128, name: String, at: [f64; 3], killer: u32, dim: &'static str },
 }
 
 /// An order it will carry out, when it has taken its time.
@@ -402,10 +402,9 @@ struct Later {
 
 #[derive(Default)]
 struct State {
-    last: i64,
-    minute: i64,
     live: HashMap<u32, Live>,
-    heard: Vec<Heard>,
+    /// What it heard of, and how many looks it waited for its level.
+    heard: Vec<(Heard, u8)>,
     later: Vec<Later>,
     /// When a kind event last raised a relation: (NPC, player, event).
     kind: HashMap<(u32, u128, String), i64>,
@@ -751,7 +750,7 @@ pub fn on_hurt(victim: i32, by: i32) {
         && let Ok(mut s) = STATE.lock()
         && s.heard.len() < 256
     {
-        s.heard.push(Heard::Hurt { victim: victim as u32, by: by as u32 });
+        s.heard.push((Heard::Hurt { victim: victim as u32, by: by as u32 }, 0));
     }
 }
 
@@ -764,8 +763,9 @@ pub fn on_death(host: &mut dyn ServerHost, victim: u32, killer: i32) {
     let Some(uuid) = e.uuid(host) else { return };
     let name = e.name(&*host).unwrap_or_else(|| "NPC".into());
     let at = e.position(&*host).unwrap_or([0.0; 3]);
+    let dim = e.level(&*host).map_or(crate::pace::level(), |l| l.dimension_id());
     if let Ok(mut s) = STATE.lock() {
-        s.heard.push(Heard::Died { victim, uuid, name, at, killer: killer as u32 });
+        s.heard.push((Heard::Died { victim, uuid, name, at, killer: killer as u32, dim }, 0));
     }
 }
 
@@ -968,20 +968,48 @@ pub fn tick(host: &mut dyn ServerHost) {
     let Some(now) = npcs.iter().find_map(|id| host.entity(*id).map(|e| now_of(&*host, e))) else { return };
     let (heard, later, minute) = {
         let Ok(mut s) = STATE.lock() else { return };
-        if now - s.last < SCAN && now >= s.last {
+        // Each level at its own pace (its NPCs are the ones found while it ticks).
+        if !crate::pace::since("heart", now, SCAN) {
             return;
         }
-        s.last = now;
         s.seed ^= (now as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-        let minute = now - s.minute >= MINUTE || now < s.minute;
+        let minute = crate::pace::since("heart.minute", now, MINUTE);
         if minute {
-            s.minute = now;
             s.kind.retain(|_, t| now - *t < GIFT_REST && now >= *t);
         }
         let (due, wait): (Vec<Later>, Vec<Later>) = std::mem::take(&mut s.later).into_iter().partition(|l| l.at <= now);
         s.later = wait;
         (std::mem::take(&mut s.heard), due, minute)
     };
+    // What happened in this level is for its NPCs; the rest waits for its own (a while).
+    let mut mine = Vec::new();
+    let mut rest = Vec::new();
+    for (h, waited) in heard {
+        let ours = match &h {
+            Heard::Hurt { victim, .. } => crate::pace::here(&*host, *victim),
+            Heard::Died { dim, .. } => *dim == crate::pace::level(),
+        };
+        if ours {
+            mine.push(h);
+        } else if waited < 60 {
+            rest.push((h, waited + 1));
+        }
+    }
+    let heard = mine;
+    let mut later_rest = Vec::new();
+    for l in later {
+        if crate::pace::here(&*host, l.npc) || now - l.at > 2400 {
+            if let Some(e) = host.entity(l.npc) {
+                companion::set_orders(host, e, l.mode);
+            }
+        } else {
+            later_rest.push(l);
+        }
+    }
+    if let Ok(mut s) = STATE.lock() {
+        s.heard.extend(rest);
+        s.later.extend(later_rest);
+    }
     for id in &npcs {
         if let Some(e) = host.entity(*id)
             && load(host, e)
@@ -997,15 +1025,10 @@ pub fn tick(host: &mut dyn ServerHost) {
             }
         }
     }
-    for l in later {
-        if let Some(e) = host.entity(l.npc) {
-            companion::set_orders(host, e, l.mode);
-        }
-    }
     for h in heard {
         match h {
             Heard::Hurt { victim, by } => hurt(host, victim, by),
-            Heard::Died { victim, uuid, name, at, killer } => died(host, victim, uuid, &name, at, killer),
+            Heard::Died { victim, uuid, name, at, killer, .. } => died(host, victim, uuid, &name, at, killer),
         }
     }
     // Moods that pass with time.
@@ -1054,7 +1077,7 @@ pub fn tick(host: &mut dyn ServerHost) {
             let dirty = s
                 .live
                 .iter_mut()
-                .filter(|(_, l)| l.dirty)
+                .filter(|(id, l)| l.dirty && crate::pace::here(&*host, **id))
                 .map(|(id, l)| {
                     l.dirty = false;
                     (*id, l.heart.clone())

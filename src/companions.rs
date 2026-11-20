@@ -21,7 +21,6 @@ struct Along {
 #[derive(Default)]
 struct State {
     along: HashMap<u32, Along>,
-    ticks: u32,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -43,11 +42,8 @@ fn fill(line: &str, p: &str) -> String {
 
 /// The server tick: each companion following its player looks about it.
 pub fn tick(host: &mut dyn ServerHost) {
-    let step = STATE.lock().map(|mut s| {
-        s.ticks = s.ticks.wrapping_add(1);
-        s.ticks % 20 == 0
-    });
-    if !matches!(step, Ok(true)) {
+    // Each level at its own pace (its NPCs are the ones found while it ticks).
+    if !crate::pace::every("companions", 20) {
         return;
     }
     let npcs = companion::npcs();

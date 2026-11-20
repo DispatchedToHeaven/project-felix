@@ -60,7 +60,6 @@ const ROUND: u32 = 400;
 
 #[derive(Default)]
 struct State {
-    ticks: u32,
     /// When each baker bakes next.
     oven: HashMap<u32, i64>,
     /// When each NPC last said something of the market, and each player last heard of a shortage.
@@ -356,11 +355,8 @@ fn talk_of_shortage(host: &mut dyn ServerHost, now: i64) {
 
 /// The server tick: wages, bakers buying, hungry NPCs buying meals, talk of shortages.
 pub fn tick(host: &mut dyn ServerHost) {
-    let step = STATE.lock().map(|mut s| {
-        s.ticks = s.ticks.wrapping_add(1);
-        s.ticks % ROUND == 0
-    });
-    if !matches!(step, Ok(true)) {
+    // Each level at its own pace (its NPCs are the ones found while it ticks).
+    if !crate::pace::every("markets", ROUND) {
         return;
     }
     let npcs: Vec<EntityRef> = companion::npcs().into_iter().filter_map(|id| host.entity(id)).collect();

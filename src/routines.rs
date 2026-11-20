@@ -143,9 +143,9 @@ struct Day {
 
 #[derive(Default)]
 struct State {
-    last: i64,
     days: HashMap<u32, Day>,
-    hurt: Vec<u32>,
+    /// Sleepers hurt, and how many looks each waited for its level.
+    hurt: Vec<(u32, u8)>,
     /// Beds taken, by the NPC in them.
     beds: HashMap<[i32; 3], u32>,
 }
@@ -318,7 +318,7 @@ pub fn on_hurt(victim: i32) {
         && let Ok(mut s) = STATE.lock()
         && s.days.get(&(victim as u32)).is_some_and(|d| d.asleep)
     {
-        s.hurt.push(victim as u32);
+        s.hurt.push((victim as u32, 0));
     }
 }
 
@@ -327,18 +327,26 @@ pub fn tick(host: &mut dyn ServerHost) {
     let Some(now) = npcs.iter().find_map(|id| host.entity(*id).map(|e| now_of(&*host, e))) else { return };
     let hurt = {
         let Ok(mut s) = STATE.lock() else { return };
-        if now - s.last < SCAN && now >= s.last {
+        // Each level at its own pace (its NPCs are the ones found while it ticks).
+        if !crate::pace::since("routines", now, SCAN) {
             return;
         }
-        s.last = now;
         s.days.retain(|id, _| npcs.contains(id));
         s.beds.retain(|_, n| npcs.contains(n));
         std::mem::take(&mut s.hurt)
     };
-    for id in hurt {
-        if let Some(e) = host.entity(id) {
-            wake(host, e, None);
+    let mut rest = Vec::new();
+    for (id, waited) in hurt {
+        match host.entity(id).filter(|_| crate::pace::here(&*host, id)) {
+            Some(e) => {
+                wake(host, e, None);
+            }
+            None if waited < 60 => rest.push((id, waited + 1)),
+            None => {}
         }
+    }
+    if let Ok(mut s) = STATE.lock() {
+        s.hurt.extend(rest);
     }
     for id in npcs {
         let Some(me) = host.entity(id) else { continue };

@@ -4,7 +4,7 @@
 use crate::quest::{self, Quest};
 use crate::serde_json::{Value, json};
 use mod_api::{
-    Command, CommandSource, ConfigPath, Flow, Holder, IPayloadContext, IPayloadHandler, PayloadBytes, PayloadId, PlayerRef,
+    Command, CommandSource, ConfigPath, Flow, IPayloadContext, IPayloadHandler, PayloadBytes, PayloadId, PlayerRef,
     RegisterCommandsEvent, RunModCommandEvent, ServerHost, Text,
 };
 use std::collections::{HashMap, HashSet};

@@ -56,7 +56,6 @@ struct State {
     said: HashMap<u32, i64>,
     /// Each NPC's chest by its home as last looked for (none: there is none), and when.
     pantry: HashMap<u32, (Option<[i32; 3]>, i64)>,
-    ticks: u32,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -135,11 +134,8 @@ pub fn feed(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) {
 
 /// The server tick: food runs down, NPCs eat from their pantries and say when they are hungry.
 pub fn tick(host: &mut dyn ServerHost) {
-    let step = STATE.lock().map(|mut s| {
-        s.ticks = s.ticks.wrapping_add(1);
-        s.ticks % 100 == 0
-    });
-    if !matches!(step, Ok(true)) {
+    // Each level at its own pace (its NPCs are the ones found while it ticks).
+    if !crate::pace::every("needs", 100) {
         return;
     }
     let npcs = companion::npcs();

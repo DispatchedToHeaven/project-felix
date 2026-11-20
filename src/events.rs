@@ -123,12 +123,6 @@ fn players(host: &dyn mod_api::Host) -> Vec<PlayerRef> {
         .collect()
 }
 
-fn tell_all(host: &mut dyn ServerHost, line: &str) {
-    for p in players(&*host) {
-        let _ = p.tell(host, Text::literal(line.to_string()));
-    }
-}
-
 /// Tells `line` to the players near an NPC going to event `id` (none: near one at any event).
 fn tell_near(host: &mut dyn ServerHost, id: Option<&str>, line: &str) {
     let mut at = Vec::new();

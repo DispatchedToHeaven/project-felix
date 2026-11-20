@@ -107,9 +107,9 @@ struct Approach {
 
 #[derive(Default)]
 struct State {
-    last: i64,
     minds: HashMap<u32, Mind>,
-    heard: Vec<Heard>,
+    /// What was heard of, and how many looks each waited for its level.
+    heard: Vec<(Heard, u8)>,
     seed: u64,
     approaches: Vec<Approach>,
 }
@@ -130,7 +130,7 @@ fn hear(h: Heard) {
     if let Ok(mut s) = STATE.lock()
         && s.heard.len() < 256
     {
-        s.heard.push(h);
+        s.heard.push((h, 0));
     }
 }
 
@@ -474,6 +474,10 @@ fn walk_up(host: &mut dyn ServerHost, now: i64) {
     let list = STATE.lock().map(|mut s| std::mem::take(&mut s.approaches)).unwrap_or_default();
     let mut left = Vec::new();
     for a in list {
+        if !crate::pace::here(&*host, a.npc) && now <= a.until {
+            left.push(a);
+            continue;
+        }
         let (Some(me), Some(to)) = (host.entity(a.npc), a.player.entity().position(&*host)) else {
             companion::go_to(a.npc, None);
             continue;
@@ -527,13 +531,33 @@ pub fn tick(host: &mut dyn ServerHost) {
     let Some(now) = npcs.iter().find_map(|id| host.entity(*id).and_then(|e| e.level(&*host)).and_then(|l| l.game_time(&*host))) else { return };
     let (heard, seed) = {
         let Ok(mut s) = STATE.lock() else { return };
-        if now - s.last < SCAN && now >= s.last {
+        // Each level at its own pace (its NPCs are the ones found while it ticks).
+        if !crate::pace::since("rulebook", now, SCAN) {
             return;
         }
-        s.last = now;
         s.seed = s.seed.wrapping_mul(6364136223846793005).wrapping_add(now as u64 | 1);
         (std::mem::take(&mut s.heard), s.seed)
     };
+    // What happened in this level is for its NPCs; the rest waits for its own (a while).
+    let mut mine = Vec::new();
+    let mut rest = Vec::new();
+    for (h, waited) in heard {
+        let who = match &h {
+            Heard::Hurt { victim, .. } => *victim,
+            Heard::Killed { killer, .. } => *killer,
+            Heard::Chat { player, .. } => *player,
+            Heard::Felt { npc, .. } => *npc,
+        };
+        if crate::pace::here(&*host, who) {
+            mine.push(h);
+        } else if waited < 60 {
+            rest.push((h, waited + 1));
+        }
+    }
+    let heard = mine;
+    if let Ok(mut s) = STATE.lock() {
+        s.heard.extend(rest);
+    }
     let mut rng = seed;
     let mut random = move || {
         rng ^= rng << 13;
@@ -544,10 +568,8 @@ pub fn tick(host: &mut dyn ServerHost) {
     let mut minds = STATE.lock().map(|mut s| std::mem::take(&mut s.minds)).unwrap_or_default();
     minds.retain(|id, _| npcs.contains(id));
     for id in npcs {
-        let Some(me) = host.entity(id) else {
-            minds.remove(&id);
-            continue;
-        };
+        // One of another level: its mind stays as it is till that level ticks.
+        let Some(me) = host.entity(id) else { continue };
         let mind = minds.entry(id).or_default();
         // Which rules: read again every few seconds (a command may change them).
         if mind.rules_id.is_none() || now % 100 < SCAN {

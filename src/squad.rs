@@ -29,7 +29,6 @@ struct State {
     holding: HashMap<u32, u128>,
     /// No fighting before this, after falling back.
     calm: HashMap<u32, i64>,
-    ticks: u32,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -188,17 +187,19 @@ pub fn hold(host: &mut dyn ServerHost, p: PlayerRef) {
 /// The server tick: archers shoot at what they aim at (and don't run in), squads fallen back keep
 /// out of fights for a while.
 pub fn tick(host: &mut dyn ServerHost) {
-    let step = STATE.lock().map(|mut s| {
-        s.ticks = s.ticks.wrapping_add(1);
-        (s.ticks % 2 == 0, s.ticks % 20 == 0)
-    });
-    let Ok((true, owners_due)) = step else { return };
+    // Each level at its own pace (its NPCs are the ones found while it ticks).
+    let step = crate::pace::every("squad", 2);
+    let owners_due = crate::pace::every("squad.owners", 20);
+    if !step {
+        return;
+    }
     let npcs = companion::npcs();
     // Who owns whom, for hits between friends: looked up once a second.
     if owners_due {
         let owners: HashMap<u32, u128> = npcs.iter().filter_map(|id| Some((*id, LivingRef::new(host.entity(*id)?).owner(&*host)?))).collect();
         if let Ok(mut o) = OWNERS.lock() {
-            *o = owners;
+            o.retain(|id, _| npcs.contains(id) && !crate::pace::here(&*host, *id));
+            o.extend(owners);
         }
     }
     for id in &npcs {

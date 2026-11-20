@@ -57,7 +57,6 @@ struct State {
     working: HashMap<u32, Working>,
     /// Each NPC's chest as last found: where, and when it looked.
     chests: HashMap<u32, (Option<[i32; 3]>, i64)>,
-    ticks: u32,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -397,11 +396,8 @@ fn work(host: &mut dyn ServerHost, me: EntityRef, job: Job, place: &str) {
 
 /// The server tick: every NPC at work with a job works.
 pub fn tick(host: &mut dyn ServerHost) {
-    let step = STATE.lock().map(|mut s| {
-        s.ticks = s.ticks.wrapping_add(1);
-        s.ticks % STEP == 0
-    });
-    if !matches!(step, Ok(true)) {
+    // Each level at its own pace (its NPCs are the ones found while it ticks).
+    if !crate::pace::every("jobs", STEP) {
         return;
     }
     let at_work = crate::routines::at_work();

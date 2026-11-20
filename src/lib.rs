@@ -56,10 +56,11 @@
 //! - `rules_edit` (no mod API types) and `rules_editor` are the rules editor; `rulesets` keeps
 //!   rules made in the game.
 //! - `village` is a village as a file (no mod API types); `villages` exports and imports them.
+//! - `pace`: what looks at NPCs runs with each level's tick, at its own pace in each.
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
     ScreenKeyPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
-    ScreenCharTypedPreEvent, ChunkLoadEvent, ClientPlayerLoggingOutEvent, EntityLeaveLevelEvent, PlayerLoggedOutEvent, ServerStoppedEvent, ServerTickEvent, ServerTickPhase, LivingDamagePostEvent, LivingDamagePreEvent, LivingDeathEvent, ServerChatEvent, LevelRandomHost, AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
+    ScreenCharTypedPreEvent, ChunkLoadEvent, LevelTickPreEvent, ClientPlayerLoggingOutEvent, EntityLeaveLevelEvent, PlayerLoggedOutEvent, ServerStoppedEvent, ServerTickEvent, ServerTickPhase, LivingDamagePostEvent, LivingDamagePreEvent, LivingDeathEvent, ServerChatEvent, LevelRandomHost, AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
     Host, HostSide, InteractionKeyMappingTriggeredEvent, InteractionResult, LevelTickPostEvent, RegisterCommandsEvent,
     RegisterEntityRenderersEvent, Registrar, RegistrationContext, RunModCommandEvent, ScreenMouseButtonPressedPreEvent,
     ScreenRenderPostEvent, ServerHost,
@@ -120,6 +121,7 @@ pub mod quests;
 pub mod molang;
 pub mod plan;
 pub mod npc;
+pub mod pace;
 pub mod routine;
 pub mod routines;
 pub mod rulebook;
@@ -322,9 +324,33 @@ impl Hooks for Felix {
         settlements::chunk_load(host, e.dimension, e.chunk, e.new);
     }
 
+    /// A level begins its tick: what happens now (hurts, deaths) happens in it.
+    fn level_tick_pre(&self, host: HostSide, e: &mut LevelTickPreEvent) {
+        if let HostSide::Server(_) = host {
+            pace::enter(e.level.dimension_id());
+        }
+    }
+
     fn level_tick_post(&self, host: HostSide, e: &mut LevelTickPostEvent) {
         if let HostSide::Server(host) = host {
             let dimension = e.level.dimension_id();
+            pace::enter(dimension);
+            // What looks at NPCs: the NPCs of this level (the only ones found while it ticks).
+            heart::tick(host);
+            routines::tick(host);
+            jobs::tick(host);
+            markets::tick(host);
+            if dimension == "minecraft:overworld" {
+                events::tick(host);
+            }
+            needs::tick(host);
+            squad::tick(host);
+            families::tick(host);
+            bonds::tick(host);
+            companions::tick(host);
+            shops::tick(host);
+            speech::tick(host);
+            rulebook::tick(host);
             companion::level_tick(host);
             talk::level_tick(host, dimension);
             scenes::level_tick(host);
@@ -372,6 +398,7 @@ impl Hooks for Felix {
     /// folder, is read anew).
     fn server_stopped(&self, _host: &mut dyn ServerHost, _e: &mut ServerStoppedEvent) {
         saves::clear();
+        pace::clear();
         companion::clear();
         companions::clear();
         custom::clear();
@@ -400,20 +427,8 @@ impl Hooks for Felix {
 
     fn server_tick(&self, host: &mut dyn ServerHost, e: &mut ServerTickEvent<'_>) {
         if let ServerTickPhase::ServerTickEnd { world_running: true } = e.phase {
-            heart::tick(host);
+            // The players' quests: all players, once a tick.
             quests::tick(host);
-            routines::tick(host);
-            jobs::tick(host);
-            markets::tick(host);
-            events::tick(host);
-            needs::tick(host);
-            squad::tick(host);
-            families::tick(host);
-            bonds::tick(host);
-            companions::tick(host);
-            shops::tick(host);
-            speech::tick(host);
-            rulebook::tick(host);
         }
     }
 

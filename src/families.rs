@@ -105,7 +105,6 @@ struct Birth {
 #[derive(Default)]
 struct State {
     births: Vec<Birth>,
-    ticks: u32,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -266,11 +265,8 @@ fn set_up(host: &mut dyn ServerHost) {
 /// The server tick: children set up, grown children take a grown day, couples form and have children.
 pub fn tick(host: &mut dyn ServerHost) {
     set_up(host);
-    let step = STATE.lock().map(|mut s| {
-        s.ticks = s.ticks.wrapping_add(1);
-        s.ticks % 600 == 0
-    });
-    if !matches!(step, Ok(true)) {
+    // Each level at its own pace (its NPCs are the ones found while it ticks).
+    if !crate::pace::every("families", 600) {
         return;
     }
     let npcs: Vec<EntityRef> = companion::npcs().into_iter().filter_map(|id| host.entity(id)).collect();

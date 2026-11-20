@@ -7,7 +7,6 @@ use mod_api::{
     AttachmentCodec, AttachmentType, Command, Compound, EntityRef, EquipmentSlot, Flow, Holder, LivingRef, MobCategory,
     PlayerRef, RegisterCommandsEvent, RunModCommandEvent, ServerHost, Tag, Text,
 };
-use std::sync::{LazyLock, Mutex};
 
 /// One NPC's bond with one player.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -480,13 +479,6 @@ pub fn stage_word(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) -> Op
     Some(stage(host, npc, p).word()).filter(|w| !w.is_empty())
 }
 
-#[derive(Default)]
-struct State {
-    ticks: u32,
-}
-
-static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
-
 /// A monster died: a player's companions near who saw it grow closer to them (a few a day).
 pub fn on_death(host: &mut dyn ServerHost, victim: u32, killer: i32) {
     let Some(v) = host.entity(victim) else { return };
@@ -541,11 +533,8 @@ pub fn on_death(host: &mut dyn ServerHost, victim: u32, killer: i32) {
 /// they meet again), a romance ends when it has come to dislike the player, and partners bring
 /// their player a little something.
 pub fn tick(host: &mut dyn ServerHost) {
-    let step = STATE.lock().map(|mut s| {
-        s.ticks = s.ticks.wrapping_add(1);
-        s.ticks % 1200 == 0
-    });
-    if !matches!(step, Ok(true)) {
+    // Each level at its own pace (its NPCs are the ones found while it ticks).
+    if !crate::pace::every("bonds", 1200) {
         return;
     }
     for id in companion::npcs() {
