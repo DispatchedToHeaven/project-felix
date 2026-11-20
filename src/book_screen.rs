@@ -42,6 +42,7 @@ enum Do {
 struct Book {
     pages: Vec<Page>,
     next: String,
+    food: String,
     picked: usize,
     scroll: usize,
     buttons: Vec<([f32; 4], Do)>,
@@ -91,6 +92,7 @@ impl IPayloadHandler for OpenHandler {
             })
             .unwrap_or_default();
         let next = s(&v, "next");
+        let food = s(&v, "food");
         let Ok(mut lock) = BOOK.lock() else { return Ok(()) };
         // Opened again (Refresh): the same NPC stays picked.
         let before = lock.as_ref().and_then(|b| b.pages.get(b.picked).map(|p| p.id));
@@ -100,7 +102,7 @@ impl IPayloadHandler for OpenHandler {
             crate::menu::yield_screen();
         }
         let shown = host.mod_screen() == Some(SCREEN) || host.mod_screen_open(SCREEN);
-        *lock = Some(Book { pages, next, picked, scroll, buttons: Vec::new(), shown, close: false, outbox: Vec::new() });
+        *lock = Some(Book { pages, next, food, picked, scroll, buttons: Vec::new(), shown, close: false, outbox: Vec::new() });
         Ok(())
     }
 }
@@ -142,8 +144,13 @@ pub fn render(host: &dyn ClientHost, ev: &mut ScreenRenderPostEvent<'_>) {
     let (x0, y0) = (((sw - W) / 2.0).max(0.0), ((sh - H) / 2.0).max(0.0));
     draw.fill([x0 - 6.0, y0 - 6.0, W + 12.0, H + 12.0], 0xFA14_1210);
     draw.text("Village book", [x0, y0], 0xFFFF_D86A, false);
+    if !b.food.is_empty() {
+        let tw = draw.text_width("Village book");
+        let color = if b.food.ends_with("scarce") || b.food.ends_with("short") { 0xFFFF_8A6A } else { 0xFF90_C890 };
+        draw.text(&b.food, [x0 + tw + 8.0, y0], color, false);
+    }
     if !b.next.is_empty() {
-        let next = head(draw, &b.next, W - 80.0);
+        let next = head(draw, &b.next, W - 170.0);
         draw.text(&next, [x0 + W - draw.text_width(&next), y0], 0xFFB0_C8FF, false);
     }
     let mut buttons = Vec::new();

@@ -27,6 +27,8 @@ pub struct Facts {
     pub parents: Vec<String>,
     pub child: bool,
     pub quests: usize,
+    /// Its purse (none: not known).
+    pub purse: Option<u32>,
 }
 
 /// Which way `dx`, `dz` points (north is −z).
@@ -118,6 +120,9 @@ pub fn lines(f: &Facts, extended: bool) -> Vec<String> {
     }
     if !fam.is_empty() {
         out.push(format!("Family: {}", fam.join("; ")));
+    }
+    if let Some(c) = f.purse {
+        out.push(if extended { format!("Purse: {} ({c})", crate::market::purse_word(c)) } else { format!("Purse: {}", crate::market::purse_word(c)) });
     }
     if f.quests > 0 {
         out.push("Has a favour to ask.".into());

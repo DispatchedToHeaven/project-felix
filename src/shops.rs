@@ -176,6 +176,8 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
                 let money = shop::short(&s.currency);
                 // An NPC with a job sells what its chest holds (see `jobs`).
                 let chest = crate::jobs::chest_of(host, npc);
+                // What the village has moves the prices (see `market`).
+                let mut note: Option<String> = None;
                 for (i, o) in s.sells.iter().enumerate() {
                     let n = match chest {
                         // Its job's goods only, and none without a chest.
@@ -186,7 +188,11 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
                     if n == Some(0) {
                         continue;
                     }
-                    let price = crate::events::price(host, npc, standing.pays(o.price).unwrap_or(o.price));
+                    let supply = crate::markets::supply_of(host, npc, &o.item);
+                    if note.is_none() {
+                        note = crate::market::note(&o.item, supply);
+                    }
+                    let price = crate::market::priced(crate::events::price(host, npc, standing.pays(o.price).unwrap_or(o.price)), supply);
                     let stock = n.map(|n| format!(" ({n} left)")).unwrap_or_default();
                     options.push(choice(format!("Buy {} {} for {price} {money}{stock}", o.count, shop::short(&o.item)), vec![Action::Trade(i as i32)]));
                 }
@@ -194,8 +200,11 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
                     if left(npc.id(), &id, &s, true, i, o, now) == Some(0) {
                         continue;
                     }
-                    let paid = standing.is_paid(o.price).unwrap_or(o.price);
+                    let paid = crate::market::priced(standing.is_paid(o.price).unwrap_or(o.price), crate::markets::supply_of(host, npc, &o.item));
                     options.push(choice(format!("Sell {} {} for {paid} {money}", o.count, shop::short(&o.item)), vec![Action::Trade(-(i as i32) - 1)]));
+                }
+                if let Some(n) = note {
+                    text.push(n);
                 }
                 if options.is_empty() {
                     text.push("Sold out. Come back later.".into());
@@ -243,6 +252,7 @@ pub fn trade(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, n: i3
         false
     } else if buys {
         let Some(paid) = standing.is_paid(o.price) else { return };
+        let paid = crate::market::priced(paid, crate::markets::supply_of(host, npc, &o.item));
         if items_of(host, player, &o.item) < o.count {
             crate::heart::say_aloud(host, npc, &format!("You don't have {} {}, {name}.", o.count, shop::short(&o.item)));
             false
@@ -253,11 +263,14 @@ pub fn trade(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, n: i3
             if let Some(c) = chest {
                 crate::jobs::put_item(host, c, &o.item, o.count);
             }
+            if s.currency == crate::market::CURRENCY {
+                crate::markets::spend(host, npc, paid);
+            }
             true
         }
     } else {
         let Some(price) = standing.pays(o.price) else { return };
-        let price = crate::events::price(host, npc, price);
+        let price = crate::market::priced(crate::events::price(host, npc, price), crate::markets::supply_of(host, npc, &o.item));
         if items_of(host, player, &s.currency) < price {
             crate::heart::say_aloud(host, npc, &format!("That's {price} {money}, {name}. You're short."));
             false
@@ -267,6 +280,9 @@ pub fn trade(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, n: i3
         } else {
             crate::talk::queue(format!("clear {name} {} {price}", s.currency));
             crate::talk::queue(format!("give {name} {} {}", o.item, o.count));
+            if s.currency == crate::market::CURRENCY {
+                crate::markets::earn(host, npc, price);
+            }
             true
         }
     };

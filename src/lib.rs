@@ -45,6 +45,8 @@
 //! - `voice` is how NPCs babble what they say (no mod API types); `voices` gives them theirs.
 //! - `dialog_edit` (no mod API types) and `dialog_editor` are the dialog editor; `dialogs` keeps
 //!   dialogs made in the game; `flags` is the players' talk memory and the extended view.
+//! - `market` (no mod API types) and `markets` are the village market: purses, the baker, trade
+//!   between NPCs, prices by supply.
 //! - `book` (no mod API types), `books` and `book_screen` are the village book (key K).
 //! - `quest_edit` (no mod API types) and `quest_editor` are the quest editor; `quest_store` keeps
 //!   quests made in the game.
@@ -66,6 +68,8 @@ pub mod anim;
 pub mod anim_edit;
 pub mod bond;
 pub mod book;
+pub mod market;
+pub mod markets;
 pub mod book_screen;
 pub mod books;
 pub mod bonds;
@@ -220,11 +224,15 @@ impl Hooks for Felix {
         bonds::register_commands(e);
         quest_store::register_commands(e);
         books::register_commands(e);
+        markets::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = markets::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = books::run_command(host, e) {
@@ -323,6 +331,7 @@ impl Hooks for Felix {
             quests::tick(host);
             routines::tick(host);
             jobs::tick(host);
+            markets::tick(host);
             events::tick(host);
             needs::tick(host);
             squad::tick(host);

@@ -76,6 +76,7 @@ fn facts(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) -> Facts {
         parents: names(&fam.parents),
         child: fam.child && !fam.grown,
         quests,
+        purse: Some(crate::markets::purse_of(host, npc)),
     }
 }
 
@@ -107,7 +108,8 @@ pub fn open(host: &mut dyn ServerHost, p: PlayerRef) {
         list.push(json!({ "id": e.id(), "name": f.name, "mine": mine, "mark": book::mark(&f), "where": whereabouts, "brief": brief, "lines": book::lines(&f, extended) }));
     }
     let next = crate::events::next_up(host);
-    let body = json!({ "npcs": list, "next": next, "extended": extended });
+    let food = crate::markets::food_about(host, p).map(|s| format!("food: {}", s.word())).unwrap_or_default();
+    let body = json!({ "npcs": list, "next": next, "food": food, "extended": extended });
     let _ = p.send_payload(host, &PayloadId(OPEN.into()), PayloadBytes(crate::serde_json::to_vec(&body).unwrap_or_default()));
 }
 
