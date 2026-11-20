@@ -45,6 +45,7 @@
 //! - `voice` is how NPCs babble what they say (no mod API types); `voices` gives them theirs.
 //! - `dialog_edit` (no mod API types) and `dialog_editor` are the dialog editor; `dialogs` keeps
 //!   dialogs made in the game; `flags` is the players' talk memory and the extended view.
+//! - `book` (no mod API types), `books` and `book_screen` are the village book (key K).
 //! - `quest_edit` (no mod API types) and `quest_editor` are the quest editor; `quest_store` keeps
 //!   quests made in the game.
 //! - `rules_edit` (no mod API types) and `rules_editor` are the rules editor; `rulesets` keeps
@@ -64,6 +65,9 @@ pub use mod_api::serde_json;
 pub mod anim;
 pub mod anim_edit;
 pub mod bond;
+pub mod book;
+pub mod book_screen;
+pub mod books;
 pub mod bonds;
 pub mod builds;
 pub mod checkers;
@@ -154,6 +158,7 @@ impl Hooks for Felix {
         dialog_editor::register(r);
         rules_editor::register(r);
         quest_editor::register(r);
+        book_screen::register(r);
         scene_editor::register(r);
         squad::register(r);
     }
@@ -214,11 +219,15 @@ impl Hooks for Felix {
         families::register_commands(e);
         bonds::register_commands(e);
         quest_store::register_commands(e);
+        books::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = books::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = quest_store::run_command(host, e) {
@@ -364,6 +373,10 @@ impl Hooks for Felix {
     }
 
     fn screen_render_post(&self, host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
+        if book_screen::active() {
+            book_screen::render(host, e);
+            return;
+        }
         if quest_editor::active() {
             quest_editor::render(host, e);
             return;
@@ -397,6 +410,9 @@ impl Hooks for Felix {
     }
 
     fn screen_mouse_button_pressed_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseButtonPressedPreEvent<'_>) -> Flow {
+        if book_screen::active() {
+            return book_screen::mouse_pressed(host, e);
+        }
         if quest_editor::active() {
             return quest_editor::mouse_pressed(host, e);
         }
@@ -457,7 +473,9 @@ impl Hooks for Felix {
     }
 
     fn screen_mouse_scrolled_pre(&self, host: &dyn ClientHost, e: &mut ScreenMouseScrolledPreEvent<'_>) -> Flow {
-        if quest_editor::active() {
+        if book_screen::active() {
+            book_screen::mouse_scrolled(host, e.scroll[1] > 0.0)
+        } else if quest_editor::active() {
             quest_editor::mouse_scrolled(host, e.screen.mouse, e.scroll[1] > 0.0)
         } else if rules_editor::active() {
             rules_editor::mouse_scrolled(host, e.screen.mouse, e.scroll[1] > 0.0)
@@ -477,7 +495,9 @@ impl Hooks for Felix {
     }
 
     fn screen_key_pressed_pre(&self, host: &dyn ClientHost, e: &mut ScreenKeyPressedPreEvent<'_>) -> Flow {
-        if quest_editor::active() {
+        if book_screen::active() {
+            book_screen::key_pressed(host, e)
+        } else if quest_editor::active() {
             quest_editor::key_pressed(host, e)
         } else if rules_editor::active() {
             rules_editor::key_pressed(host, e)
@@ -526,6 +546,7 @@ impl Hooks for Felix {
         dialog_editor::tick(host);
         rules_editor::tick(host);
         quest_editor::tick(host);
+        book_screen::tick(host);
         squad::client_tick(host);
         scene_editor::tick(host);
         skins::tick(host);

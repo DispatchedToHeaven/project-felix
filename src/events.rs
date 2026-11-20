@@ -356,3 +356,22 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
     }
     Flow::Cancel
 }
+
+/// The event on now, else the next one, in words (empty: none known).
+pub fn next_up(host: &mut dyn ServerHost) -> String {
+    let Some(t) = host.level(OVERWORLD).and_then(|l| l.day_time(&*host)) else { return String::new() };
+    let on = on_now();
+    let list: Vec<(String, Arc<Event>)> = LOADED.lock().map(|l| l.iter().map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default();
+    if let Some((_, e)) = list.iter().filter(|(k, _)| on.contains(k)).min_by(|a, b| a.0.cmp(&b.0)) {
+        return format!("On now: {}", title(e));
+    }
+    let Some((_, e)) = list.iter().min_by_key(|(k, e)| (e.next_start(t), k.clone())) else { return String::new() };
+    let start = e.next_start(t);
+    let days = start.div_euclid(24000) - t.div_euclid(24000);
+    let when = match days {
+        0 => "today".to_string(),
+        1 => "tomorrow".to_string(),
+        d => format!("in {d} days"),
+    };
+    format!("Next: {}, {when} ({})", title(e), event::when(start))
+}

@@ -181,7 +181,7 @@ impl IPayloadHandler for CloseHandler {
 }
 
 /// `text` broken into lines no wider than `width`, by words.
-fn wrap(text: &str, width: f32, measure: &dyn Fn(&str) -> f32) -> Vec<String> {
+pub(crate) fn wrap(text: &str, width: f32, measure: &dyn Fn(&str) -> f32) -> Vec<String> {
     let mut out = Vec::new();
     let mut line = String::new();
     for word in text.split_whitespace() {

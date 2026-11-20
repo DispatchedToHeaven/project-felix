@@ -451,7 +451,7 @@ fn run(host: &mut dyn ServerHost, h: &Here, ev: &Event, dos: &[Do]) {
 }
 
 /// NPC `me` walks up to `p`, then (with `talk`) talks: its own dialog (empty), or that one.
-fn approach(host: &mut dyn ServerHost, me: EntityRef, p: PlayerRef, talk: Option<String>) {
+pub fn approach(host: &mut dyn ServerHost, me: EntityRef, p: PlayerRef, talk: Option<String>) {
     let now = me.level(&*host).and_then(|l| l.game_time(&*host)).unwrap_or(0);
     if let Ok(mut s) = STATE.lock() {
         s.approaches.retain(|a| a.npc != me.id());
