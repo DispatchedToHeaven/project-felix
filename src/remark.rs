@@ -8,7 +8,11 @@ use crate::bond::Stage;
 pub fn land(biome: &str) -> Option<&'static str> {
     let b = biome.rsplit(':').next().unwrap_or(biome);
     let has = |w: &str| b.contains(w);
-    Some(if has("snow") || has("frozen") || has("ice") || has("grove") {
+    Some(if has("nether") || has("crimson") || has("warped") || has("basalt") || has("soul") {
+        "nether"
+    } else if has("swamp") || has("mangrove") {
+        "swamp"
+    } else if has("snow") || has("frozen") || has("ice") || has("grove") {
         "snow"
     } else if has("desert") {
         "desert"
@@ -16,8 +20,6 @@ pub fn land(biome: &str) -> Option<&'static str> {
         "badlands"
     } else if has("jungle") || has("bamboo") {
         "jungle"
-    } else if has("swamp") || has("mangrove") {
-        "swamp"
     } else if has("ocean") || has("beach") || has("river") {
         "water"
     } else if has("mushroom") {
@@ -36,8 +38,6 @@ pub fn land(biome: &str) -> Option<&'static str> {
         "plains"
     } else if has("cave") || has("deep_dark") || has("dripstone") {
         "caves"
-    } else if has("nether") || has("crimson") || has("warped") || has("basalt") || has("soul") {
-        "nether"
     } else if has("end") {
         "end"
     } else {
@@ -143,6 +143,14 @@ pub fn memory(days: i64, fights: u32, places: &[String], gift: &str, seed: u64) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lands_by_their_own_names() {
+        assert_eq!(land("minecraft:mangrove_swamp"), Some("swamp"));
+        assert_eq!(land("minecraft:crimson_forest"), Some("nether"));
+        assert_eq!(land("minecraft:grove"), Some("snow"));
+        assert_eq!(land("minecraft:forest"), Some("forest"));
+    }
 
     #[test]
     fn companions_remark() {

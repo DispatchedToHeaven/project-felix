@@ -154,6 +154,33 @@ fn tie(host: &mut dyn ServerHost, npc: EntityRef, who: u128) -> Option<Tie> {
     BONDS.get(host, Holder::Entity(npc.id())).ok()?.into_iter().find(|t| t.who == who)
 }
 
+/// Whether NPC `npc` is some player's sweetheart or partner.
+pub fn has_romance(host: &mut dyn ServerHost, npc: EntityRef) -> bool {
+    BONDS.get(host, Holder::Entity(npc.id())).is_ok_and(|ties| ties.iter().any(|t| t.romance != Romance::None))
+}
+
+/// The other player NPC `npc` is with (not `but`), by name.
+fn with_another(host: &mut dyn ServerHost, npc: EntityRef, but: u128) -> Option<String> {
+    let ties = BONDS.get(host, Holder::Entity(npc.id())).ok()?;
+    let t = ties.into_iter().find(|t| t.who != but && t.romance != Romance::None)?;
+    Some(if t.name.is_empty() { "someone".into() } else { t.name })
+}
+
+/// They see each other again: the days apart past three have cost some closeness, and it says so.
+fn reunite(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef, now: i64) {
+    let days = with_tie(host, npc, p, |t| {
+        let days = if t.seen == 0 || now < t.seen { 0 } else { (now - t.seen) / DAY };
+        t.seen = now;
+        days
+    });
+    let loss = bond::apart_loss(days);
+    if loss > 0.0 {
+        add(host, npc, p, -loss, "time apart");
+        let name = p.name(&*host).unwrap_or_default();
+        crate::heart::say_to(host, npc, p, &format!("{name}! It's been {days} days. I was starting to wonder."));
+    }
+}
+
 /// Whether NPC `npc`'s character allows romance (`"romance": false` in it says no).
 fn allows(host: &mut dyn ServerHost, npc: EntityRef) -> bool {
     !crate::heart::no_romance(host, npc)
@@ -203,6 +230,7 @@ pub fn add(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef, by: f32, why
 /// A talk starts: the first talk of a day brings them a little closer.
 pub fn on_talk(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) {
     let now = now_of(&*host, npc);
+    reunite(host, npc, p, now);
     let first = with_tie(host, npc, p, |t| {
         let first = t.last_talk == 0 || now / DAY != t.last_talk / DAY;
         t.last_talk = now;
@@ -308,8 +336,12 @@ pub fn ask_out(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) {
         crate::heart::say_to(host, npc, p, "Give me some time to think, please.");
         return;
     }
+    if t.romance == Romance::None && t.since != 0 && now >= t.since && now - t.since < bond::MENDS_IN {
+        crate::heart::say_to(host, npc, p, &format!("After what happened? Not yet, {name}. Give it a few days."));
+        return;
+    }
     let relation = crate::heart::relation_of(npc.id(), p.uuid());
-    let taken = crate::families::partner_name(host, npc);
+    let taken = crate::families::partner_name(host, npc).or_else(|| with_another(host, npc, p.uuid()));
     let other = player_taken(host, p, npc.id());
     let ok = allows(host, npc);
     if let Err(line) = bond::may_ask(relation, t.close, t.romance, ok, taken.as_deref(), other.as_deref()) {
@@ -317,7 +349,8 @@ pub fn ask_out(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) {
         return;
     }
     let mood = crate::heart::mood_of(npc.id());
-    let roll = ((now as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 40) % 100;
+    let own = npc.uuid(host).unwrap_or(0) as u64;
+    let roll = ((now as u64 ^ own).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 40) % 100;
     with_tie(host, npc, p, |t| t.asked = now);
     if roll < u64::from(bond::yes_chance(&mood)) {
         with_tie(host, npc, p, |t| {
@@ -342,6 +375,10 @@ pub fn propose(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) {
         || p.inventory(&*host).unwrap_or_default().iter().any(|s| s.item().id(&*host) == RING);
     if let Err(line) = bond::may_propose(relation, t.close, t.romance, t.since, now, ring) {
         crate::heart::say_to(host, npc, p, &line.replace("@player", &name));
+        return;
+    }
+    if let Some(other) = crate::families::partner_name(host, npc) {
+        crate::heart::say_to(host, npc, p, &format!("I'm with {other}, {name}. You know that."));
         return;
     }
     crate::talk::queue(format!("clear {name} {RING} 1"));
@@ -435,8 +472,9 @@ pub fn on_death(host: &mut dyn ServerHost, victim: u32, killer: i32) {
     }
 }
 
-/// The tick (every minute): time together brings closeness, time apart takes it, a romance ends
-/// when it has come to dislike the player, and partners bring their player a little something.
+/// The tick (every minute): time together brings closeness (time apart has taken some, counted when
+/// they meet again), a romance ends when it has come to dislike the player, and partners bring
+/// their player a little something.
 pub fn tick(host: &mut dyn ServerHost) {
     let step = STATE.lock().map(|mut s| {
         s.ticks = s.ticks.wrapping_add(1);
@@ -456,7 +494,7 @@ pub fn tick(host: &mut dyn ServerHost) {
             let near = p.entity().position(&*host).is_some_and(|q| (q[0] - at[0]).powi(2) + (q[2] - at[2]).powi(2) <= 64.0);
             let following = LivingRef::new(e).owner(&*host) == Some(p.uuid()) && companion::mode_of(id) == Mode::Follow;
             if near && (following || ties.iter().any(|t| t.who == p.uuid() && t.romance != Romance::None)) {
-                with_tie(host, e, *p, |t| t.seen = now);
+                reunite(host, e, *p, now);
                 add(host, e, *p, 0.5, "time together");
                 // A partner brings a little something, once a day.
                 let romance = tie(host, e, p.uuid()).map(|t| (t.romance, t.treat_day)).unwrap_or_default();
@@ -471,15 +509,10 @@ pub fn tick(host: &mut dyn ServerHost) {
             }
         }
         for t in ties {
-            // Days apart: a point a day after three.
-            if t.seen != 0 && now - t.seen > 3 * DAY && (now / 1200) % 20 == 0 {
-                if let Some(p) = players.iter().find(|p| p.uuid() == t.who) {
-                    add(host, e, *p, -1.0, "time apart");
-                }
-            }
-            // It has come to dislike the player: the romance ends.
+            // It has come to dislike the player: the romance ends (its heart must be known for that:
+            // one just loaded is not yet).
             if t.romance != Romance::None
-                && crate::heart::relation_of(id, t.who) < bond::BREAKS_BELOW
+                && crate::heart::relation_known(id, t.who).is_some_and(|r| r < bond::BREAKS_BELOW)
                 && let Some(p) = players.iter().find(|p| p.uuid() == t.who)
             {
                 part(host, e, *p, true);

@@ -70,6 +70,13 @@ struct State {
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
+/// The server stopped: nothing of its world is kept.
+pub fn clear() {
+    if let Ok(mut s) = STATE.lock() {
+        *s = Default::default();
+    }
+}
+
 const SPOTS: &str = "events/spots.json";
 const OVERWORLD: &str = "minecraft:overworld";
 
@@ -174,12 +181,17 @@ fn play_scenes(host: &mut dyn ServerHost, level: LevelRef, now: i64) {
         .map(|s| s.on.iter().filter(|(_, o)| !o.scene_played && now - o.started >= (o.event.scene_after * 20.0) as i64).map(|(k, o)| (k.clone(), o.event.clone())).collect())
         .unwrap_or_default();
     for (id, e) in due {
-        if let Ok(mut s) = STATE.lock()
-            && let Some(o) = s.on.get_mut(&id)
-        {
-            o.scene_played = true;
-        }
-        let Some(scene) = &e.scene else { continue };
+        let played = |id: &str| {
+            if let Ok(mut s) = STATE.lock()
+                && let Some(o) = s.on.get_mut(id)
+            {
+                o.scene_played = true;
+            }
+        };
+        let Some(scene) = &e.scene else {
+            played(&id);
+            continue;
+        };
         let joined: Vec<EntityRef> = crate::companion::npcs().into_iter().filter_map(|n| host.entity(n)).filter(|n| n.level(&*host) == Some(level)).collect();
         let mut best: Option<(f64, EntityRef)> = None;
         for n in joined {
@@ -193,13 +205,12 @@ fn play_scenes(host: &mut dyn ServerHost, level: LevelRef, now: i64) {
                 best = Some((d, n));
             }
         }
-        match best {
-            Some((_, lead)) => {
-                if let Err(err) = crate::scenes::start(host, lead, scene, None) {
-                    eprintln!("[projectfelix] event scene {scene}: {err}");
-                }
+        // No NPC at the spot yet: it waits for one (the next look).
+        if let Some((_, lead)) = best {
+            played(&id);
+            if let Err(err) = crate::scenes::start(host, lead, scene, None) {
+                eprintln!("[projectfelix] event scene {scene}: {err}");
             }
-            None => eprintln!("[projectfelix] event {id}: no NPC at its spot for {scene}"),
         }
     }
 }

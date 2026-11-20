@@ -83,7 +83,7 @@ impl Context for MapContext {
 /// Parses an expression or a `;`-separated program.
 pub fn parse(src: &str) -> Result<Expr, String> {
     let tokens = lex(src)?;
-    let mut p = Parser { t: tokens, i: 0 };
+    let mut p = Parser { t: tokens, i: 0, depth: 0 };
     let mut stmts = Vec::new();
     while p.peek().is_some() {
         if p.eat(&Tok::Semi) {
@@ -248,7 +248,7 @@ fn val(e: &Expr, cx: &mut dyn Context) -> f32 {
                 }
                 "die_roll" => {
                     let mut s = 0.0;
-                    for _ in 0..g(0).max(0.0) as i32 {
+                    for _ in 0..g(0).clamp(0.0, 100.0) as i32 {
                         s += g(1) + (g(2) - g(1)) * cx.random();
                     }
                     s
@@ -315,7 +315,12 @@ fn lex(src: &str) -> Result<Vec<Tok>, String> {
 struct Parser {
     t: Vec<Tok>,
     i: usize,
+    /// How deep it is in brackets and signs.
+    depth: u32,
 }
+
+/// Deeper than this an expression is refused (a file may hold anything).
+const MAX_DEPTH: u32 = 200;
 
 impl Parser {
     fn peek(&self) -> Option<&Tok> {
@@ -348,6 +353,15 @@ impl Parser {
         self.expr()
     }
     fn expr(&mut self) -> Result<Expr, String> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err("nested too deep".into());
+        }
+        let e = self.expr_in();
+        self.depth -= 1;
+        e
+    }
+    fn expr_in(&mut self) -> Result<Expr, String> {
         let c = self.binary(0)?;
         if self.sym("?") {
             let t = self.expr()?;
@@ -382,6 +396,15 @@ impl Parser {
         }
     }
     fn unary(&mut self) -> Result<Expr, String> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err("nested too deep".into());
+        }
+        let e = self.unary_in();
+        self.depth -= 1;
+        e
+    }
+    fn unary_in(&mut self) -> Result<Expr, String> {
         if self.sym("-") {
             return Ok(Expr::Neg(Box::new(self.unary()?)));
         }
@@ -471,6 +494,13 @@ fn var_name(n: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deep_nesting_is_refused() {
+        assert!(parse(&format!("{}1{}", "(".repeat(40), ")".repeat(40))).is_ok());
+        assert!(parse(&format!("{}1{}", "(".repeat(5000), ")".repeat(5000))).is_err());
+        assert!(parse(&"-".repeat(5000)).is_err());
+    }
 
     fn run(src: &str, cx: &mut MapContext) -> f32 {
         eval(&parse(src).unwrap(), cx)

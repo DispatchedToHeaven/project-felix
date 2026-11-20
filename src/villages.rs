@@ -230,6 +230,13 @@ pub fn settle(host: &mut dyn ServerHost, dim: &str, anchor: [f64; 3], spec: NpcS
     Some(e)
 }
 
+/// The server stopped: no NPC waits to be set up.
+pub fn clear() {
+    if let Ok(mut p) = PENDING.lock() {
+        p.clear();
+    }
+}
+
 /// The level tick: the NPCs just summoned get all they had.
 pub fn level_tick(host: &mut dyn ServerHost) {
     let pending = PENDING.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();

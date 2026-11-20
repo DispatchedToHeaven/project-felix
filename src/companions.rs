@@ -26,6 +26,13 @@ struct State {
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
+/// The server stopped: nothing of its world is kept.
+pub fn clear() {
+    if let Ok(mut s) = STATE.lock() {
+        *s = Default::default();
+    }
+}
+
 /// Ticks between remarks, and between two helps.
 const QUIET: i64 = 600;
 const HELP_AGAIN: i64 = 2400;

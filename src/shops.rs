@@ -87,22 +87,44 @@ pub fn add_listener(e: &mut AddServerReloadListenersEvent<'_>) {
 
 #[derive(Default)]
 struct State {
-    /// Left of an offer: (NPC, shop, buys, index) → (left, since).
-    stock: HashMap<(u32, String, bool, usize), (u32, i64)>,
+    /// Left of an offer: (NPC by UUID, shop, buys, index) → (left, since).
+    stock: HashMap<(u128, String, bool, usize), (u32, i64)>,
     /// Stalls to show again once the trade's commands ran: (player, NPC, shop, when).
     reopen: Vec<(PlayerRef, u32, String, i64)>,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
+/// The server stopped: nothing of its world is kept.
+pub fn clear() {
+    if let Ok(mut s) = STATE.lock() {
+        *s = Default::default();
+    }
+    if let Ok(mut s) = EXTRA.lock() {
+        *s = Default::default();
+    }
+    if let Ok(mut s) = LAST.lock() {
+        *s = Default::default();
+    }
+}
+
 fn now_of(host: &dyn mod_api::Host, e: EntityRef) -> i64 {
     e.level(host).and_then(|l| l.game_time(host)).unwrap_or(0)
 }
 
 /// How many of offer `o` are left (None: no end).
-fn left(npc: u32, id: &str, s: &Shop, buys: bool, i: usize, o: &Offer, now: i64) -> Option<u32> {
+/// The key an NPC's stock is kept by.
+fn stock_key(host: &mut dyn ServerHost, npc: EntityRef) -> u128 {
+    npc.uuid(host).unwrap_or(u128::from(npc.id()))
+}
+
+fn left(npc: u128, id: &str, s: &Shop, buys: bool, i: usize, o: &Offer, now: i64) -> Option<u32> {
     let full = o.stock?;
     let mut st = STATE.lock().ok()?;
+    // What was restocked long ago is as good as new: not kept.
+    if st.stock.len() > 2048 {
+        st.stock.retain(|_, e| now >= e.1 && now - e.1 < 24000 * 8);
+    }
     let e = st.stock.entry((npc, id.to_string(), buys, i)).or_insert((full, now));
     if now - e.1 >= (s.restock * 1200.0) as i64 || now < e.1 {
         *e = (full, now);
@@ -110,7 +132,7 @@ fn left(npc: u32, id: &str, s: &Shop, buys: bool, i: usize, o: &Offer, now: i64)
     Some(e.0)
 }
 
-fn take_one(npc: u32, id: &str, buys: bool, i: usize) {
+fn take_one(npc: u128, id: &str, buys: bool, i: usize) {
     if let Ok(mut st) = STATE.lock()
         && let Some(e) = st.stock.get_mut(&(npc, id.to_string(), buys, i))
     {
@@ -183,7 +205,7 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
                         // Its job's goods only, and none without a chest.
                         Some(None) => Some(0),
                         Some(Some(c)) => Some((crate::jobs::amount(host, c, &o.item) / u64::from(o.count.max(1))).min(9999) as u32),
-                        None => left(npc.id(), &id, &s, false, i, o, now),
+                        None => left(stock_key(host, npc), &id, &s, false, i, o, now),
                     };
                     if n == Some(0) {
                         continue;
@@ -197,7 +219,7 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
                     options.push(choice(format!("Buy {} {} for {price} {money}{stock}", o.count, shop::short(&o.item)), vec![Action::Trade(i as i32)]));
                 }
                 for (i, o) in s.buys.iter().enumerate() {
-                    if left(npc.id(), &id, &s, true, i, o, now) == Some(0) {
+                    if left(stock_key(host, npc), &id, &s, true, i, o, now) == Some(0) {
                         continue;
                     }
                     let paid = crate::market::priced(standing.is_paid(o.price).unwrap_or(o.price), crate::markets::supply_of(host, npc, &o.item));
@@ -244,7 +266,7 @@ pub fn trade(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, n: i3
     let stocked = match (chest, buys) {
         (Some(Some(_)), false) => None,
         (Some(None), false) => Some(0),
-        _ => left(npc.id(), &id, &s, buys, i, &o, now),
+        _ => left(stock_key(host, npc), &id, &s, buys, i, &o, now),
     };
     let chest = chest.flatten();
     let ok = if stocked == Some(0) {
@@ -287,7 +309,7 @@ pub fn trade(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, n: i3
         }
     };
     if ok {
-        take_one(npc.id(), &id, buys, i);
+        take_one(stock_key(host, npc), &id, buys, i);
         crate::talk::queue(format!("execute at {} run playsound minecraft:entity.villager.trade neutral @a ~ ~ ~", crate::talk::uuid_text(npc.uuid(host).unwrap_or(0))));
         crate::heart::feel(host, npc, Some(player), "trade");
     }

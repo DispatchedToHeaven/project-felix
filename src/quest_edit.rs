@@ -21,6 +21,8 @@ pub struct StepEd {
     pub progress: String,
     pub done: String,
     pub reward: String,
+    /// What the editor has no field for, kept as it was: a place's `radius`, a walk's `to`.
+    pub keep: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -68,7 +70,7 @@ impl StepEd {
         } else {
             (4, s(v, "deliver_to"))
         };
-        StepEd { kind, what, count: if count == "1" { String::new() } else { count }, item: s(v, "item"), say: s(v, "say"), progress: s(v, "progress"), done: s(v, "done"), reward: acts(v.get("reward")) }
+        StepEd { kind, what, count: if count == "1" { String::new() } else { count }, item: s(v, "item"), say: s(v, "say"), progress: s(v, "progress"), done: s(v, "done"), reward: acts(v.get("reward")), keep: ["radius", "to"].iter().filter_map(|k| Some((k.to_string(), v.get(*k)?.clone()))).collect() }
     }
 
     /// Its goal's fields, into `o`.
@@ -93,9 +95,17 @@ impl StepEd {
                     return Err(format!("{what_of}: go to x y z"));
                 }
                 o.insert("go_to".into(), json!(p));
+                if let Some(r) = self.keep.get("radius") {
+                    o.insert("radius".into(), r.clone());
+                }
             }
             3 => {
                 o.insert("walk".into(), json!(true));
+                for k in ["to", "radius"] {
+                    if let Some(x) = self.keep.get(k) {
+                        o.insert(k.into(), x.clone());
+                    }
+                }
                 if !w.is_empty() {
                     o.insert("distance".into(), json!(w.parse::<f64>().map_err(|_| format!("{what_of}: walk how many blocks?"))?));
                 }
@@ -136,6 +146,7 @@ impl QuestEd {
         let steps = match v.get("steps").and_then(Value::as_array) {
             Some(list) if !list.is_empty() => list.iter().map(StepEd::from_json).collect(),
             _ => {
+                // The short form: the words and the reward are the quest's own.
                 let mut one = StepEd::from_json(v);
                 one.say.clear();
                 one.done.clear();
@@ -206,7 +217,8 @@ impl QuestEd {
         }
         match self.steps.as_slice() {
             [] => return Err("a quest with no steps".into()),
-            [one] => {
+            // One step with no words or reward of its own: the short form.
+            [one] if one.say.trim().is_empty() && one.done.trim().is_empty() && one.reward.trim().is_empty() => {
                 one.goal_into(&mut o, "the goal")?;
                 text(&mut o, "progress", &one.progress);
             }
@@ -237,6 +249,24 @@ impl QuestEd {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_step_keeps_its_words_and_a_place_its_radius() {
+        let v = json!({ "title": "There", "go_to": [10, 64, -3], "radius": 9, "offer": "Go.", "done": "Good." });
+        let mut q = QuestEd::from_json(&v);
+        let out = q.to_json().unwrap();
+        assert_eq!(out.get("radius"), Some(&json!(9)), "{out}");
+        assert!(out.get("steps").is_none(), "the short form stays short: {out}");
+        // A reward of its step's own: written as a step, and read back.
+        q.steps[0].reward = "give minecraft:apple 1".into();
+        q.steps[0].done = "One down.".into();
+        let out = q.to_json().unwrap();
+        let again = QuestEd::from_json(&out);
+        assert_eq!(again.steps.len(), 1);
+        assert_eq!(again.steps[0].done, "One down.");
+        assert!(again.steps[0].reward.contains("apple"), "{out}");
+        assert_eq!(again.steps[0].keep.get("radius"), Some(&json!(9)));
+    }
 
     #[test]
     fn quests_go_round() {

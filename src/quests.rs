@@ -16,7 +16,6 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 /// Ticks between looks at the players' quests.
 const SCAN: i64 = 20;
-const DIMENSIONS: [&str; 3] = ["minecraft:overworld", "minecraft:the_nether", "minecraft:the_end"];
 
 // ---- saved: a player's log, an NPC's quests ------------------------------------------------------------
 
@@ -141,6 +140,9 @@ static EXTRA: LazyLock<Mutex<(HashMap<String, Arc<Quest>>, HashMap<String, Vec<S
 
 pub fn set_extra(dialog: &str, quests: Vec<Quest>) {
     if let Ok(mut e) = EXTRA.lock() {
+        for old in e.1.remove(dialog).unwrap_or_default() {
+            e.0.remove(&old);
+        }
         let mut ids = Vec::new();
         for (n, q) in quests.into_iter().enumerate() {
             let id = format!("{dialog}/{n}");
@@ -148,6 +150,16 @@ pub fn set_extra(dialog: &str, quests: Vec<Quest>) {
             ids.push(id);
         }
         e.1.insert(dialog.to_string(), ids);
+    }
+}
+
+/// The server stopped: no quests but the data packs'.
+pub fn clear() {
+    if let Ok(mut e) = EXTRA.lock() {
+        *e = Default::default();
+    }
+    if let Ok(mut l) = LAST.lock() {
+        *l = 0;
     }
 }
 
@@ -216,8 +228,17 @@ fn set_log(host: &mut dyn ServerHost, p: PlayerRef, log: Log) {
     }
 }
 
-fn players(host: &dyn mod_api::Host) -> Vec<PlayerRef> {
-    DIMENSIONS.iter().filter_map(|d| host.level(d)).flat_map(|l| l.online_players(host).unwrap_or_default()).collect()
+/// The players in every level.
+fn players(host: &dyn ServerHost) -> Vec<PlayerRef> {
+    host.levels().list_levels().into_iter().flat_map(|l| l.online_players(host).unwrap_or_default()).collect()
+}
+
+/// A quest in `p`'s log that is no more (its file is gone) leaves it.
+fn drop_lost(host: &mut dyn ServerHost, p: PlayerRef, a: &Active) {
+    let mut log = log_of(host, p);
+    log.active.retain(|x| !(x.npc == a.npc && x.quest == a.quest));
+    set_log(host, p, log);
+    let _ = p.tell(host, Text::literal(format!("The quest for {} is no more: it left your log.", a.npc_name)));
 }
 
 fn now_of(host: &dyn mod_api::Host, e: EntityRef) -> i64 {
@@ -276,7 +297,11 @@ fn node(text: Vec<String>, options: Vec<Choice>) -> Node {
 /// The `quests` dialog action: what this NPC wants done, or how the player's quest for it goes.
 pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, listed: &[String]) {
     let Some(uuid) = npc.uuid(host) else { return };
-    let log = log_of(host, player);
+    let mut log = log_of(host, player);
+    if let Some(a) = log.with(uuid).filter(|a| quest_for(a).is_none()).cloned() {
+        drop_lost(host, player, &a);
+        log = log_of(host, player);
+    }
     let now = now_of(&*host, npc);
     let mut nodes = HashMap::new();
     if let Some(a) = log.with(uuid) {
@@ -343,10 +368,6 @@ pub fn take(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, id: &s
     set_log(host, player, log);
     // What it hands over for the quest (a letter to carry).
     crate::talk::run_for(host, Some(player), npc, &q.gives);
-    if matches!(q.goal, Goal::Walk { .. }) {
-        // It comes along.
-        crate::companion::set_orders(host, npc, crate::companion::Mode::Follow);
-    }
     let player_name = player.name(&*host).unwrap_or_default();
     let line = format!("New quest: {} ({})", fill(&q.title, &player_name, &npc_name), fill(&q.goal.describe(), &player_name, &npc_name));
     let _ = player.tell(host, Text::literal(line));
@@ -365,6 +386,12 @@ fn end(host: &mut dyn ServerHost, player: PlayerRef, npc: Option<EntityRef>, a: 
     let mut log = log_of(host, player);
     log.finish(a.npc, done, q.repeat);
     set_log(host, player, log);
+    // Walked along: back to what it was doing.
+    if matches!(q.goal, Goal::Walk { .. })
+        && let Some(g) = crate::heart::npc_by_uuid(a.npc)
+    {
+        crate::companion::go_to(g, None);
+    }
     let player_name = player.name(&*host).unwrap_or_default();
     let line = fill(if done { &q.done } else { &q.fail }, &player_name, &a.npc_name);
     // A delivery's thanks are the one delivered to's (said already).
@@ -397,7 +424,14 @@ fn end(host: &mut dyn ServerHost, player: PlayerRef, npc: Option<EntityRef>, a: 
 
 /// Step `a.step` of quest `full` is done: its reward and words, then the next.
 fn next_step(host: &mut dyn ServerHost, player: PlayerRef, npc: Option<EntityRef>, a: &Active, q: &Quest, full: &Quest) {
-    let at = player.entity().position(&*host).unwrap_or([0.0; 3]);
+    let giver = crate::heart::npc_by_uuid(a.npc).and_then(|id| host.entity(id));
+    if matches!(q.goal, Goal::Walk { .. })
+        && let Some(g) = giver
+    {
+        crate::companion::go_to(g.id(), None);
+    }
+    let at = giver.and_then(|g| g.position(&*host)).or_else(|| player.entity().position(&*host)).unwrap_or([0.0; 3]);
+    let _ = npc;
     let mut log = log_of(host, player);
     if let Some(x) = log.active.iter_mut().find(|x| x.npc == a.npc && x.quest == a.quest) {
         x.step += 1;
@@ -407,7 +441,6 @@ fn next_step(host: &mut dyn ServerHost, player: PlayerRef, npc: Option<EntityRef
     set_log(host, player, log);
     let player_name = player.name(&*host).unwrap_or_default();
     let line = fill(&q.done, &player_name, &a.npc_name);
-    let giver = npc.or_else(|| crate::heart::npc_by_uuid(a.npc).and_then(|id| host.entity(id)));
     match giver {
         Some(n) => {
             crate::heart::say_aloud(host, n, &line);
@@ -421,11 +454,6 @@ fn next_step(host: &mut dyn ServerHost, player: PlayerRef, npc: Option<EntityRef
     let next = full.view(step as u32);
     let title = fill(&full.title, &player_name, &a.npc_name);
     let _ = player.action_bar(host, Text::literal(format!("{title}: step {} of {} - {}", step + 1, full.step_count(), fill(&next.goal.describe(), &player_name, &a.npc_name))));
-    if matches!(next.goal, Goal::Walk { .. })
-        && let Some(n) = giver
-    {
-        crate::companion::set_orders(host, n, crate::companion::Mode::Follow);
-    }
 }
 
 /// Whether NPC `npc` is the one `to` names: by its name, or `#tag` it has.
@@ -498,6 +526,8 @@ pub fn give_up(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef) {
     let Some(a) = log_of(host, player).with(uuid).cloned() else { return };
     if let Some(q) = quest_for(&a) {
         end(host, player, Some(npc), &a, &q, false);
+    } else {
+        drop_lost(host, player, &a);
     }
 }
 
@@ -507,16 +537,18 @@ static LAST: Mutex<i64> = Mutex::new(0);
 
 /// Each second: places reached, NPCs walked far enough, time run out.
 pub fn tick(host: &mut dyn ServerHost) {
-    let all = players(&*host);
-    let Some(now) = all.first().and_then(|p| p.entity().level(&*host)).and_then(|l| l.game_time(&*host)) else { return };
+    let Some(now) = host.level("minecraft:overworld").and_then(|l| l.game_time(&*host)) else { return };
     match LAST.lock() {
         Ok(mut last) if now - *last >= SCAN || now < *last => *last = now,
         _ => return,
     }
-    for p in all {
+    for p in players(&*host) {
         let log = log_of(host, p);
         for a in &log.active {
-            let Some(q) = quest_for(&a) else { continue };
+            let Some(q) = quest_for(&a) else {
+                drop_lost(host, p, a);
+                continue;
+            };
             let npc = crate::heart::npc_by_uuid(a.npc).and_then(|id| host.entity(id));
             if a.deadline.is_some_and(|d| now > d) {
                 end(host, p, npc, a, &q, false);
@@ -534,10 +566,12 @@ pub fn tick(host: &mut dyn ServerHost) {
                     }
                 }
                 Goal::Walk { .. } => {
-                    if let Some(n) = npc
-                        && n.position(&*host).is_some_and(|at| q.goal.reached(at, a.start))
-                    {
+                    let Some(n) = npc else { continue };
+                    if n.position(&*host).is_some_and(|at| q.goal.reached(at, a.start)) {
                         end(host, p, Some(n), a, &q, true);
+                    } else if let Some(to) = p.entity().position(&*host) {
+                        // It goes after the one walking it (it stops a step short by itself).
+                        crate::companion::go_to(n.id(), Some(to));
                     }
                 }
                 _ => {}
@@ -564,7 +598,10 @@ pub fn on_death(host: &mut dyn ServerHost, victim: u32, killer: i32) {
     if killer <= 0 {
         return;
     }
-    let Some(p) = host.entity(killer as u32).and_then(|k| players(&*host).into_iter().find(|p| p.entity().id() == k.id())) else { return };
+    let Some(k) = host.entity(killer as u32) else { return };
+    let all = players(&*host);
+    let owner = mod_api::LivingRef::new(k).owner(&*host);
+    let Some(p) = all.iter().copied().find(|p| p.entity().id() == k.id()).or_else(|| all.iter().copied().find(|p| Some(p.uuid()) == owner)) else { return };
     let (kind, category) = crate::rulebook::kind_of(&*host, v);
     let mut log = log_of(host, p);
     let mut lines = Vec::new();
@@ -586,6 +623,7 @@ pub fn on_death(host: &mut dyn ServerHost, victim: u32, killer: i32) {
 
 pub fn register_commands(e: &mut RegisterCommandsEvent<'_>) {
     e.commands.push(Command::new("felix quests"));
+    e.commands.push(Command::new("felix quest drop <n:integer>"));
     e.commands.push(Command::op("felix quest give <targets:entities> <quests:text>", 2));
     e.commands.push(Command::op("felix quest clear <targets:entities>", 2));
 }
@@ -608,15 +646,19 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
             if log.active.is_empty() {
                 feedback(host, "No quests. Ask an NPC if it needs help.".into());
             }
-            for a in &log.active {
-                let Some(q) = quest_for(&a) else { continue };
+            for (n, a) in log.active.iter().enumerate() {
+                let Some(q) = quest_for(&a) else {
+                    feedback(host, format!("{}. a quest for {} that is no more", n + 1, a.npc_name));
+                    continue;
+                };
                 let have = match &q.goal {
                     Goal::Bring { item, .. } => Some(items_of(host, p, item)),
                     _ => None,
                 };
                 let st = status(a, &q, now, have);
                 let line = format!(
-                    "{} ({}): {}{}",
+                    "{}. {} ({}): {}{}",
+                    n + 1,
                     fill(&q.title, &player_name, &a.npc_name),
                     a.npc_name,
                     fill(&q.goal.describe(), &player_name, &a.npc_name),
@@ -624,6 +666,29 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
                 );
                 feedback(host, line);
             }
+        }
+        ["felix", "quest", "drop"] => {
+            let mod_api::CommandSource::Player { player, .. } = e.source else {
+                feedback(host, "Only a player has quests.".into());
+                return Flow::Cancel;
+            };
+            let p = *player;
+            let n = e.command.arguments.iter().find(|a| a.name == "n").and_then(|a| match a.value {
+                mod_api::CommandArgumentValue::Integer(v) => usize::try_from(v).ok(),
+                _ => None,
+            });
+            let log = log_of(host, p);
+            let Some(a) = n.and_then(|n| n.checked_sub(1)).and_then(|i| log.active.get(i)).cloned() else {
+                feedback(host, "No such quest: /felix quests lists them by number.".into());
+                return Flow::Cancel;
+            };
+            // As given up: with its giver there, it takes it as a quest failed.
+            let giver = crate::heart::npc_by_uuid(a.npc).and_then(|id| host.entity(id));
+            match quest_for(&a) {
+                Some(q) => end(host, p, giver, &a, &q, false),
+                None => drop_lost(host, p, &a),
+            }
+            feedback(host, format!("Dropped the quest for {}.", a.npc_name));
         }
         ["felix", "quest", "give"] => {
             let ids = crate::companion::text_argument(e, "quests").unwrap_or_default();

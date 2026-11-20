@@ -281,7 +281,7 @@ pub fn tick(host: &mut dyn ClientHost) {
                 let close = b.close;
                 if close || (b.shown && host.mod_screen() != Some(SCREEN)) {
                     *lock = None;
-                } else if !b.shown && host.mod_screen() == Some(SCREEN) {
+                } else if !b.shown && (host.mod_screen() == Some(SCREEN) || host.mod_screen_open(SCREEN)) {
                     b.shown = true;
                 }
                 (out, close)

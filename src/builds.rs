@@ -190,6 +190,20 @@ struct Pace {
 
 static PACE: LazyLock<Mutex<HashMap<u32, Pace>>> = LazyLock::new(Default::default);
 
+/// The server stopped: no builder is at work.
+pub fn clear() {
+    if let Ok(mut p) = PACE.lock() {
+        p.clear();
+    }
+}
+
+/// NPC `id` left its level.
+pub fn forget(id: u32) {
+    if let Ok(mut p) = PACE.lock() {
+        p.remove(&id);
+    }
+}
+
 /// A builder's work this step (the job's tick calls it).
 pub fn work(host: &mut dyn ServerHost, me: EntityRef) {
     let id = me.id();
@@ -248,11 +262,14 @@ pub fn work(host: &mut dyn ServerHost, me: EntityRef) {
             }
         }
         let stand = crate::villages::stand_at(&*host, level, [f64::from(sx) + 0.5, f64::from(site.origin[1]), f64::from(sz) + 0.5]);
-        companion::set_live(host, me, stand, LiveDo::Work);
-        if let Ok(mut pc) = PACE.lock() {
-            pc.entry(id).or_default().next = now + 20;
+        // There already, and the block is only high up (or deep in): it reaches from where it stands.
+        if (pos[0] - stand[0]).hypot(pos[2] - stand[2]) > 1.5 {
+            companion::set_live(host, me, stand, LiveDo::Work);
+            if let Ok(mut pc) = PACE.lock() {
+                pc.entry(id).or_default().next = now + 20;
+            }
+            return;
         }
-        return;
     }
     let chest = crate::jobs::chest_of(host, me).flatten();
     match &want {

@@ -14,6 +14,8 @@ const ASK_AGAIN: f64 = 200.0;
 enum Skin {
     Asked(f64),
     Ready(Arc<(u32, u32, Vec<u8>)>),
+    /// Its file came, with no skin in it (its model's own texture is drawn).
+    Bare,
 }
 
 #[derive(Default)]
@@ -40,12 +42,34 @@ pub fn texels(model_id: &str, model: &LoadedModel, id: &str, clock: f64) -> Opti
             c.texels.insert(key, t.clone());
             Some(t)
         }
-        Some(Skin::Asked(at)) if clock - at < ASK_AGAIN => None,
+        Some(Skin::Bare) => None,
+        Some(Skin::Asked(at)) if clock - at < ASK_AGAIN && clock >= *at => None,
         _ => {
             c.skins.insert(id.to_string(), Skin::Asked(clock));
             c.ask.push(id.to_string());
             None
         }
+    }
+}
+
+/// Asks the server for NPC file `id` (its own model is in it), unless it is here or was asked for lately.
+pub fn request(id: &str, clock: f64) {
+    let Ok(mut c) = CACHE.lock() else { return };
+    let due = match c.skins.get(id) {
+        Some(Skin::Ready(_) | Skin::Bare) => false,
+        Some(Skin::Asked(at)) => clock - at >= ASK_AGAIN || clock < *at,
+        None => true,
+    };
+    if due {
+        c.skins.insert(id.to_string(), Skin::Asked(clock));
+        c.ask.push(id.to_string());
+    }
+}
+
+/// The player left the world: another world's NPCs have their own files.
+pub fn clear() {
+    if let Ok(mut c) = CACHE.lock() {
+        *c = Default::default();
     }
 }
 
@@ -72,10 +96,13 @@ impl IPayloadHandler for FileHandler {
         if let Some(m) = p.model_file.as_ref().and_then(|m| models::load(m).ok()) {
             models::insert_named(&format!("npc:{}", p.id), m);
         }
-        let Ok(img) = crate::image::decode_png(&p.skin) else { return Ok(()) };
+        let skin = match crate::image::decode_png(&p.skin) {
+            Ok(img) => Skin::Ready(Arc::new(img)),
+            Err(_) => Skin::Bare,
+        };
         if let Ok(mut c) = CACHE.lock() {
             c.texels.retain(|(_, id), _| *id != p.id);
-            c.skins.insert(p.id.clone(), Skin::Ready(Arc::new(img)));
+            c.skins.insert(p.id.clone(), skin);
         }
         Ok(())
     }

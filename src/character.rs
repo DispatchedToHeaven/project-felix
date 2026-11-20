@@ -587,8 +587,10 @@ impl Heart {
         if self.bonds.len() <= MAX_BONDS {
             return;
         }
-        // The least telling first: those nearest where they began.
-        self.bonds.sort_by(|a, b| (b.value - b.base as f32).abs().total_cmp(&(a.value - a.base as f32).abs()));
+        // The most telling stay: those farthest from where they began. A player's counts for more
+        // than an NPC's as far gone (a village full of neighbours must not push the players out).
+        let weight = |b: &Bond| (b.value - b.base as f32).abs() + if b.npc { 0.0 } else { 30.0 };
+        self.bonds.sort_by(|a, b| weight(b).total_cmp(&weight(a)));
         self.bonds.truncate(MAX_BONDS);
     }
 }

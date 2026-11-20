@@ -38,9 +38,25 @@ struct Server {
     dress: Vec<(u32, String)>,
     /// Players the maker was opened for (by a command they may use): only they may save.
     makers: HashSet<u128>,
+    /// Each player's asks for files: since when (game time), and how many.
+    asks: HashMap<u128, (i64, u32)>,
 }
 
 static SERVER: LazyLock<Mutex<Server>> = LazyLock::new(Default::default);
+
+/// The server stopped: no NPC files are held.
+pub fn clear() {
+    if let Ok(mut s) = SERVER.lock() {
+        *s = Default::default();
+    }
+}
+
+/// Player `uuid` left the game: the maker is not theirs to save from until they open it again.
+pub fn left(uuid: u128) {
+    if let Ok(mut s) = SERVER.lock() {
+        s.makers.remove(&uuid);
+    }
+}
 
 pub fn texture_of(id: &str) -> String {
     format!("felixnpc:{id}")
@@ -245,9 +261,27 @@ impl IPayloadHandler for OnSave {
     fn handle(&self, payload: PayloadBytes, context: &mut dyn IPayloadContext) -> Result<(), String> {
         let Ok(player) = context.player() else { return Ok(()) };
         let Ok(host) = context.server_host() else { return Ok(()) };
-        let Some((&spawn, file)) = payload.0.split_first() else { return Ok(()) };
+        let Some((&flags, file)) = payload.0.split_first() else { return Ok(()) };
+        let (spawn, editing) = (flags & 1, flags & 2 != 0);
         if !SERVER.lock().is_ok_and(|s| s.makers.contains(&player.uuid())) {
             tell(host, player, "Open the maker with /felix create first".into());
+            return Ok(());
+        }
+        // Its texts, for the commands they may hold.
+        let (new_id, texts) = match Profile::unpack(file, &inflate) {
+            Ok(p) => (p.id.clone(), [p.dialog_json(), p.rules.unwrap_or_default(), p.quests.unwrap_or_default(), p.shop.unwrap_or_default()].concat()),
+            Err(e) => {
+                tell(host, player, format!("Not kept: {e}"));
+                return Ok(());
+            }
+        };
+        if let Err(why) = crate::saves::may_save(&*host, player, texts.as_bytes()) {
+            tell(host, player, why.into());
+            return Ok(());
+        }
+        // A new NPC whose name is taken would replace the one kept (and every NPC summoned from it).
+        if !editing && SERVER.lock().is_ok_and(|s| s.profiles.contains_key(&new_id)) {
+            tell(host, player, format!("Not kept: an NPC {new_id} is kept already. Another name, or /felix npc edit {new_id}"));
             return Ok(());
         }
         match admit(file.to_vec()) {
@@ -270,6 +304,7 @@ impl IPayloadHandler for OnSave {
                 match written {
                     Some(Ok(())) => {
                         tell(host, player, format!("{} is kept as npcs/{}{EXT}", p.name, p.id));
+                        push(host, &p);
                         if spawn == 1 {
                             if let Err(e) = summon(host, player, &p.id) {
                                 tell(host, player, format!("Kept, but not summoned: {e}"));
@@ -285,6 +320,28 @@ impl IPayloadHandler for OnSave {
     }
 }
 
+/// What a client needs of an NPC file to draw it: its skin and model, not its dialog, rules,
+/// quests or shop (those are the server's).
+fn looks_only(p: &Profile) -> Vec<u8> {
+    let mut q = p.clone();
+    q.topics.clear();
+    q.own_dialog = None;
+    q.rules = None;
+    q.quests = None;
+    q.shop = None;
+    q.character_file = None;
+    q.pack(&crate::image::crc32)
+}
+
+/// NPC file `p` changed: every player's client gets its look anew.
+fn push(host: &mut dyn ServerHost, p: &Profile) {
+    let file = looks_only(p);
+    let players: Vec<PlayerRef> = host.levels().list_levels().into_iter().flat_map(|l| l.online_players(&*host).unwrap_or_default()).collect();
+    for q in players {
+        let _ = q.send_payload(host, &PayloadId(FILE.into()), PayloadBytes(file.clone()));
+    }
+}
+
 struct OnAsk;
 
 impl IPayloadHandler for OnAsk {
@@ -292,9 +349,24 @@ impl IPayloadHandler for OnAsk {
         let Ok(player) = context.player() else { return Ok(()) };
         let Ok(host) = context.server_host() else { return Ok(()) };
         let id = String::from_utf8_lossy(&payload.0).into_owned();
-        let file = SERVER.lock().ok().and_then(|s| s.profiles.get(&id).map(|x| x.1.clone()));
-        if let Some(file) = file {
-            let _ = player.send_payload(host, &PayloadId(FILE.into()), PayloadBytes(file.to_vec()));
+        // A few dozen files in ten seconds at most, each player.
+        let now = player.entity().level(&*host).and_then(|l| l.game_time(&*host)).unwrap_or(0);
+        let p = SERVER.lock().ok().and_then(|mut s| {
+            if s.asks.len() > 512 {
+                s.asks.clear();
+            }
+            let a = s.asks.entry(player.uuid()).or_insert((now, 0));
+            if now < a.0 || now - a.0 >= 200 {
+                *a = (now, 0);
+            }
+            a.1 += 1;
+            if a.1 > 40 {
+                return None;
+            }
+            s.profiles.get(&id).map(|x| x.0.clone())
+        });
+        if let Some(p) = p {
+            let _ = player.send_payload(host, &PayloadId(FILE.into()), PayloadBytes(looks_only(&p)));
         }
         Ok(())
     }

@@ -136,8 +136,9 @@ struct Creator {
 
 static CREATOR: LazyLock<Mutex<Option<Creator>>> = LazyLock::new(Default::default);
 
+/// Whether the maker is up (one waiting for another screen to close is not yet).
 pub fn active() -> bool {
-    CREATOR.lock().is_ok_and(|c| c.is_some())
+    CREATOR.lock().is_ok_and(|c| c.as_ref().is_some_and(|c| c.shown))
 }
 
 fn label(i: usize) -> String {
@@ -500,7 +501,8 @@ impl Creator {
                     self.status = format!("Too big: {} KB of {} KB (a smaller skin or model)", file.len() / 1024, MAX_FILE / 1024);
                     return;
                 }
-                let mut bytes = vec![u8::from(spawn)];
+                // Bit 0: summon it; bit 1: it is the NPC opened here (or saved here before), not a new one.
+                let mut bytes = vec![u8::from(spawn) | (u8::from(self.editing.is_some()) << 1)];
                 bytes.extend(file);
                 self.outbox.push(bytes);
                 self.status = format!("Sent {} ({})", p.name, p.id);
@@ -523,7 +525,7 @@ pub fn tick(host: &mut dyn ClientHost) {
         let close = c.close;
         if close || (c.shown && host.mod_screen() != Some(SCREEN)) {
             *lock = None;
-        } else if !c.shown && host.mod_screen() == Some(SCREEN) {
+        } else if !c.shown && (host.mod_screen() == Some(SCREEN) || host.mod_screen_open(SCREEN)) {
             c.shown = true;
         }
         (out, close)
@@ -1028,7 +1030,7 @@ pub fn key_pressed(host: &dyn ClientHost, e: &mut ScreenKeyPressedPreEvent<'_>) 
     }
     let Ok(mut lock) = CREATOR.lock() else { return Flow::Continue };
     let Some(c) = lock.as_mut() else { return Flow::Continue };
-    let ctrl = e.modifiers & 2 != 0;
+    let ctrl = e.modifiers & 2 != 0 && e.modifiers & 4 == 0;
     let shift = e.modifiers & 1 != 0;
     match e.key {
         // Escape goes to the screen, which closes.

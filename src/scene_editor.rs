@@ -436,7 +436,7 @@ pub fn key_pressed(host: &dyn ClientHost, ev: &mut ScreenKeyPressedPreEvent<'_>)
     }
     let Ok(mut lock) = EDITOR.lock() else { return Flow::Continue };
     let Some(e) = lock.as_mut() else { return Flow::Continue };
-    let ctrl = ev.modifiers & 2 != 0;
+    let ctrl = ev.modifiers & 2 != 0 && ev.modifiers & 4 == 0;
     let shift = ev.modifiers & 1 != 0;
     match ev.key {
         "key.keyboard.escape" => return Flow::Continue,
@@ -478,7 +478,7 @@ pub fn tick(host: &mut dyn ClientHost) {
         let close = e.close;
         if close || (e.shown && host.mod_screen() != Some(SCREEN)) {
             *lock = None;
-        } else if !e.shown && host.mod_screen() == Some(SCREEN) {
+        } else if !e.shown && (host.mod_screen() == Some(SCREEN) || host.mod_screen_open(SCREEN)) {
             e.shown = true;
         }
         (out, close)

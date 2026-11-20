@@ -5,6 +5,11 @@ pub fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     let mut d = png::Decoder::new(std::io::Cursor::new(bytes));
     d.set_transformations(png::Transformations::EXPAND | png::Transformations::ALPHA | png::Transformations::STRIP_16);
     let mut r = d.read_info().map_err(|e| format!("not a PNG: {e}"))?;
+    // Its size is known before anything is unpacked.
+    let (iw, ih) = (r.info().width, r.info().height);
+    if iw > 2048 || ih > 2048 {
+        return Err(format!("too big: {iw} x {ih}"));
+    }
     let mut buf = vec![0; r.output_buffer_size().ok_or("too big")?];
     let info = r.next_frame(&mut buf).map_err(|e| format!("bad PNG: {e}"))?;
     let (w, h) = (info.width, info.height);
@@ -21,7 +26,8 @@ pub fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 
 /// Deflate data inflated (zip entries made with deflate).
 pub fn inflate(data: &[u8]) -> Result<Vec<u8>, String> {
-    miniz_oxide::inflate::decompress_to_vec(data).map_err(|e| format!("bad deflate data: {e:?}"))
+    // No file in an NPC is over 4 MB unpacked (see `profile`): more is not unpacked at all.
+    miniz_oxide::inflate::decompress_to_vec_with_limit(data, 4 << 20).map_err(|e| format!("bad deflate data: {:?}", e.status))
 }
 
 pub fn crc32(data: &[u8]) -> u32 {

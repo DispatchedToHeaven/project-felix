@@ -135,6 +135,8 @@ struct Day {
     place: String,
     /// The bed it sleeps in.
     bed: Option<[i32; 3]>,
+    /// When it last looked for a bed and found none.
+    no_bed: i64,
 }
 
 #[derive(Default)]
@@ -147,6 +149,13 @@ struct State {
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
+
+/// The server stopped: nothing of its world is kept.
+pub fn clear() {
+    if let Ok(mut s) = STATE.lock() {
+        *s = Default::default();
+    }
+}
 
 fn dist(a: [f64; 3], b: [f64; 3]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
@@ -321,6 +330,7 @@ pub fn tick(host: &mut dyn ServerHost) {
         }
         s.last = now;
         s.days.retain(|id, _| npcs.contains(id));
+        s.beds.retain(|_, n| npcs.contains(n));
         std::mem::take(&mut s.hurt)
     };
     for id in hurt {
@@ -427,9 +437,20 @@ pub fn tick(host: &mut dyn ServerHost) {
         let mut at = place(host, me, &e.place);
         // To sleep: in a free bed near its home, if there is one.
         if e.doing == Doing::Sleep {
-            let bed = match STATE.lock().ok().and_then(|s| s.days.get(&id).and_then(|d| d.bed)) {
+            let (kept, looked) = STATE.lock().ok().and_then(|s| s.days.get(&id).map(|d| (d.bed, d.no_bed))).unwrap_or((None, 0));
+            let bed = match kept {
                 Some(b) if entry == Some(i) => Some(b),
-                _ => free_bed(&*host, me, at),
+                // None about when it last looked: it looks again in half a minute.
+                _ if looked != 0 && now >= looked && now - looked < 600 => None,
+                _ => {
+                    let b = free_bed(&*host, me, at);
+                    if let Ok(mut s) = STATE.lock()
+                        && let Some(d) = s.days.get_mut(&id)
+                    {
+                        d.no_bed = if b.is_none() { now.max(1) } else { 0 };
+                    }
+                    b
+                }
             };
             if let Some(b) = bed {
                 if let Ok(mut s) = STATE.lock() {

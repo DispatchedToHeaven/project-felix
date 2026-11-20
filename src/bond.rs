@@ -54,6 +54,13 @@ pub const PROPOSE_AT: (i32, f32) = (90, 80.0);
 pub const COURTING: i64 = 3 * 24000;
 /// Below this relation a romance ends.
 pub const BREAKS_BELOW: i32 = 20;
+/// After a parting, this long before it may be asked out again.
+pub const MENDS_IN: i64 = 3 * 24000;
+
+/// The closeness `days` apart cost, known when they meet again: a point a day past three, ten at most.
+pub fn apart_loss(days: i64) -> f32 {
+    (days - 3).clamp(0, 10) as f32
+}
 pub const RING: &str = "minecraft:diamond";
 
 impl Stage {
@@ -223,5 +230,6 @@ mod tests {
         assert_eq!(gift("minecraft:bread", 12345).2, "like");
         assert_eq!(short("minecraft:lily_of_the_valley"), "lily of the valley");
         assert!(yes_chance("happy") > yes_chance("angry"));
+        assert_eq!((apart_loss(2), apart_loss(3), apart_loss(5), apart_loss(400)), (0.0, 0.0, 2.0, 10.0));
     }
 }

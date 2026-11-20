@@ -21,6 +21,13 @@ struct Made {
 }
 
 static MADE: LazyLock<Mutex<Made>> = LazyLock::new(Default::default);
+
+/// Player `uuid` left the game: the editor is not theirs to save from until they open it again.
+pub fn left(uuid: u128) {
+    if let Ok(mut m) = MADE.lock() {
+        m.editors.remove(&uuid);
+    }
+}
 /// Data pack quest files as they were, for the editor.
 static RAW: LazyLock<Mutex<HashMap<String, Value>>> = LazyLock::new(Default::default);
 
@@ -99,6 +106,10 @@ impl IPayloadHandler for SaveQuest {
         };
         if !MADE.lock().is_ok_and(|m| m.editors.contains(&player.uuid())) {
             tell(host, "Open the editor with /felix quest edit first".into());
+            return Ok(());
+        }
+        if let Err(why) = crate::saves::may_save(&*host, player, &payload.0) {
+            tell(host, why.into());
             return Ok(());
         }
         let Ok(v) = crate::serde_json::from_slice::<Value>(&payload.0) else { return Ok(()) };

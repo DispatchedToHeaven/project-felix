@@ -62,6 +62,13 @@ struct State {
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
+/// The server stopped: nothing of its world is kept.
+pub fn clear() {
+    if let Ok(mut s) = STATE.lock() {
+        *s = Default::default();
+    }
+}
+
 /// Ticks between two looks at work, and between two looks for a chest.
 const STEP: u32 = 5;
 const LOOK_AGAIN: i64 = 100;
@@ -92,7 +99,22 @@ pub fn set_job(host: &mut dyn ServerHost, npc: EntityRef, name: &str) {
     }
 }
 
-/// The work about `at` for `job`: ripe crops, trunks standing on the ground, or water.
+/// Whether the trunk at `p` (of `log`, on the ground) is a tree's: it has leaves by its top. A
+/// post of a house, or a pillar someone set, is left alone.
+fn is_tree(host: &dyn mod_api::Host, level: LevelRef, p: [i32; 3], log: &str) -> bool {
+    let mut top = p;
+    for dy in 1..MAX_TRUNK {
+        let q = [p[0], p[1] + dy, p[2]];
+        if block_at(host, level, q) != log {
+            break;
+        }
+        top = q;
+    }
+    const ABOUT: [[i32; 3]; 9] = [[0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [1, 1, 0], [-1, 1, 0], [0, 1, 1], [0, 1, -1]];
+    ABOUT.iter().any(|d| job::is_crown(&block_at(host, level, [top[0] + d[0], top[1] + d[1], top[2] + d[2]])))
+}
+
+/// The work about `at` for `job`: ripe crops, trees' trunks standing on the ground, or water.
 fn scan(host: &dyn mod_api::Host, level: LevelRef, job: Job, at: [f64; 3]) -> Vec<[i32; 3]> {
     let (bx, by, bz) = (at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32);
     let mut out = Vec::new();
@@ -103,8 +125,8 @@ fn scan(host: &dyn mod_api::Host, level: LevelRef, job: Job, at: [f64; 3]) -> Ve
                 let p = [x, y, z];
                 let id = block_at(host, level, p);
                 let found = match job {
-                    Job::Farm => job::ripe(&id, level.block_property(host, p, "age").and_then(|a| a.parse().ok())).is_some(),
-                    Job::Wood => job::is_log(&id) && job::is_soil(&block_at(host, level, [x, y - 1, z])),
+                    Job::Farm => job::is_crop(&id) && job::ripe(&id, level.block_property(host, p, "age").and_then(|a| a.parse().ok())).is_some(),
+                    Job::Wood => job::is_log(&id) && job::is_soil(&block_at(host, level, [x, y - 1, z])) && is_tree(host, level, p, &id),
                     Job::Fish => id == "minecraft:water" && block_at(host, level, [x, y + 1, z]) == "minecraft:air",
                     Job::Build | Job::Bake => false,
                 };
@@ -335,7 +357,9 @@ fn work(host: &mut dyn ServerHost, me: EntityRef, job: Job, place: &str) {
             w.next = now + 40;
         }
     } else if now >= w.next {
-        if w.queue.is_empty() && (now - w.scanned >= LOOK_AGAIN || now < w.scanned) {
+        // With nothing to do last time, it looks about less often.
+        let again = if w.idle { LOOK_AGAIN * 4 } else { LOOK_AGAIN };
+        if w.queue.is_empty() && (now - w.scanned >= again || now < w.scanned) {
             w.queue = scan(&*host, level, job, work_at);
             w.scanned = now;
         }

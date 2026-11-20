@@ -69,6 +69,13 @@ pub fn load(bytes: &[u8]) -> Result<LoadedModel, String> {
     Ok(build(m))
 }
 
+/// The player left the world: the NPCs' own models (`npc:<id>`) were that world's.
+pub fn forget_npcs() {
+    if let Ok(mut s) = SAVED.write() {
+        s.retain(|k, _| !k.starts_with("npc:"));
+    }
+}
+
 /// A model under the id `id` (an NPC's own: `npc:<id>`).
 pub fn insert_named(id: &str, m: LoadedModel) {
     if let Ok(mut s) = SAVED.write() {

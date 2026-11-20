@@ -398,15 +398,47 @@ pub static WORN: AttachmentType<Option<[String; 5]>> = AttachmentType {
 const WORN_KEYS: [&str; 5] = ["mainhand", "offhand", "head", "chest", "legs"];
 const WORN_SLOTS: [EquipmentSlot; 5] = [EquipmentSlot::MainHand, EquipmentSlot::OffHand, EquipmentSlot::Head, EquipmentSlot::Chest, EquipmentSlot::Legs];
 
-static LAST: Mutex<i64> = Mutex::new(0);
+/// When each level's NPCs were last looked at.
+static LAST: LazyLock<Mutex<HashMap<&'static str, i64>>> = LazyLock::new(Default::default);
 
-/// The server tick: every two seconds, what each NPC wears goes to the clients (when it changed).
-pub fn level_tick(host: &mut dyn ServerHost) {
+/// The server stopped: nothing is known of what NPCs wear.
+pub fn clear() {
+    if let Ok(mut a) = APPLIED.lock() {
+        a.clear();
+    }
+    if let Ok(mut s) = SHIELDED.lock() {
+        s.clear();
+    }
+    if let Ok(mut l) = LAST.lock() {
+        l.clear();
+    }
+}
+
+/// NPC `id` left its level.
+pub fn forget(id: u32) {
+    if let Ok(mut a) = APPLIED.lock() {
+        a.remove(&id);
+    }
+    if let Ok(mut s) = SHIELDED.lock() {
+        s.remove(&id);
+    }
+}
+
+/// The level tick: every two seconds, what each NPC of the level wears goes to the clients (when
+/// it changed).
+pub fn level_tick(host: &mut dyn ServerHost, dimension: &'static str) {
     let npcs = companion::npcs();
     let Some(now) = npcs.iter().find_map(|id| host.entity(*id)).and_then(|e| e.level(&*host)).and_then(|l| l.game_time(&*host)) else { return };
-    match LAST.lock() {
-        Ok(mut last) if now - *last >= 40 || now < *last => *last = now,
-        _ => return,
+    let due = LAST.lock().is_ok_and(|mut last| {
+        let l = last.entry(dimension).or_insert(now - 40);
+        let due = now - *l >= 40 || now < *l;
+        if due {
+            *l = now;
+        }
+        due
+    });
+    if !due {
+        return;
     }
     for id in npcs {
         let Some(e) = host.entity(id) else { continue };
@@ -421,13 +453,16 @@ pub fn level_tick(host: &mut dyn ServerHost) {
                 s.remove(&id);
             }
         }
-        if APPLIED.lock().ok().and_then(|a| a.get(&id).copied()) != Some(stats)
+        let before = APPLIED.lock().ok().and_then(|a| a.get(&id).copied());
+        if before != Some(stats)
             && let Some(u) = e.uuid(host).map(crate::talk::uuid_text)
         {
-            for (attr, v) in [("minecraft:attack_damage", stats.0), ("minecraft:armor", stats.1)] {
-                crate::talk::queue(format!("attribute {u} {attr} modifier remove projectfelix:gear"));
-                if v > 0.0 {
-                    crate::talk::queue(format!("attribute {u} {attr} modifier add projectfelix:gear {v:.1} add_value"));
+            // Its weapon adds to its blows; its armour counts in each hit it takes (`on_damage_pre`).
+            if before.is_none_or(|b| b.0 != stats.0) {
+                // What it had (maybe from before it was unloaded) goes first: no harm if there was none.
+                crate::talk::queue_try(format!("attribute {u} minecraft:attack_damage modifier remove projectfelix:gear"));
+                if stats.0 > 0.0 {
+                    crate::talk::queue(format!("attribute {u} minecraft:attack_damage modifier add projectfelix:gear {:.1} add_value", stats.0));
                 }
             }
             if let Ok(mut a) = APPLIED.lock() {

@@ -77,6 +77,33 @@ struct Running {
 
 static MATCHES: LazyLock<Mutex<HashMap<u32, Running>>> = LazyLock::new(Default::default);
 
+/// The server stopped: no matches.
+pub fn clear() {
+    if let Ok(mut m) = MATCHES.lock() {
+        m.clear();
+    }
+}
+
+/// NPC `id` left its level (unloaded, dead): its match is over, and the NPC it played goes back
+/// to what it did.
+pub fn gone(host: &mut dyn ServerHost, id: u32) {
+    let taken = MATCHES.lock().ok().and_then(|mut all| {
+        let key = all.iter().find(|(k, r)| **k == id || matches!(r.opp, Opp::Npc(o, _) if o == id)).map(|(k, _)| *k)?;
+        all.remove(&key).map(|r| (key, r))
+    });
+    let Some((key, r)) = taken else { return };
+    if key != id {
+        if let Some(e) = host.entity(key) {
+            let _ = SPORT.set(host, Holder::Entity(key), None);
+            companion::release(host, e, r.restore);
+        }
+    } else if let Opp::Npc(o, mode) = r.opp
+        && let Some(e) = host.entity(o)
+    {
+        companion::release(host, e, mode);
+    }
+}
+
 struct KeyHandler;
 
 impl IPayloadHandler for KeyHandler {
@@ -129,7 +156,7 @@ pub fn busy(npc: u32) -> bool {
 
 /// NPC `a` plays `sport` against NPC `b`, who is put in the player's place.
 pub fn start_npcs(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef, sport: Sport) -> Result<(), String> {
-    if busy(a.id()) || busy(b.id()) || crate::games::busy(a.id()) || crate::games::busy(b.id()) {
+    if [a.id(), b.id()].into_iter().any(|x| busy(x) || crate::games::busy(x) || crate::scenes::busy(x)) {
         return Err("one of them is playing already".into());
     }
     let at = a.position(&*host).ok_or("no NPC")?;
@@ -162,6 +189,9 @@ pub fn start_npcs(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef, sport: 
 pub fn start(host: &mut dyn ServerHost, npc: EntityRef, sport: Sport, player: PlayerRef) -> Result<(), String> {
     if busy(npc.id()) {
         return Err("a match is on here already".into());
+    }
+    if crate::games::busy(npc.id()) || crate::scenes::busy(npc.id()) {
+        return Err("it is busy with something else".into());
     }
     let at = npc.position(&*host).ok_or("no NPC")?;
     let p = player.entity().position(&*host).ok_or("no player")?;

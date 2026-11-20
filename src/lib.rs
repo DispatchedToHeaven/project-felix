@@ -58,7 +58,7 @@
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
     ScreenKeyPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
-    ScreenCharTypedPreEvent, ChunkLoadEvent, ServerTickEvent, ServerTickPhase, LivingDamagePostEvent, LivingDamagePreEvent, LivingDeathEvent, ServerChatEvent, LevelRandomHost, AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
+    ScreenCharTypedPreEvent, ChunkLoadEvent, ClientPlayerLoggingOutEvent, EntityLeaveLevelEvent, PlayerLoggedOutEvent, ServerStoppedEvent, ServerTickEvent, ServerTickPhase, LivingDamagePostEvent, LivingDamagePreEvent, LivingDeathEvent, ServerChatEvent, LevelRandomHost, AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
     Host, HostSide, InteractionKeyMappingTriggeredEvent, InteractionResult, LevelTickPostEvent, RegisterCommandsEvent,
     RegisterEntityRenderersEvent, Registrar, RegistrationContext, RunModCommandEvent, ScreenMouseButtonPressedPreEvent,
     ScreenRenderPostEvent, ServerHost,
@@ -320,23 +320,80 @@ impl Hooks for Felix {
         settlements::chunk_load(host, e.dimension, e.chunk, e.new);
     }
 
-    fn level_tick_post(&self, host: HostSide, _e: &mut LevelTickPostEvent) {
+    fn level_tick_post(&self, host: HostSide, e: &mut LevelTickPostEvent) {
         if let HostSide::Server(host) = host {
+            let dimension = e.level.dimension_id();
             companion::level_tick(host);
             talk::level_tick(host);
             scenes::level_tick(host);
             games::level_tick(host);
             matches::level_tick(host);
-            custom::level_tick(host);
+            // The world's characters first: the NPC files bring theirs along after.
             heart::level_tick(host);
-            gear::level_tick(host);
+            custom::level_tick(host);
+            gear::level_tick(host, dimension);
             villages::level_tick(host);
             dialogs::level_tick(host);
             rulesets::level_tick(host);
             quest_store::level_tick(host);
-            settlements::level_tick(host);
+            settlements::level_tick(host, dimension);
             builds::level_tick(host);
         }
+    }
+
+    /// An NPC left its level (unloaded, dead, off to another dimension): what was kept by its id
+    /// goes, and what it was in the middle of ends.
+    fn entity_leave_level(&self, host: &mut dyn ServerHost, e: &mut EntityLeaveLevelEvent<'_>) {
+        if e.kind == companion::NPC {
+            games::gone(host, e.entity);
+            matches::gone(host, e.entity);
+            scenes::gone(host, e.entity);
+            companion::forget(e.entity);
+            gear::forget(e.entity);
+            speech::forget(e.entity);
+            builds::forget(e.entity);
+        }
+    }
+
+    /// A player left: their talk is over, and the editors are no longer theirs to save from.
+    fn player_logged_out(&self, _host: &mut dyn ServerHost, e: &mut PlayerLoggedOutEvent<'_>) {
+        talk::left(e.player);
+        dialogs::left(e.player);
+        rulesets::left(e.player);
+        quest_store::left(e.player);
+        scenes::left(e.player);
+        heart::left(e.player);
+        custom::left(e.player);
+    }
+
+    /// The server stopped: nothing of its world stays in memory (the next one, were it the same
+    /// folder, is read anew).
+    fn server_stopped(&self, _host: &mut dyn ServerHost, _e: &mut ServerStoppedEvent) {
+        saves::clear();
+        companion::clear();
+        companions::clear();
+        custom::clear();
+        events::clear();
+        families::clear();
+        games::clear();
+        gear::clear();
+        heart::clear();
+        jobs::clear();
+        markets::clear();
+        matches::clear();
+        needs::clear();
+        quests::clear();
+        routines::clear();
+        rulebook::clear();
+        scenes::clear();
+        settlements::clear();
+        shops::clear();
+        speech::clear();
+        squad::clear();
+        squad::clear_owners();
+        talk::clear();
+        villages::clear();
+        builds::clear();
     }
 
     fn server_tick(&self, host: &mut dyn ServerHost, e: &mut ServerTickEvent<'_>) {
@@ -375,6 +432,7 @@ impl Hooks for Felix {
         quests::on_death(host, e.entity, e.source.causing);
         gear::on_death(host, e.entity, e.source.causing);
         bonds::on_death(host, e.entity, e.source.causing);
+        families::on_death(host, e.entity);
         Flow::Continue
     }
 
@@ -555,6 +613,13 @@ impl Hooks for Felix {
         } else {
             Flow::Continue
         }
+    }
+
+    /// The player leaves the world: what the client knew of its NPCs goes (another world has others).
+    fn client_player_logging_out(&self, _host: &mut dyn ClientHost, _e: &mut ClientPlayerLoggingOutEvent) {
+        runtime::clear();
+        skins::clear();
+        models::forget_npcs();
     }
 
     fn client_tick_post(&self, host: &mut dyn ClientHost, _e: &mut ClientTickPostEvent) {

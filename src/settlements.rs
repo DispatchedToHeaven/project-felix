@@ -16,12 +16,18 @@ const FILE: &str = "settlements.json";
 const CABIN: &str = "projectfelix:cabin";
 /// Within this of its middle, a player is in a settlement.
 const NEAR: f64 = 40.0;
+/// Two settlements are no nearer than this (blocks, each way).
+const APART: i32 = 96;
+/// A place waiting to be built is tried while a player is within this of it (blocks).
+const TRY_WITHIN: f64 = 192.0;
 
 struct Couple {
     a: u32,
     b: u32,
     child: bool,
     wait: u32,
+    /// Steps it was looked for and one of them was not there.
+    missed: u8,
 }
 
 #[derive(Default)]
@@ -40,6 +46,13 @@ struct State {
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
+
+/// The server stopped: nothing of its world is kept.
+pub fn clear() {
+    if let Ok(mut s) = STATE.lock() {
+        *s = Default::default();
+    }
+}
 
 fn read(host: &mut dyn ServerHost) {
     let world = host.world_dir();
@@ -134,6 +147,24 @@ fn try_build(host: &mut dyn ServerHost, center: [i32; 2], forced: bool) -> Outco
     if heights.iter().any(Option::is_none) {
         return Outcome::Wait;
     }
+    // The ground itself: a tree's trunk (a giant mushroom, bamboo) standing on it is not it.
+    let top = |x: i32, y: i32, z: i32| level.block(&*host, [x, y - 1, z]).map(|k| k.id(&*host)).unwrap_or_default();
+    let heights: Vec<Option<i32>> = cols
+        .iter()
+        .zip(&heights)
+        .map(|((x, z), h)| {
+            let mut y = h.unwrap_or(64);
+            for _ in 0..32 {
+                let id = top(*x, y, *z);
+                let grown = id.ends_with("_log") || id.ends_with("_stem") || id.ends_with("_wood") || id.ends_with("_leaves") || id.ends_with("mushroom_block") || id.contains("bamboo");
+                if !grown {
+                    break;
+                }
+                y -= 1;
+            }
+            Some(y)
+        })
+        .collect();
     let hs: HashMap<(i32, i32), i32> = cols.iter().copied().zip(heights.iter().map(|h| h.unwrap_or(64))).collect();
     let h_of = |x: i32, z: i32| hs.get(&(center[0] + x, center[1] + z)).copied().unwrap_or(64);
     let hc = h_of(0, 0);
@@ -148,6 +179,18 @@ fn try_build(host: &mut dyn ServerHost, center: [i32; 2], forced: bool) -> Outco
         });
         if wet.count() > 2 {
             return Outcome::Not("water".into());
+        }
+        // Not over what someone built (a village, a player's house), nor next to another settlement.
+        let made = cols.iter().zip(&heights).any(|((x, z), h)| {
+            let id = top(*x, h.unwrap_or(64), *z);
+            ["planks", "cobblestone", "bricks", "dirt_path", "farmland", "glass", "wool", "_stairs", "_slab", "fence", "concrete", "carpet"].iter().any(|w| id.contains(w))
+        });
+        if made {
+            return Outcome::Not("something is built there".into());
+        }
+        let near = STATE.lock().is_ok_and(|s| s.built.iter().any(|(c, _)| (c[0] - center[0]).abs() < APART && (c[1] - center[1]).abs() < APART));
+        if near {
+            return Outcome::Not("another settlement is near".into());
         }
         let ys: Vec<i32> = heights.iter().map(|h| h.unwrap_or(64)).collect();
         if ys.iter().max().unwrap_or(&0) - ys.iter().min().unwrap_or(&0) > 7 {
@@ -165,6 +208,10 @@ fn try_build(host: &mut dyn ServerHost, center: [i32; 2], forced: bool) -> Outco
         let b = settle::place(h, [4, 0, 4]);
         let (x0, x1, z0, z1) = (cx + a[0].min(b[0]), cx + a[0].max(b[0]), cz + a[2].min(b[2]), cz + a[2].max(b[2]));
         q(format!("fill {x0} {} {z0} {x1} {} {z1} minecraft:air", base, base + 6));
+        // What is left of a tree that stood there, above.
+        for grown in ["#minecraft:logs", "#minecraft:leaves"] {
+            q(format!("fill {x0} {} {z0} {x1} {} {z1} minecraft:air replace {grown}", base + 7, base + 16));
+        }
         for fill in ["air", "water", "short_grass", "tall_grass", "snow"] {
             q(format!("fill {x0} {} {z0} {x1} {} {z1} minecraft:cobblestone replace minecraft:{fill}", base - 7, base - 2));
         }
@@ -261,7 +308,7 @@ fn try_build(host: &mut dyn ServerHost, center: [i32; 2], forced: bool) -> Outco
     if let (Some(Some(a)), Some(Some(b))) = (ids.get(a), ids.get(b))
         && let Ok(mut s) = STATE.lock()
     {
-        s.couples.push(Couple { a: *a, b: *b, child: site.child, wait: 3 });
+        s.couples.push(Couple { a: *a, b: *b, child: site.child, wait: 3, missed: 0 });
     }
     Outcome::Built(site.name)
 }
@@ -272,7 +319,11 @@ fn players(host: &dyn mod_api::Host) -> Vec<PlayerRef> {
 
 /// The level tick: settlements whose land is there get built; couples settle in; players coming
 /// into one are told its name.
-pub fn level_tick(host: &mut dyn ServerHost) {
+pub fn level_tick(host: &mut dyn ServerHost, dimension: &str) {
+    // Settlements are the overworld's: its tick only (each level has its own).
+    if dimension != OVERWORLD {
+        return;
+    }
     let step = STATE.lock().map(|mut s| {
         s.ticks = s.ticks.wrapping_add(1);
         s.ticks % 40 == 0
@@ -290,7 +341,14 @@ pub fn level_tick(host: &mut dyn ServerHost) {
             later.push(c);
             continue;
         }
-        let (Some(a), Some(b)) = (host.entity(c.a), host.entity(c.b)) else { continue };
+        let (Some(a), Some(b)) = (host.entity(c.a), host.entity(c.b)) else {
+            // Not there yet (or unloaded for now): a few more looks.
+            if c.missed < 30 {
+                c.missed += 1;
+                later.push(c);
+            }
+            continue;
+        };
         crate::families::bind(host, a, b);
         if c.child {
             let _ = crate::families::birth(host, a, b);
@@ -301,7 +359,12 @@ pub fn level_tick(host: &mut dyn ServerHost) {
     }
     // One settlement a step at most.
     let pending = STATE.lock().map(|s| s.pending.clone()).unwrap_or_default();
+    let about: Vec<[f64; 3]> = players(&*host).into_iter().filter_map(|p| p.entity().position(&*host)).collect();
     for center in pending {
+        // Far from everyone its land may not be there, and no one would see it: later.
+        if !about.iter().any(|p| (p[0] - f64::from(center[0])).hypot(p[2] - f64::from(center[1])) <= TRY_WITHIN) {
+            continue;
+        }
         let (outcome, at) = try_near(host, center);
         match outcome {
             Outcome::Wait => continue,

@@ -160,6 +160,46 @@ enum NpcMove {
 
 static GAMES: LazyLock<Mutex<HashMap<u32, Game>>> = LazyLock::new(Default::default);
 
+/// Ticks a player may take over a move, at the table and away from it, before the game is given up.
+const IDLE: i64 = 6000;
+const AWAY: i64 = 200;
+/// Past this from the table (blocks) a player is away.
+const AT_TABLE: f64 = 24.0;
+
+/// The server stopped: no games.
+pub fn clear() {
+    if let Ok(mut g) = GAMES.lock() {
+        g.clear();
+    }
+}
+
+/// NPC `id` left its level (unloaded, dead): its game is over, and the one across goes back to
+/// what it did.
+pub fn gone(host: &mut dyn ServerHost, id: u32) {
+    let key = GAMES.lock().ok().and_then(|g| g.iter().find(|(k, x)| **k == id || x.other.is_some_and(|o| o.0 == id)).map(|(k, _)| *k));
+    let Some(key) = key else { return };
+    // Those at the board see it is over.
+    if let Ok(mut g) = GAMES.lock()
+        && let Some(x) = g.get_mut(&key)
+        && x.ended.is_none()
+    {
+        x.result = Some("The game is over: a player left.".into());
+        x.ended = Some(x.moved);
+    }
+    send_views(host, key, &[]);
+    let Some(g) = GAMES.lock().ok().and_then(|mut g| g.remove(&key)) else { return };
+    if key != id {
+        if let Some(e) = host.entity(key) {
+            let _ = TABLE.set(host, Holder::Entity(key), None);
+            companion::release(host, e, g.restore);
+        }
+    } else if let Some((o, m)) = g.other
+        && let Some(e) = host.entity(o)
+    {
+        companion::release(host, e, m);
+    }
+}
+
 impl Game {
     fn seat(&self, color: Color) -> Seat {
         if color == Color::White { self.white } else { self.black }
@@ -235,6 +275,9 @@ fn now_of(host: &dyn mod_api::Host, npc: EntityRef) -> i64 {
 pub fn start(host: &mut dyn ServerHost, npc: EntityRef, kind: GameKind, player: PlayerRef, against_npc: bool) -> Result<(), String> {
     if GAMES.lock().map_err(|_| "busy")?.contains_key(&npc.id()) {
         return Err("a game is already set up here".into());
+    }
+    if busy(npc.id()) || crate::matches::busy(npc.id()) || crate::scenes::busy(npc.id()) {
+        return Err("it is busy with something else".into());
     }
     let now = now_of(&*host, npc);
     let at = npc.position(&*host).ok_or("no NPC")?;
@@ -316,7 +359,7 @@ pub fn busy(id: u32) -> bool {
 
 /// NPC `a` plays `kind` against NPC `b`, who sits down across `a`'s table.
 pub fn start_npcs(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef, kind: GameKind) -> Result<(), String> {
-    if busy(a.id()) || busy(b.id()) || crate::matches::busy(a.id()) || crate::matches::busy(b.id()) {
+    if [a.id(), b.id()].into_iter().any(|x| busy(x) || crate::matches::busy(x) || crate::scenes::busy(x)) {
         return Err("one of them is playing already".into());
     }
     let now = now_of(&*host, a);
@@ -511,6 +554,17 @@ pub fn level_tick(host: &mut dyn ServerHost) {
     for id in ids {
         let Some(npc) = host.entity(id) else { continue };
         let now = now_of(&*host, npc);
+        // The player to move, if one: away from the table (or gone) they soon give the game up.
+        let to_move = GAMES.lock().ok().and_then(|g| {
+            g.get(&id).and_then(|g| match g.seat(g.board.side()) {
+                Seat::Player(p) if g.ended.is_none() && g.black != Seat::Empty => Some(p),
+                _ => None,
+            })
+        });
+        let away = to_move.is_some_and(|p| match (p.entity().position(&*host), npc.position(&*host)) {
+            (Some(a), Some(b)) => (a[0] - b[0]).hypot(a[2] - b[2]) > AT_TABLE,
+            _ => true,
+        });
         enum Step {
             Nothing,
             Moved(u32),
@@ -531,6 +585,10 @@ pub fn level_tick(host: &mut dyn ServerHost) {
                 }
             } else if g.black == Seat::Empty && now - g.started > WAIT_FOR_PLAYER {
                 g.result = Some("Nobody came to play.".into());
+                g.ended = Some(now);
+                Step::Called
+            } else if to_move.is_some() && now - g.moved > if away { AWAY } else { IDLE } {
+                g.result = Some("The game was left unfinished.".into());
                 g.ended = Some(now);
                 Step::Called
             } else if let Some(slot) = g.thinking.clone()

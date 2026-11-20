@@ -113,9 +113,20 @@ pub fn open(host: &mut dyn ServerHost, p: PlayerRef) {
     let _ = p.send_payload(host, &PayloadId(OPEN.into()), PayloadBytes(crate::serde_json::to_vec(&body).unwrap_or_default()));
 }
 
+/// The NPC `id` the book of `p` may show: an NPC, in their level, in the book's reach (or theirs).
+fn listed(host: &dyn ServerHost, p: PlayerRef, id: u32) -> Option<EntityRef> {
+    let npc = host.entity(id).filter(|e| companion::is_npc(host, *e))?;
+    if npc.level(host) != p.entity().level(host) {
+        return None;
+    }
+    let (at, q) = (p.entity().position(host)?, npc.position(host)?);
+    let d = ((q[0] - at[0]).powi(2) + (q[1] - at[1]).powi(2) + (q[2] - at[2]).powi(2)).sqrt();
+    (d <= REACH || LivingRef::new(npc).owner(host) == Some(p.uuid())).then_some(npc)
+}
+
 /// Makes NPC `id` glow a while and tells `p` the way to it.
 fn find(host: &mut dyn ServerHost, p: PlayerRef, id: u32) {
-    let Some(npc) = host.entity(id) else { return };
+    let Some(npc) = listed(&*host, p, id) else { return };
     let (Some(at), Some(q)) = (p.entity().position(&*host), npc.position(&*host)) else { return };
     let name = npc.name(&*host).unwrap_or_else(|| "NPC".into());
     if let Some(uuid) = npc.uuid(host) {
@@ -129,7 +140,7 @@ fn find(host: &mut dyn ServerHost, p: PlayerRef, id: u32) {
 
 /// Calls NPC `id` over: it comes and talks, if it will.
 fn call(host: &mut dyn ServerHost, p: PlayerRef, id: u32) {
-    let Some(npc) = host.entity(id) else { return };
+    let Some(npc) = listed(&*host, p, id) else { return };
     let name = npc.name(&*host).unwrap_or_else(|| "NPC".into());
     let (Some(at), Some(q)) = (p.entity().position(&*host), npc.position(&*host)) else { return };
     let d = ((q[0] - at[0]).powi(2) + (q[1] - at[1]).powi(2) + (q[2] - at[2]).powi(2)).sqrt();
@@ -150,6 +161,9 @@ fn call(host: &mut dyn ServerHost, p: PlayerRef, id: u32) {
     let _ = p.action_bar(host, Text::literal(line));
 }
 
+/// When each player last asked (game time): a few ticks between two asks.
+static ASKED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u128, i64>>> = std::sync::LazyLock::new(Default::default);
+
 /// The book's asks: `{}` to open it again, `{"find": id}`, `{"call": id}`.
 pub struct Ask;
 
@@ -157,6 +171,17 @@ impl IPayloadHandler for Ask {
     fn handle(&self, payload: PayloadBytes, context: &mut dyn IPayloadContext) -> Result<(), String> {
         let Ok(player) = context.player() else { return Ok(()) };
         let Ok(host) = context.server_host() else { return Ok(()) };
+        let now = player.entity().level(&*host).and_then(|l| l.game_time(&*host)).unwrap_or(0);
+        let soon = ASKED.lock().is_ok_and(|mut a| {
+            if a.len() > 512 {
+                a.clear();
+            }
+            let last = a.insert(player.uuid(), now);
+            last.is_some_and(|l| now >= l && now - l < 5)
+        });
+        if soon {
+            return Ok(());
+        }
         let v = crate::serde_json::from_slice::<Value>(&payload.0).unwrap_or(Value::Null);
         let id = |k: &str| v.get(k).and_then(Value::as_u64).map(|x| x as u32);
         if let Some(n) = id("find") {

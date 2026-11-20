@@ -43,6 +43,8 @@ struct Talk {
     close: bool,
     /// Where the last frame drew the answers, for clicks.
     buttons: Vec<[f32; 4]>,
+    /// Ticks a view has waited for another screen to close.
+    waited: u32,
 }
 
 static TALKING: LazyLock<Mutex<Talk>> = LazyLock::new(Default::default);
@@ -95,7 +97,14 @@ pub fn use_key(host: &mut dyn ClientHost, e: &mut InteractionKeyMappingTriggered
             best = Some((t, id));
         }
     }
-    let Some((_, id)) = best else { return Flow::Continue };
+    let Some((t, id)) = best else { return Flow::Continue };
+    // A block nearer than the NPC is what the click is for (a chest before it, a wall between).
+    if let Some(h) = host.raycast(REACH as f32 + 1.0) {
+        let d = ((h.x - eye[0]).powi(2) + (h.y - eye[1]).powi(2) + (h.z - eye[2]).powi(2)).sqrt();
+        if d < t {
+            return Flow::Continue;
+        }
+    }
     send(TALK, id.to_le_bytes().to_vec());
     e.swing_hand = false;
     Flow::Cancel
@@ -123,8 +132,20 @@ fn ray_box(from: [f64; 3], dir: [f64; 3], min: [f64; 3], max: [f64; 3]) -> Optio
 pub fn tick(host: &mut dyn ClientHost) {
     let (out, close, gone) = {
         let Ok(mut t) = TALKING.lock() else { return };
-        let gone = t.shown && t.view.is_some() && host.mod_screen() != Some(SCREEN);
+        // What the NPC said came while another screen was up: shown once that is closed, if soon.
+        let mut late = false;
+        if t.view.is_some() && !t.shown {
+            if host.mod_screen() == Some(SCREEN) || host.mod_screen_open(SCREEN) {
+                t.shown = true;
+                t.waited = 0;
+            } else {
+                t.waited += 1;
+                late = t.waited > 60;
+            }
+        }
+        let gone = late || (t.shown && t.view.is_some() && host.mod_screen() != Some(SCREEN));
         if gone {
+            t.waited = 0;
             t.view = None;
             t.shown = false;
         }

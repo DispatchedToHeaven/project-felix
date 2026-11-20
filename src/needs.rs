@@ -54,10 +54,19 @@ struct State {
     /// Each NPC's food as last counted, and when it last said it was hungry.
     food: HashMap<u32, u8>,
     said: HashMap<u32, i64>,
+    /// Each NPC's chest by its home as last looked for (none: there is none), and when.
+    pantry: HashMap<u32, (Option<[i32; 3]>, i64)>,
     ticks: u32,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
+
+/// The server stopped: nothing of its world is kept.
+pub fn clear() {
+    if let Ok(mut s) = STATE.lock() {
+        *s = Default::default();
+    }
+}
 
 /// NPC `id`'s food as last counted.
 pub fn food_of(id: u32) -> u8 {
@@ -75,8 +84,20 @@ fn pantry(host: &mut dyn ServerHost, npc: EntityRef) -> Option<(LevelRef, [i32; 
         return Some(c);
     }
     let level = npc.level(&*host)?;
-    let home = crate::routines::place_named(host, npc, "home")?;
-    crate::jobs::chest_near(&*host, level, home, 4).map(|c| (level, c))
+    // Looked for once a minute, found or not.
+    let now = level.game_time(&*host).unwrap_or(0);
+    let known = STATE.lock().ok().and_then(|s| s.pantry.get(&npc.id()).copied()).filter(|(_, at)| now >= *at && now - at < 1200);
+    let chest = match known {
+        Some((c, _)) => c,
+        None => {
+            let c = crate::routines::place_named(host, npc, "home").and_then(|home| crate::jobs::chest_near(&*host, level, home, 4));
+            if let Ok(mut s) = STATE.lock() {
+                s.pantry.insert(npc.id(), (c, now));
+            }
+            c
+        }
+    };
+    chest.map(|c| (level, c))
 }
 
 /// NPC `npc` eats something worth `points`.
@@ -127,12 +148,12 @@ pub fn tick(host: &mut dyn ServerHost) {
         let Some(now) = npc.level(&*host).and_then(|l| l.game_time(&*host)) else { continue };
         let fed = NEED.get(host, Holder::Entity(*id)).unwrap_or_default();
         let (mut food, last) = need::after(fed.food, if fed.last == 0 { now } else { fed.last }, now);
-        let before = food;
-        // Hungry enough to eat: from its pantry, up to three things.
+        // Hungry enough to eat: from its pantry, until it has had enough (after days away, all it
+        // missed).
         if food <= EATS_AT
             && let Some(p) = pantry(host, npc)
         {
-            for _ in 0..3 {
+            for _ in 0..8 {
                 let Some((item, points)) = FOODS.iter().find(|f| crate::jobs::amount(host, p, f.0) > 0).copied() else { break };
                 if !crate::jobs::take(host, p, item, 1) {
                     break;
@@ -151,7 +172,8 @@ pub fn tick(host: &mut dyn ServerHost) {
         if food <= HUNGRY && (now - said >= 3000 || now < said) {
             let lines = if food == 0 { need::STARVING_LINES } else { need::HUNGRY_LINES };
             crate::heart::say_aloud(host, npc, lines[(now as usize / 100 + *id as usize) % lines.len()]);
-            if before > HUNGRY || food == 0 {
+            // Hungry since the last look, or starving: it takes it badly.
+            if fed.food > HUNGRY || food == 0 {
                 crate::heart::feel(host, npc, None, "hungry");
             }
             if let Ok(mut s) = STATE.lock() {
@@ -165,6 +187,7 @@ pub fn tick(host: &mut dyn ServerHost) {
     if let Ok(mut s) = STATE.lock() {
         s.food.retain(|id, _| npcs.contains(id));
         s.said.retain(|id, _| npcs.contains(id));
+        s.pantry.retain(|id, _| npcs.contains(id));
     }
 }
 

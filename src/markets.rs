@@ -70,6 +70,13 @@ struct State {
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
+/// The server stopped: nothing of its world is kept.
+pub fn clear() {
+    if let Ok(mut s) = STATE.lock() {
+        *s = Default::default();
+    }
+}
+
 pub fn purse_of(host: &mut dyn ServerHost, npc: EntityRef) -> u32 {
     PURSE.get(host, Holder::Entity(npc.id())).unwrap_or_default().coins
 }

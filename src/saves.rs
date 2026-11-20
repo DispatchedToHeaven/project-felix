@@ -7,7 +7,7 @@
 //! Before 0.42.0 everything was in the game folder. A world older than a day, opened the first
 //! time with 0.42.0 or later, gets a copy of what was there (what it doesn't have already); a new
 //! world starts empty.
-use mod_api::{ConfigPath, ServerHost};
+use mod_api::{ConfigPath, PlayerRef, ServerHost};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
@@ -32,6 +32,31 @@ pub fn new_world(host: &mut dyn ServerHost, what: &'static str) -> bool {
         s.insert(what, world);
     }
     true
+}
+
+/// Why `player` may not save what an editor sent (`text`: its JSON, or an NPC file's texts): they
+/// must be an operator still, and only one of level 4 keeps console commands (they run as the
+/// server).
+pub fn may_save(host: &dyn ServerHost, player: PlayerRef, text: &[u8]) -> Result<(), &'static str> {
+    let level = player.permission_level(host).unwrap_or(0);
+    if level < 2 {
+        return Err("Not kept: only an operator saves from the editors.");
+    }
+    let commands = text.windows(9).any(|w| w == b"\"command");
+    if commands && level < 4 {
+        return Err("Not kept: only a level 4 operator saves console commands.");
+    }
+    Ok(())
+}
+
+/// The server stopped: the next world is read anew, were it the same one.
+pub fn clear() {
+    if let Ok(mut s) = SEEN.lock() {
+        s.clear();
+    }
+    if let Ok(mut c) = CARRIED.lock() {
+        *c = None;
+    }
 }
 
 fn names(files: &dyn mod_api::ConfigFiles, folder: &str) -> Vec<String> {

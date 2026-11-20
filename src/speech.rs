@@ -76,6 +76,20 @@ static MODE: Mutex<ChatCopy> = Mutex::new(ChatCopy::Player);
 /// NPCs with a bubble up, and when it goes.
 static SHOWN: LazyLock<Mutex<HashMap<u32, i64>>> = LazyLock::new(Default::default);
 
+/// NPC `id` left its level: its bubble is gone with it.
+pub fn forget(id: u32) {
+    if let Ok(mut s) = SHOWN.lock() {
+        s.remove(&id);
+    }
+}
+
+/// The server stopped: no bubbles are up.
+pub fn clear() {
+    if let Ok(mut s) = SHOWN.lock() {
+        s.clear();
+    }
+}
+
 pub fn chat_copy() -> ChatCopy {
     MODE.lock().map(|m| *m).unwrap_or(ChatCopy::Player)
 }

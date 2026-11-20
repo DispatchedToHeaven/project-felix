@@ -179,6 +179,7 @@ struct Server {
     live: HashMap<u32, LiveDo>,
     /// Where NPCs are sent to walk now, over their orders (to a player, say).
     go: HashMap<u32, [f64; 3]>,
+    ticks: u32,
 }
 
 /// What a living NPC does at its post: goes with its owner instead, stays and walks about, rests
@@ -214,6 +215,23 @@ pub fn set_live(host: &mut dyn ServerHost, npc: EntityRef, post: [f64; 3], what:
 static SERVER: LazyLock<Mutex<Server>> = LazyLock::new(Default::default);
 static NPC_KEY: OnceLock<EntityTypeKey> = OnceLock::new();
 
+/// NPC `id` left its level (unloaded, dead, gone to another dimension): it is known no more.
+pub fn forget(id: u32) {
+    if let Ok(mut s) = SERVER.lock() {
+        s.orders.remove(&id);
+        s.live.remove(&id);
+        s.go.remove(&id);
+        s.unknown.retain(|x| *x != id);
+    }
+}
+
+/// The server stopped: no NPC is known.
+pub fn clear() {
+    if let Ok(mut s) = SERVER.lock() {
+        *s = Default::default();
+    }
+}
+
 /// The NPCs whose goals ran lately (every loaded NPC), by entity id.
 pub fn npcs() -> Vec<u32> {
     SERVER.lock().map(|s| s.orders.keys().copied().collect()).unwrap_or_default()
@@ -245,6 +263,12 @@ pub fn register(r: &mut dyn Registrar) {
 /// Server level tick: reads the orders of NPCs the goals asked about, and points guards at the
 /// monsters near their posts (each tick); the wolf's own attack goals do the fighting.
 pub fn level_tick(host: &mut dyn ServerHost) {
+    // A guard with nothing to fight looks about twice a second.
+    let look = SERVER.lock().map(|mut s| {
+        s.ticks = s.ticks.wrapping_add(1);
+        s.ticks % 10 == 0
+    });
+    let look = look.unwrap_or(true);
     let guards: Vec<(u32, [f64; 3])> = match SERVER.lock() {
         Ok(s) => s
             .orders
@@ -259,7 +283,7 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         let mob = MobRef::new(me);
         let current = mob.target(&*host);
         let keep = current.and_then(|t| t.entity().position(&*host)).is_some_and(|at| distance_sq(at, post) < GUARD_LEASH * GUARD_LEASH);
-        if keep {
+        if keep || (current.is_none() && !look) {
             continue;
         }
         let next = nearest_monster(&*host, me, post);
@@ -520,7 +544,8 @@ pub fn open_editor(host: &mut dyn ServerHost, npc: EntityRef, player: mod_api::P
     let _ = player.send_payload(host, &mod_api::PayloadId(EDIT.into()), mod_api::PayloadBytes(body.into_bytes()));
 }
 
-/// The editor's "Use on NPC": its owner (or anyone, for an NPC without one) gives it a model and texture.
+/// The editor's "Use on NPC": its owner (an operator, for an NPC without one) gives it a model and
+/// texture, from near it.
 struct SetLook;
 
 impl mod_api::IPayloadHandler for SetLook {
@@ -533,8 +558,20 @@ impl mod_api::IPayloadHandler for SetLook {
         let id = v.get("npc").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
         let Some(npc) = host.entity(id).filter(|e| is_npc(&*host, *e)) else { return Ok(()) };
         let owner = LivingRef::new(npc).owner(&*host);
-        if owner.is_some() && owner != Some(player.uuid()) {
+        let may = match owner {
+            Some(o) => o == player.uuid(),
+            None => player.permission_level(&*host).unwrap_or(0) >= 2,
+        };
+        if !may {
             let _ = player.action_bar(host, Text::literal("Only its owner can change how this NPC looks."));
+            return Ok(());
+        }
+        let id_like = |s: &str| !s.is_empty() && s.len() <= 128 && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-./:".contains(c));
+        let near = match (npc.position(&*host), player.entity().position(&*host)) {
+            (Some(a), Some(b)) => distance_sq(a, b) <= 64.0 * 64.0,
+            _ => false,
+        };
+        if !id_like(&model) || !id_like(&texture) || !near {
             return Ok(());
         }
         let _ = LOOK.set(host, Holder::Entity(id), Some(Look { model: model.clone(), texture }));
@@ -547,6 +584,7 @@ impl mod_api::IPayloadHandler for SetLook {
 
 pub fn register_commands(e: &mut RegisterCommandsEvent<'_>) {
     e.commands.push(Command::op("felix spawn", 2));
+    e.commands.push(Command::op("felix npcs", 2));
     e.commands.push(Command::op("felix look <targets:entities> <spec:text>", 2));
     e.commands.push(Command::op("felix order <targets:entities> <order:word>", 2));
     e.commands.push(Command::op("felix dialog <targets:entities> <dialog:text>", 2));
@@ -584,6 +622,12 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
         let _ = host.commands().feedback(Text::literal(line));
     };
     match lit.as_slice() {
+        // How many NPCs are known now (those loaded): what is kept by NPC is kept for these.
+        ["felix", "npcs"] => {
+            let ids = npcs();
+            let here = ids.iter().filter(|id| host.entity(**id).is_some()).count();
+            feedback(host, format!("{} NPCs loaded ({here} in this level)", ids.len()));
+        }
         ["felix", "spawn"] => {
             let CommandSource::Player { player, .. } = e.source else {
                 feedback(host, "Only a player can have a companion.".into());
@@ -629,7 +673,7 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
             };
             let mut n = 0;
             for t in targets(e) {
-                if set_orders(host, t, mode) {
+                if is_npc(&*host, t) && set_orders(host, t, mode) {
                     n += 1;
                 }
             }

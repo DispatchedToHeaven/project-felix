@@ -116,6 +116,16 @@ struct State {
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
+/// The server stopped: nothing of its world is kept.
+pub fn clear() {
+    if let Ok(mut s) = STATE.lock() {
+        *s = Default::default();
+    }
+    if let Ok(mut s) = EXTRA.lock() {
+        *s = Default::default();
+    }
+}
+
 fn hear(h: Heard) {
     if let Ok(mut s) = STATE.lock()
         && s.heard.len() < 256

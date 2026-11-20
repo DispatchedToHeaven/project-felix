@@ -19,7 +19,11 @@ pub fn read(bytes: &[u8], inflate: &dyn Fn(&[u8]) -> Result<Vec<u8>, String>, ma
     let end = (0..bytes.len().saturating_sub(21)).rev().find(|&i| u32_at(bytes, i) == Some(0x0605_4b50)).ok_or("not a zip file")?;
     let count = u16_at(bytes, end + 10).ok_or("cut short")? as usize;
     let mut at = u32_at(bytes, end + 16).ok_or("cut short")? as usize;
+    if count > 64 {
+        return Err("too many files in it".into());
+    }
     let mut out = Vec::new();
+    let mut total = 0usize;
     for _ in 0..count {
         if u32_at(bytes, at) != Some(0x0201_4b50) {
             return Err("broken central directory".into());
@@ -36,7 +40,8 @@ pub fn read(bytes: &[u8], inflate: &dyn Fn(&[u8]) -> Result<Vec<u8>, String>, ma
         if name.ends_with('/') {
             continue;
         }
-        if size > max {
+        total += size;
+        if size > max || total > max * 2 {
             return Err(format!("{name} is too big"));
         }
         if u32_at(bytes, local) != Some(0x0403_4b50) {

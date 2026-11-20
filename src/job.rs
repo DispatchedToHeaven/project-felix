@@ -68,6 +68,16 @@ impl Job {
     }
 }
 
+/// Whether `block` is a crop a farmer reaps.
+pub fn is_crop(block: &str) -> bool {
+    matches!(block, "minecraft:wheat" | "minecraft:carrots" | "minecraft:potatoes" | "minecraft:beetroots")
+}
+
+/// Whether `block` is what a tree has about its top: leaves, or a nether tree's cap.
+pub fn is_crown(block: &str) -> bool {
+    block.ends_with("_leaves") || block.ends_with("wart_block") || block == "minecraft:shroomlight"
+}
+
 /// A crop ripe at `age`: the item sown to grow it again.
 pub fn ripe(block: &str, age: Option<u32>) -> Option<&'static str> {
     let (full, seed) = match block {

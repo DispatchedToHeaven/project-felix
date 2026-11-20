@@ -11,7 +11,7 @@ use mod_api::{
     FileToIdConverter, Holder, IPayloadContext, IPayloadHandler, Identifier, LivingRef, PayloadBytes, PayloadId,
     PlayerRef, Registrar, ReloadApply, ReloadResourceError, ServerHost, ServerReloadContext, ServerReloadListener, Tag,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
 
 pub const TALK: &str = "projectfelix:talk";
@@ -75,11 +75,39 @@ struct Session {
     id: String,
     node: String,
     buttons: Vec<Btn>,
+    /// The roll its options were shown with (`chance`): the same when one is picked.
+    roll: u32,
 }
 
 static SESSIONS: LazyLock<Mutex<HashMap<u128, Session>>> = LazyLock::new(Default::default);
 /// Commands from dialog actions, run at the next level tick (not inside a player's packet).
 static PENDING: LazyLock<Mutex<Vec<String>>> = LazyLock::new(Default::default);
+/// The players who answered since the queued commands last ran: one answer each until they have
+/// (what an answer takes is taken by a queued command, so a second one would see it still there).
+static ACTED: LazyLock<Mutex<HashSet<u128>>> = LazyLock::new(Default::default);
+
+/// The server stopped: no talks, nothing queued, no dialogs but the data packs'.
+pub fn clear() {
+    if let Ok(mut s) = SESSIONS.lock() {
+        s.clear();
+    }
+    if let Ok(mut p) = PENDING.lock() {
+        p.clear();
+    }
+    if let Ok(mut a) = ACTED.lock() {
+        a.clear();
+    }
+    if let Ok(mut e) = EXTRA.lock() {
+        e.clear();
+    }
+}
+
+/// Player `uuid` left the game: their talk is over.
+pub fn left(uuid: u128) {
+    if let Ok(mut s) = SESSIONS.lock() {
+        s.remove(&uuid);
+    }
+}
 
 struct Listener;
 
@@ -157,10 +185,26 @@ pub fn register(r: &mut dyn Registrar, view: Arc<dyn IPayloadHandler>, close: Ar
 pub fn level_tick(host: &mut dyn ServerHost) {
     let lines = PENDING.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();
     for line in lines {
-        if !host.commands().run_command(&line) {
+        // A line that may fail (see `queue_try`) says nothing of it.
+        let (line, quiet) = match line.strip_prefix(TRY) {
+            Some(l) => (l, true),
+            None => (line.as_str(), false),
+        };
+        if !host.commands().run_command(line) && !quiet {
             eprintln!("[projectfelix] dialog command failed: {line}");
         }
     }
+    if let Ok(mut a) = ACTED.lock() {
+        a.clear();
+    }
+}
+
+/// What marks a queued line that may fail.
+const TRY: char = '\u{1}';
+
+/// As [`queue`], for a line that may well fail (removing what may not be there): nothing is logged.
+pub fn queue_try(line: String) {
+    queue(format!("{TRY}{line}"));
 }
 
 /// Runs `line` as the server console at the next level tick.
@@ -385,6 +429,10 @@ pub fn start_dialog(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef
 
 fn choose(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
     let (Some(id), Some(&pick)) = (read_id(b), b.get(4)) else { return };
+    // One answer until what the last one queued has run.
+    if !ACTED.lock().is_ok_and(|mut a| a.insert(player.uuid())) {
+        return;
+    }
     let session = SESSIONS.lock().ok().and_then(|mut s| s.remove(&player.uuid()));
     let Some(session) = session.filter(|s| s.npc == id) else { return };
     let Some(npc) = npc_near(host, player, id) else {
@@ -394,11 +442,11 @@ fn choose(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
     let Some(btn) = session.buttons.get(pick as usize).cloned() else { return };
     let index = match btn {
         Btn::Page(p) => {
-            show(host, player, npc, session.dialog, &session.id, &session.node, p, 0);
+            show(host, player, npc, session.dialog, &session.id, &session.node, p, 0, true);
             return;
         }
         Btn::Next(n) => {
-            show(host, player, npc, session.dialog, &session.id, &n, 0, 0);
+            show(host, player, npc, session.dialog, &session.id, &n, 0, 0, true);
             return;
         }
         Btn::End => {
@@ -410,9 +458,11 @@ fn choose(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
     let Some(node) = session.dialog.nodes.get(&session.node).cloned() else { return };
     let Some(choice) = node.options.get(index).cloned() else { return };
     // Things may have changed since the options were shown (an item given away): check again.
-    let f = facts(host, player, npc, &session.id);
+    let mut f = facts(host, player, npc, &session.id);
+    f.roll = session.roll;
     if !choice.shown(&f) {
-        show(host, player, npc, session.dialog, &session.id, &session.node, 0, 0);
+        // Shown again as it is now; what the node does was done when they came to it.
+        show(host, player, npc, session.dialog, &session.id, &session.node, 0, 0, false);
         return;
     }
     // What the player answered is remembered, for the talks after.
@@ -463,17 +513,18 @@ pub fn open(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog
 }
 
 fn enter(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Arc<Dialog>, id: &str, node_name: &str) {
-    show(host, player, npc, dialog, id, node_name, 0, 0);
+    show(host, player, npc, dialog, id, node_name, 0, 0, true);
 }
 
 /// Shows `player` page `page` of node `node_name` (a branch node sends it on, at most so deep).
+/// `act`: the node's actions run (coming to it; not when it is only shown again).
 #[allow(clippy::too_many_arguments)]
-fn show(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Arc<Dialog>, id: &str, node_name: &str, page: usize, depth: u8) {
+fn show(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Arc<Dialog>, id: &str, node_name: &str, page: usize, depth: u8, act: bool) {
     let Some(node) = dialog.nodes.get(node_name).cloned() else {
         send_close(host, player);
         return;
     };
-    if page == 0 {
+    if page == 0 && act {
         if let Some(anim) = &node.animation {
             run_for(host, Some(player), npc, &[Action::Animation(anim.clone())]);
         }
@@ -482,7 +533,7 @@ fn show(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Ar
     let f = facts(host, player, npc, id);
     if !node.branch.is_empty() {
         match dialog::route(&node, &f) {
-            Some(next) if depth < 16 => show(host, player, npc, dialog, id, &next, 0, depth + 1),
+            Some(next) if depth < 16 => show(host, player, npc, dialog, id, &next, 0, depth + 1, true),
             _ => send_close(host, player),
         }
         return;
@@ -552,7 +603,7 @@ fn show(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Ar
         "options": labels,
     });
     if let Ok(mut s) = SESSIONS.lock() {
-        s.insert(player.uuid(), Session { npc: npc.id(), dialog, id: id.to_string(), node: node_name.to_string(), buttons });
+        s.insert(player.uuid(), Session { npc: npc.id(), dialog, id: id.to_string(), node: node_name.to_string(), buttons, roll: f.roll });
     }
     let bytes = crate::serde_json::to_vec(&view).unwrap_or_default();
     let _ = player.send_payload(host, &PayloadId(VIEW.into()), PayloadBytes(bytes));

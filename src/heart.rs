@@ -38,6 +38,8 @@ const TOGETHER: f64 = 8.0;
 const MINUTE: i64 = 1200;
 /// A kind word raises a relation once a minute at most (talk: once in two); gifts always.
 const KIND_REST: i64 = 1200;
+/// Ticks before another gift moves a relation (a quarter of a day: food handed over is no way to buy a friend).
+const GIFT_REST: i64 = 6000;
 /// Ticks between a mood's particles.
 const PUFF: i64 = 40;
 /// Ticks between gossip rounds, the chance a pair talks in one, and how long a pair then rests.
@@ -330,6 +332,10 @@ impl IPayloadHandler for SaveCharacter {
             tell(host, "Open the editor with /felix character edit first".into());
             return Ok(());
         }
+        if let Err(why) = crate::saves::may_save(&*host, player, &payload.0) {
+            tell(host, why.into());
+            return Ok(());
+        }
         let Ok(v) = crate::serde_json::from_slice::<Value>(&payload.0) else { return Ok(()) };
         let name = crate::profile::make_id(v.get("name").and_then(Value::as_str).unwrap_or("mine"));
         let Some(file) = v.get("file").cloned() else { return Ok(()) };
@@ -410,6 +416,13 @@ struct State {
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
+/// The server stopped: nothing of its world is kept.
+pub fn clear() {
+    if let Ok(mut s) = STATE.lock() {
+        *s = Default::default();
+    }
+}
+
 fn random() -> f32 {
     let Ok(mut s) = STATE.lock() else { return 0.5 };
     let mut x = s.seed | 1;
@@ -486,8 +499,19 @@ pub fn made_json(id: &str) -> Option<Value> {
     MADE.lock().ok()?.characters.get(id).map(|x| x.1.clone())
 }
 
-/// A character an NPC's file brought: taken in, unless this world has its own of that name.
+/// Player `uuid` left the game: the editor is not theirs to save from until they open it again.
+pub fn left(uuid: u128) {
+    if let Ok(mut m) = MADE.lock() {
+        m.editors.remove(&uuid);
+    }
+}
+
+/// A character an NPC's file brought (one made in the game, `felixchar:`): taken in, unless this
+/// world has its own of that name. A data pack's character is never replaced by a file's.
 pub fn adopt(id: &str, file: &str) {
+    if !id.starts_with(MADE_PREFIX) {
+        return;
+    }
     let Ok(v) = crate::serde_json::from_str::<Value>(file) else { return };
     let Ok(c) = character::read(&v) else { return };
     if let Ok(mut m) = MADE.lock() {
@@ -540,6 +564,13 @@ pub fn memory_of(id: u32, who: u128) -> (bool, Vec<String>) {
     let met = l.heart.get(who).is_some_and(|b| b.met > 1);
     let kinds = l.heart.news.iter().filter(|n| n.about == who).map(|n| n.kind.clone()).collect();
     (met, kinds)
+}
+
+/// How much NPC `id` likes `who`, if its heart is known (none: an NPC just loaded, or gone).
+pub fn relation_known(id: u32, who: u128) -> Option<i32> {
+    let s = STATE.lock().ok()?;
+    let l = s.live.get(&id)?;
+    Some(l.heart.value(who).unwrap_or_else(|| base_for(l, &l.character(), who, None)))
 }
 
 /// How much NPC `id` likes the player or NPC `who`, as last known.
@@ -616,9 +647,13 @@ fn feel_at(host: &mut dyn ServerHost, id: u32, event: &str, player: Option<Playe
             Some((u, _)) => {
                 let delta = s.live.get(&id).map_or(0, |l| l.character().delta(event));
                 let key = (id, *u, event.to_string());
-                let rest = if event == "talk" { KIND_REST * 2 } else { KIND_REST };
-                // Kind words count once in a while; hurts and gifts always.
-                let open = delta <= 0 || event == "gift" || s.kind.get(&key).is_none_or(|t| now - t >= rest || now < *t);
+                let rest = match event {
+                    "talk" => KIND_REST * 2,
+                    "gift" => GIFT_REST,
+                    _ => KIND_REST,
+                };
+                // Kind words and gifts count once in a while; hurts always.
+                let open = delta <= 0 || s.kind.get(&key).is_none_or(|t| now - t >= rest || now < *t);
                 if open && delta > 0 {
                     s.kind.insert(key, now);
                 }
@@ -939,7 +974,7 @@ pub fn tick(host: &mut dyn ServerHost) {
         let minute = now - s.minute >= MINUTE || now < s.minute;
         if minute {
             s.minute = now;
-            s.kind.retain(|_, t| now - *t < KIND_REST * 2);
+            s.kind.retain(|_, t| now - *t < GIFT_REST && now >= *t);
         }
         let (due, wait): (Vec<Later>, Vec<Later>) = std::mem::take(&mut s.later).into_iter().partition(|l| l.at <= now);
         s.later = wait;

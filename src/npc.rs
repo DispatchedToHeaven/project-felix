@@ -20,6 +20,10 @@ impl EntityRenderer for NpcRenderer {
         let (look, model) = match models::get(&look.model) {
             Some(m) => (look, m),
             None => {
+                // An NPC's own model comes in its file: asked of the server, the default drawn meanwhile.
+                if let Some(id) = look.model.strip_prefix("npc:").or_else(|| look.texture.strip_prefix("felixnpc:")) {
+                    crate::skins::request(id, now);
+                }
                 let fallback = Look::of_model(DEFAULT_MODEL);
                 // Nothing to draw with yet (resources still loading): draw nothing rather than
                 // fail, which would switch the renderer off for every NPC.

@@ -33,8 +33,22 @@ struct State {
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
+
+/// The server stopped: nothing of its world is kept.
+pub fn clear() {
+    if let Ok(mut s) = STATE.lock() {
+        *s = Default::default();
+    }
+}
 /// Every loaded NPC's owner, for hits between friends (no game host there).
 static OWNERS: LazyLock<Mutex<HashMap<u32, u128>>> = LazyLock::new(Default::default);
+
+/// The server stopped: no NPC has an owner known here.
+pub fn clear_owners() {
+    if let Ok(mut s) = OWNERS.lock() {
+        s.clear();
+    }
+}
 
 /// Whether entities `a` and `b` are NPCs of the same owner (they don't hurt each other).
 pub fn friendly(a: u32, b: u32) -> bool {
@@ -176,15 +190,16 @@ pub fn hold(host: &mut dyn ServerHost, p: PlayerRef) {
 pub fn tick(host: &mut dyn ServerHost) {
     let step = STATE.lock().map(|mut s| {
         s.ticks = s.ticks.wrapping_add(1);
-        s.ticks % 2 == 0
+        (s.ticks % 2 == 0, s.ticks % 20 == 0)
     });
-    if !matches!(step, Ok(true)) {
-        return;
-    }
+    let Ok((true, owners_due)) = step else { return };
     let npcs = companion::npcs();
-    let owners: HashMap<u32, u128> = npcs.iter().filter_map(|id| Some((*id, LivingRef::new(host.entity(*id)?).owner(&*host)?))).collect();
-    if let Ok(mut o) = OWNERS.lock() {
-        *o = owners;
+    // Who owns whom, for hits between friends: looked up once a second.
+    if owners_due {
+        let owners: HashMap<u32, u128> = npcs.iter().filter_map(|id| Some((*id, LivingRef::new(host.entity(*id)?).owner(&*host)?))).collect();
+        if let Ok(mut o) = OWNERS.lock() {
+            *o = owners;
+        }
     }
     for id in &npcs {
         let Some(me) = host.entity(*id) else { continue };

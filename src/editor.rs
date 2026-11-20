@@ -292,9 +292,13 @@ pub fn tick(host: &mut dyn ClientHost) {
         } else {
             ed.fired = None;
         }
-        let pose = runtime::anim_pose(&ed.built, ed.now(runtime::clock()));
+        let pose = runtime::anim_pose_at(&ed.built, ed.now(runtime::clock()));
         let fire: Vec<_> = fire.into_iter().map(|k| (ed.npc, ed.model.clone(), runtime::body_rot(ed.npc), pose.clone(), k)).collect();
         let out = std::mem::take(&mut ed.outbox);
+        // Opened while another screen was up: shown once that is closed.
+        if !ed.shown && (host.mod_screen() == Some(SCREEN) || host.mod_screen_open(SCREEN)) {
+            ed.shown = true;
+        }
         let gone = ed.close || (ed.shown && host.mod_screen() != Some(SCREEN));
         let close = ed.close;
         if gone {
@@ -606,8 +610,12 @@ fn act(host: &dyn ClientHost, ed: &mut Editor, what: Do, mouse: [f32; 2]) {
                 None => Some((clock, ed.time)),
             }
         }
-        Do::Shorter => ed.anim.length = (ed.anim.length - 0.25).max(0.25),
-        Do::Longer => ed.anim.length = (ed.anim.length + 0.25).min(60.0),
+        Do::Shorter => {
+            ed.anim.length = (ed.anim.length - 0.25).max(0.25);
+            ed.time = ed.time.min(ed.anim.length);
+        }
+        // Up to a minute (one that came longer is not cut).
+        Do::Longer => ed.anim.length = (ed.anim.length + 0.25).min(ed.anim.length.max(60.0)),
         Do::Mode => {
             ed.anim.mode = match ed.anim.mode {
                 LoopMode::Loop => LoopMode::Once,
@@ -769,7 +777,7 @@ pub fn key_pressed(host: &dyn ClientHost, e: &mut ScreenKeyPressedPreEvent<'_>) 
     }
     let Ok(mut lock) = EDITOR.lock() else { return Flow::Continue };
     let Some(ed) = lock.as_mut() else { return Flow::Continue };
-    let ctrl = e.modifiers & 2 != 0;
+    let ctrl = e.modifiers & 2 != 0 && e.modifiers & 4 == 0;
     let what = match e.key {
         "key.keyboard.space" => Some(Do::Play),
         "key.keyboard.k" => Some(Do::Key),

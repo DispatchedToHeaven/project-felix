@@ -242,12 +242,27 @@ impl EditAnim {
         );
         a.insert("animation_length".into(), num(self.length));
         a.insert("bones".into(), Value::Object(bones));
+        // Several at one time are a list.
+        fn put(map: &mut Map<String, Value>, key: String, v: Value) {
+            match map.remove(&key) {
+                None => {
+                    map.insert(key, v);
+                }
+                Some(Value::Array(mut list)) => {
+                    list.push(v);
+                    map.insert(key, Value::Array(list));
+                }
+                Some(one) => {
+                    map.insert(key, json!([one, v]));
+                }
+            }
+        }
         let mut sounds = Map::new();
         let mut particles = Map::new();
         for e in &self.effects {
             match &e.kind {
                 anim::EffectKind::Sound(s) => {
-                    sounds.insert(time(e.time), json!({ "effect": s }));
+                    put(&mut sounds, time(e.time), json!({ "effect": s }));
                 }
                 anim::EffectKind::Particle(p, l) => {
                     let mut m = Map::new();
@@ -255,7 +270,7 @@ impl EditAnim {
                     if let Some(l) = l {
                         m.insert("locator".into(), json!(l));
                     }
-                    particles.insert(time(e.time), Value::Object(m));
+                    put(&mut particles, time(e.time), Value::Object(m));
                 }
                 anim::EffectKind::Script(_) => {}
             }
@@ -316,6 +331,18 @@ impl EditAnim {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effects_at_one_time_are_all_written() {
+        let mut a = EditAnim::new("animation.felix.test");
+        a.length = 1.0;
+        a.add_effect(0.5, anim::EffectKind::Sound("minecraft:a".into()));
+        a.add_effect(0.5, anim::EffectKind::Sound("minecraft:b".into()));
+        let text = a.to_bedrock();
+        assert!(text.contains("minecraft:a") && text.contains("minecraft:b"), "{text}");
+        let back = anim::parse(text.as_bytes()).unwrap();
+        assert_eq!(back[0].effects.len(), 2);
+    }
 
     #[test]
     fn keys_and_values() {

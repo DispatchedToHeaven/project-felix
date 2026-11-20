@@ -110,6 +110,13 @@ struct State {
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
+/// The server stopped: nothing of its world is kept.
+pub fn clear() {
+    if let Ok(mut s) = STATE.lock() {
+        *s = Default::default();
+    }
+}
+
 /// NPC `e`'s partner among NPCs, by name.
 pub fn partner_name(host: &mut dyn ServerHost, e: EntityRef) -> Option<String> {
     family_of(host, e).partner.map(|p| p.1)
@@ -133,9 +140,30 @@ fn grown_up(host: &dyn mod_api::Host, e: EntityRef) -> bool {
     LivingRef::new(e).baby(host) != Some(true)
 }
 
+/// NPC `e` takes a new partner: the one it had (if here, and another) has none now.
+fn leave_old(host: &mut dyn ServerHost, e: EntityRef, new: u128) {
+    let Some((old, _)) = family_of(host, e).partner.filter(|p| p.0 != new) else { return };
+    let Some(o) = crate::heart::npc_by_uuid(old).and_then(|id| host.entity(id)) else { return };
+    let mut f = family_of(host, o);
+    f.partner = None;
+    let _ = FAMILY.set(host, Holder::Entity(o.id()), f);
+}
+
+/// `living_death`: an NPC died, and its partner (if here) has none now.
+pub fn on_death(host: &mut dyn ServerHost, victim: u32) {
+    let Some(v) = host.entity(victim).filter(|v| companion::is_npc(&*host, *v)) else { return };
+    let Some((partner, _)) = family_of(host, v).partner else { return };
+    let Some(o) = crate::heart::npc_by_uuid(partner).and_then(|id| host.entity(id)) else { return };
+    let mut f = family_of(host, o);
+    f.partner = None;
+    let _ = FAMILY.set(host, Holder::Entity(o.id()), f);
+}
+
 /// NPCs `a` and `b` become a couple, in `a`'s home (else `b`'s).
 pub fn couple(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef) -> bool {
     let (Some(ua), Some(ub)) = (a.uuid(host), b.uuid(host)) else { return false };
+    leave_old(host, a, ub);
+    leave_old(host, b, ua);
     let (na, nb) = (name_of(&*host, a), name_of(&*host, b));
     let mut fa = family_of(host, a);
     let mut fb = family_of(host, b);
@@ -156,6 +184,8 @@ pub fn couple(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef) -> bool {
 /// Makes `a` and `b` a couple without a word (a settlement's, made so).
 pub fn bind(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef) {
     let (Some(ua), Some(ub)) = (a.uuid(host), b.uuid(host)) else { return };
+    leave_old(host, a, ub);
+    leave_old(host, b, ua);
     let (na, nb) = (name_of(&*host, a), name_of(&*host, b));
     let mut fa = family_of(host, a);
     let mut fb = family_of(host, b);
@@ -269,8 +299,15 @@ pub fn tick(host: &mut dyn ServerHost) {
         }
     }
     let Some(now) = npcs.first().and_then(|e| e.level(&*host)).and_then(|l| l.game_time(&*host)) else { return };
-    // Couples: two grown friends near each other, neither with a partner, not kin.
+    // Couples: two grown friends near each other, neither with a partner, not kin. Not a player's
+    // sweetheart or partner, and not a companion out with its player: those are the player's to win.
     let mut taken: Vec<u32> = Vec::new();
+    for (e, _) in &fams {
+        let with_player = LivingRef::new(*e).owner(&*host).is_some() && companion::mode_of(e.id()) == companion::Mode::Follow;
+        if with_player || crate::bonds::has_romance(host, *e) {
+            taken.push(e.id());
+        }
+    }
     for i in 0..fams.len() {
         for j in (i + 1)..fams.len() {
             let ((a, fa), (b, fb)) = (&fams[i], &fams[j]);

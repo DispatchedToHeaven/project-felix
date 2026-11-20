@@ -113,6 +113,10 @@ impl IPayloadHandler for ViewHandler {
 pub fn tick(host: &mut dyn ClientHost) {
     let (out, close) = {
         let Ok(mut b) = BOARD.lock() else { return };
+        // The board came while another screen was up: shown once that is closed.
+        if b.view.is_some() && !b.shown && (host.mod_screen() == Some(SCREEN) || host.mod_screen_open(SCREEN)) {
+            b.shown = true;
+        }
         if b.shown && host.mod_screen() != Some(SCREEN) {
             b.view = None;
             b.shown = false;

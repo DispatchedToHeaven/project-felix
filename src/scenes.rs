@@ -115,6 +115,41 @@ pub fn busy(id: u32) -> bool {
 
 static RUNNING: LazyLock<Mutex<Vec<Running>>> = LazyLock::new(Default::default);
 
+/// The server stopped: no scenes play.
+pub fn clear() {
+    if let Ok(mut r) = RUNNING.lock() {
+        r.clear();
+    }
+}
+
+/// NPC `id` left its level (unloaded, dead): the scene it led is over (its cast goes back to what
+/// it did); one it only played in goes on without it.
+pub fn gone(host: &mut dyn ServerHost, id: u32) {
+    let ended: Vec<Running> = {
+        let Ok(mut r) = RUNNING.lock() else { return };
+        for s in r.iter_mut() {
+            s.cast.retain(|c| c.1 != id);
+        }
+        let (ended, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut *r).into_iter().partition(|s| s.npc == id);
+        *r = keep;
+        ended
+    };
+    for s in ended {
+        for (_, c, mode) in &s.cast {
+            if let Some(e) = host.entity(*c) {
+                companion::release(host, e, *mode);
+            }
+        }
+    }
+}
+
+/// Player `uuid` left the game: the scene editor is not theirs to save from until they open it again.
+pub fn left(uuid: u128) {
+    if let Ok(mut m) = MADE.lock() {
+        m.editors.remove(&uuid);
+    }
+}
+
 struct Listener;
 
 impl ServerReloadListener for Listener {
@@ -153,6 +188,9 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, id: &str, player: Option
     };
     if busy(npc.id()) {
         return Err("that NPC is already in a scene".into());
+    }
+    if crate::games::busy(npc.id()) || crate::matches::busy(npc.id()) {
+        return Err("that NPC is playing a game".into());
     }
     let time = npc.level(&*host).and_then(|l| l.game_time(&*host)).ok_or("the NPC is not in a level")?;
     let at = npc.position(&*host).ok_or("the NPC has no position")?;
@@ -337,6 +375,10 @@ impl IPayloadHandler for SaveScene {
         };
         if !MADE.lock().is_ok_and(|m| m.editors.contains(&player.uuid())) {
             tell(host, "Open the editor with /felix scene edit first".into());
+            return Ok(());
+        }
+        if let Err(why) = crate::saves::may_save(&*host, player, &payload.0) {
+            tell(host, why.into());
             return Ok(());
         }
         let Ok(v) = crate::serde_json::from_slice::<Value>(&payload.0) else { return Ok(()) };

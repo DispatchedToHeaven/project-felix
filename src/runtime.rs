@@ -306,7 +306,7 @@ pub fn pose(id: u32, model: &str, living: &LivingRenderState, age: f32, now: f64
     if let Some(p) = crate::editor::preview(id, now) {
         npcs.entry(id).or_default().body_rot = living.body_rot;
         npcs.entry(id).or_default().last_frame = now;
-        return anim_pose(&p.anim, p.time);
+        return anim_pose_at(&p.anim, p.time);
     }
     let npc = npcs.entry(id).or_default();
     npc.model = model.to_string();
@@ -395,7 +395,7 @@ pub fn tick(host: &mut dyn ClientHost) {
         state.orders = orders;
         state.looks = looks;
         // NPCs not drawn for five seconds are gone or out of sight.
-        state.npcs.retain(|_, n| now - n.last_frame < 100.0);
+        state.npcs.retain(|_, n| (now - n.last_frame).abs() < 100.0);
         let State { npcs, actions, scenes, .. } = &mut *state;
         for (&id, npc) in npcs.iter_mut() {
             update_layers(npc, id, actions, scenes, now);
@@ -476,8 +476,22 @@ pub fn play_effect(host: &mut dyn ClientHost, id: u32, model: &str, body_rot: f3
 }
 
 /// The bones of `anim` at `t` seconds, by lowercase name.
+/// The player left the world: nothing is known of its NPCs.
+pub fn clear() {
+    if let Ok(mut s) = STATE.lock() {
+        *s = Default::default();
+    }
+}
+
 pub fn anim_pose(anim: &Animation, t: f32) -> HashMap<String, Full> {
     let (t, _) = anim.local_time(t);
+    anim_pose_at(anim, t)
+}
+
+/// The pose of `anim` at `t` seconds exactly (its end is its end, not its start again): what the
+/// editor shows.
+pub fn anim_pose_at(anim: &Animation, t: f32) -> HashMap<String, Full> {
+    let t = t.clamp(0.0, anim.length.max(0.0));
     let mut cx = MapContext::default();
     cx.queries.insert("anim_time".into(), t);
     full_of(anim.sample(t, &mut cx)).into_iter().map(|(k, v)| (k.to_ascii_lowercase(), v)).collect()

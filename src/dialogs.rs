@@ -106,6 +106,13 @@ fn open_editor(host: &mut dyn ServerHost, player: PlayerRef, id: &str) {
     let _ = player.send_payload(host, &PayloadId(crate::dialog_editor::OPEN.into()), PayloadBytes(crate::serde_json::to_vec(&body).unwrap_or_default()));
 }
 
+/// Player `uuid` left the game: the editor is not theirs to save from until they open it again.
+pub fn left(uuid: u128) {
+    if let Ok(mut m) = MADE.lock() {
+        m.editors.remove(&uuid);
+    }
+}
+
 /// The editor's Save: checked, written to `dialogs/<name>.json`, and spoken at once.
 pub struct SaveDialog;
 
@@ -118,6 +125,10 @@ impl IPayloadHandler for SaveDialog {
         };
         if !MADE.lock().is_ok_and(|m| m.editors.contains(&player.uuid())) {
             tell(host, "Open the editor with /felix dialog edit first".into());
+            return Ok(());
+        }
+        if let Err(why) = crate::saves::may_save(&*host, player, &payload.0) {
+            tell(host, why.into());
             return Ok(());
         }
         let Ok(v) = crate::serde_json::from_slice::<Value>(&payload.0) else { return Ok(()) };

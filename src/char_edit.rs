@@ -219,9 +219,9 @@ impl CharEd {
                 let edge = if c.is_empty() {
                     json!(mood_name(w.to))
                 } else {
-                    let (key, v) = match c.split_at(1) {
-                        ("<", v) => ("below", v),
-                        (">", v) => ("above", v),
+                    let (key, v) = match (c.strip_prefix('<'), c.strip_prefix('>')) {
+                        (Some(v), _) => ("below", v),
+                        (_, Some(v)) => ("above", v),
                         _ => return Err(format!("{name}, {event}: the condition is <n or >n, not {c}")),
                     };
                     let v: i64 = v.parse().map_err(|_| format!("{name}, {event}: the condition is <n or >n, not {c}"))?;
