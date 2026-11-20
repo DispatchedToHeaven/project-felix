@@ -1,8 +1,8 @@
 //! NPCs made in the game, on the server: their files, making and saving them, sending their skins
 //! and models to clients, summoning them, and moving them in and out of the game.
 //!
-//! Each lives in `horizon-mod-data/projectfelix/npcs/<id>.felixnpc` on the server (in single
-//! player, the game folder). `/felix npc export <id>` copies one to `exports/`, `/felix npc import`
+//! Each lives in `horizon-mod-data/projectfelix/npcs/<id>.felixnpc` in the world's save (see
+//! `saves`); `exports/` and `imports/` are in the game folder's `horizon-mod-data/projectfelix/`. `/felix npc export <id>` copies one to `exports/`, `/felix npc import`
 //! takes every `.felixnpc` or `.zip` in `imports/`. A summoned one is drawn with the texture
 //! `felixnpc:<id>` (its skin, sent to each client that asks) and speaks the dialog `felixnpc:<id>`.
 use crate::companion::{LOOK, Look, NPC};
@@ -109,8 +109,9 @@ fn path(folder: &str, name: &str) -> Option<ConfigPath> {
     ConfigPath::new(&format!("{folder}/{name}")).ok()
 }
 
-fn list(host: &dyn mod_api::Host, folder: &str) -> Vec<String> {
-    let files = host.data_files();
+/// A folder's files: the NPCs kept with the world, the rest (exports, imports) in the game folder.
+fn list(host: &dyn ServerHost, folder: &str) -> Vec<String> {
+    let files = if folder == NPCS { host.world_data_files() } else { host.data_files() };
     let Ok(dir) = ConfigPath::new(folder) else { return Vec::new() };
     let mut out = Vec::new();
     let mut after: Option<String> = None;
@@ -125,11 +126,14 @@ fn list(host: &dyn mod_api::Host, folder: &str) -> Vec<String> {
 }
 
 /// Reads every kept NPC (once, and again on `/felix npc reload`).
-fn load_all(host: &dyn mod_api::Host) -> Vec<String> {
+fn load_all(host: &dyn ServerHost) -> Vec<String> {
     let mut problems = Vec::new();
+    if let Ok(mut s) = SERVER.lock() {
+        s.profiles.clear();
+    }
     for name in list(host, NPCS).into_iter().filter(|n| n.ends_with(EXT)) {
         let Some(p) = path(NPCS, &name) else { continue };
-        match host.data_files().read(&p).map_err(|e| format!("{e:?}")).and_then(admit) {
+        match host.world_data_files().read(&p).map_err(|e| format!("{e:?}")).and_then(admit) {
             Ok(_) => {}
             Err(e) => problems.push(format!("{name}: {e}")),
         }
@@ -151,8 +155,7 @@ pub fn register(r: &mut dyn Registrar, file: Arc<dyn IPayloadHandler>, open: Arc
 
 /// The level tick: reads the kept NPCs the first time, dresses NPCs summoned last tick.
 pub fn level_tick(host: &mut dyn ServerHost) {
-    let first = SERVER.lock().is_ok_and(|s| !s.loaded);
-    if first {
+    if crate::saves::new_world(host, "npcs") {
         for p in load_all(&*host) {
             eprintln!("[projectfelix] NPC not loaded: {p}");
         }
@@ -208,7 +211,7 @@ pub fn import_profile(host: &mut dyn ServerHost, bytes: &[u8]) -> Result<String,
     }
     let p = admit(bytes.to_vec())?;
     let to = path(NPCS, &format!("{}{EXT}", p.id)).ok_or("bad id")?;
-    host.data_files().write(&to, bytes).map_err(|e| format!("{e:?}"))?;
+    host.world_data_files().write(&to, bytes).map_err(|e| format!("{e:?}"))?;
     Ok(p.id.clone())
 }
 
@@ -263,7 +266,7 @@ impl IPayloadHandler for OnSave {
                         file = packed;
                     }
                 }
-                let written = path(NPCS, &format!("{}{EXT}", p.id)).map(|f| host.data_files().write(&f, &file));
+                let written = path(NPCS, &format!("{}{EXT}", p.id)).map(|f| host.world_data_files().write(&f, &file));
                 match written {
                     Some(Ok(())) => {
                         tell(host, player, format!("{} is kept as npcs/{}{EXT}", p.name, p.id));
@@ -370,7 +373,7 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
                 let result = host.data_files().read(&from).map_err(|e| format!("{e:?}")).and_then(|bytes| {
                     let p = admit(bytes.clone())?;
                     let to = path(NPCS, &format!("{}{EXT}", p.id)).ok_or("bad id")?;
-                    host.data_files().write(&to, &bytes).map_err(|e| format!("{e:?}"))?;
+                    host.world_data_files().write(&to, &bytes).map_err(|e| format!("{e:?}"))?;
                     Ok(p.id.clone())
                 });
                 done.push(match result {

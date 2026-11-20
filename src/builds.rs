@@ -109,13 +109,16 @@ pub fn plan_named(id: &str) -> Option<Arc<Plan>> {
 
 /// Reads the plans saved in the game, the first time the level ticks.
 pub fn level_tick(host: &mut dyn ServerHost) {
-    if MADE.lock().is_ok_and(|m| m.read) {
+    if !crate::saves::new_world(host, "plans") {
         return;
+    }
+    if let Ok(mut m) = MADE.lock() {
+        *m = Default::default();
     }
     if let Ok(mut m) = MADE.lock() {
         m.read = true;
     }
-    let files = host.data_files();
+    let files = host.world_data_files();
     let mut names = Vec::new();
     if let Ok(dir) = ConfigPath::new(FOLDER) {
         let mut after: Option<String> = None;
@@ -399,7 +402,7 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
             match Plan::capture(&name, &blocks) {
                 Ok(p) => {
                     let bytes = crate::serde_json::to_vec_pretty(&p.to_json()).unwrap_or_default();
-                    let written = ConfigPath::new(&format!("{FOLDER}/{name}.json")).map_err(|e| format!("{e:?}")).and_then(|path| host.data_files().write(&path, &bytes).map_err(|e| format!("{e:?}")));
+                    let written = ConfigPath::new(&format!("{FOLDER}/{name}.json")).map_err(|e| format!("{e:?}")).and_then(|path| host.world_data_files().write(&path, &bytes).map_err(|e| format!("{e:?}")));
                     match written {
                         Ok(()) => {
                             let blocks = p.cells().iter().filter(|c| c.state.is_some()).count();

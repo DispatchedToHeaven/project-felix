@@ -46,13 +46,16 @@ fn keep(id: &str, file: Value) -> Result<(), String> {
 
 /// Reads the dialogs made in the game, the first time the level ticks.
 pub fn level_tick(host: &mut dyn ServerHost) {
-    if MADE.lock().is_ok_and(|m| m.read) {
+    if !crate::saves::new_world(host, "dialogs") {
         return;
+    }
+    if let Ok(mut m) = MADE.lock() {
+        *m = Default::default();
     }
     if let Ok(mut m) = MADE.lock() {
         m.read = true;
     }
-    let files = host.data_files();
+    let files = host.world_data_files();
     let mut names = Vec::new();
     if let Ok(dir) = ConfigPath::new(FOLDER) {
         let mut after: Option<String> = None;
@@ -86,7 +89,7 @@ pub fn keep_brought(host: &mut dyn ServerHost, name: &str, file: Value) -> Resul
     }
     dialog::parse(&crate::serde_json::to_vec(&file).unwrap_or_default())?;
     let p = ConfigPath::new(&format!("{FOLDER}/{name}.json")).map_err(|e| format!("{e:?}"))?;
-    host.data_files().write(&p, &crate::serde_json::to_vec_pretty(&file).unwrap_or_default()).map_err(|e| format!("{e:?}"))?;
+    host.world_data_files().write(&p, &crate::serde_json::to_vec_pretty(&file).unwrap_or_default()).map_err(|e| format!("{e:?}"))?;
     keep(&id, file)?;
     Ok(id)
 }
@@ -127,7 +130,7 @@ impl IPayloadHandler for SaveDialog {
         }
         let written = ConfigPath::new(&format!("{FOLDER}/{name}.json"))
             .map_err(|e| format!("{e:?}"))
-            .and_then(|p| host.data_files().write(&p, &crate::serde_json::to_vec_pretty(&file).unwrap_or_default()).map_err(|e| format!("{e:?}")));
+            .and_then(|p| host.world_data_files().write(&p, &crate::serde_json::to_vec_pretty(&file).unwrap_or_default()).map_err(|e| format!("{e:?}")));
         if let Err(e) = written {
             tell(host, format!("Not written: {e}"));
             return Ok(());

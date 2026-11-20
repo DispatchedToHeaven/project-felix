@@ -74,11 +74,11 @@ const SPOTS: &str = "events/spots.json";
 const OVERWORLD: &str = "minecraft:overworld";
 
 fn read_spots(host: &mut dyn ServerHost) {
-    if STATE.lock().map(|s| s.spots_read).unwrap_or(true) {
+    if !crate::saves::new_world(host, "events") {
         return;
     }
     let mut spots = HashMap::new();
-    if let Some(bytes) = ConfigPath::new(SPOTS).ok().and_then(|p| host.data_files().read(&p).ok())
+    if let Some(bytes) = ConfigPath::new(SPOTS).ok().and_then(|p| host.world_data_files().read(&p).ok())
         && let Ok(Value::Object(m)) = crate::serde_json::from_slice::<Value>(&bytes)
     {
         for (k, v) in m {
@@ -98,7 +98,7 @@ fn read_spots(host: &mut dyn ServerHost) {
 fn write_spots(host: &mut dyn ServerHost) {
     let m: Map<String, Value> = STATE.lock().map(|s| s.spots.iter().map(|(k, p)| (k.clone(), json!(p))).collect()).unwrap_or_default();
     if let Ok(p) = ConfigPath::new(SPOTS)
-        && let Err(e) = host.data_files().write(&p, &crate::serde_json::to_vec_pretty(&Value::Object(m)).unwrap_or_default())
+        && let Err(e) = host.world_data_files().write(&p, &crate::serde_json::to_vec_pretty(&Value::Object(m)).unwrap_or_default())
     {
         eprintln!("[projectfelix] event spots not saved: {e:?}");
     }

@@ -254,7 +254,7 @@ pub fn keep_scene(host: &mut dyn ServerHost, name: &str, text: &str) -> Result<S
     }
     let s = scene::parse(text.as_bytes())?;
     let p = ConfigPath::new(&format!("{MADE_FOLDER}/{name}.json")).map_err(|e| format!("{e:?}"))?;
-    host.data_files().write(&p, text.as_bytes()).map_err(|e| format!("{e:?}"))?;
+    host.world_data_files().write(&p, text.as_bytes()).map_err(|e| format!("{e:?}"))?;
     if let Ok(mut m) = MADE.lock() {
         m.scenes.insert(id.clone(), (Arc::new(s), text.to_string()));
     }
@@ -267,10 +267,13 @@ pub fn scene_exists(id: &str) -> bool {
 
 /// Reads the scenes made in the game, the first time.
 fn read_made(host: &mut dyn ServerHost) {
-    if MADE.lock().is_ok_and(|m| m.read) {
+    if !crate::saves::new_world(host, "scenes") {
         return;
     }
-    let files = host.data_files();
+    if let Ok(mut m) = MADE.lock() {
+        *m = Default::default();
+    }
+    let files = host.world_data_files();
     let mut names = Vec::new();
     if let Ok(dir) = ConfigPath::new(MADE_FOLDER) {
         let mut after: Option<String> = None;
@@ -347,7 +350,7 @@ impl IPayloadHandler for SaveScene {
                 return Ok(());
             }
         };
-        let written = ConfigPath::new(&format!("{MADE_FOLDER}/{name}.json")).map_err(|e| format!("{e:?}")).and_then(|p| host.data_files().write(&p, text.as_bytes()).map_err(|e| format!("{e:?}")));
+        let written = ConfigPath::new(&format!("{MADE_FOLDER}/{name}.json")).map_err(|e| format!("{e:?}")).and_then(|p| host.world_data_files().write(&p, text.as_bytes()).map_err(|e| format!("{e:?}")));
         if let Err(e) = written {
             tell(host, format!("Not written: {e}"));
             return Ok(());

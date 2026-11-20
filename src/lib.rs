@@ -45,6 +45,7 @@
 //! - `voice` is how NPCs babble what they say (no mod API types); `voices` gives them theirs.
 //! - `dialog_edit` (no mod API types) and `dialog_editor` are the dialog editor; `dialogs` keeps
 //!   dialogs made in the game; `flags` is the players' talk memory and the extended view.
+//! - `saves`: what is made in the game is kept with its world.
 //! - `settle` (no mod API types) and `settlements` are the Felix settlements the world makes.
 //! - `market` (no mod API types) and `markets` are the village market: purses, the baker, trade
 //!   between NPCs, prices by supply.
@@ -135,6 +136,7 @@ pub mod shops;
 pub mod skin;
 pub mod skins;
 pub mod speech;
+pub mod saves;
 pub mod settle;
 pub mod settlements;
 pub mod squad;
