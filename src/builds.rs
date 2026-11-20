@@ -103,7 +103,7 @@ fn full_id(id: &str) -> String {
     if id.contains(':') { id.to_string() } else { format!("projectfelix:{id}") }
 }
 
-fn plan_named(id: &str) -> Option<Arc<Plan>> {
+pub fn plan_named(id: &str) -> Option<Arc<Plan>> {
     MADE.lock().ok().and_then(|m| m.plans.get(id).cloned()).or_else(|| LOADED.lock().ok().and_then(|l| l.get(id).cloned()))
 }
 

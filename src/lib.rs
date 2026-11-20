@@ -45,6 +45,7 @@
 //! - `voice` is how NPCs babble what they say (no mod API types); `voices` gives them theirs.
 //! - `dialog_edit` (no mod API types) and `dialog_editor` are the dialog editor; `dialogs` keeps
 //!   dialogs made in the game; `flags` is the players' talk memory and the extended view.
+//! - `settle` (no mod API types) and `settlements` are the Felix settlements the world makes.
 //! - `market` (no mod API types) and `markets` are the village market: purses, the baker, trade
 //!   between NPCs, prices by supply.
 //! - `book` (no mod API types), `books` and `book_screen` are the village book (key K).
@@ -56,7 +57,7 @@
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
     ScreenKeyPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
-    ScreenCharTypedPreEvent, ServerTickEvent, ServerTickPhase, LivingDamagePostEvent, LivingDamagePreEvent, LivingDeathEvent, ServerChatEvent, LevelRandomHost, AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
+    ScreenCharTypedPreEvent, ChunkLoadEvent, ServerTickEvent, ServerTickPhase, LivingDamagePostEvent, LivingDamagePreEvent, LivingDeathEvent, ServerChatEvent, LevelRandomHost, AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
     Host, HostSide, InteractionKeyMappingTriggeredEvent, InteractionResult, LevelTickPostEvent, RegisterCommandsEvent,
     RegisterEntityRenderersEvent, Registrar, RegistrationContext, RunModCommandEvent, ScreenMouseButtonPressedPreEvent,
     ScreenRenderPostEvent, ServerHost,
@@ -134,6 +135,8 @@ pub mod shops;
 pub mod skin;
 pub mod skins;
 pub mod speech;
+pub mod settle;
+pub mod settlements;
 pub mod squad;
 pub mod sports;
 pub mod sports_client;
@@ -225,11 +228,15 @@ impl Hooks for Felix {
         quest_store::register_commands(e);
         books::register_commands(e);
         markets::register_commands(e);
+        settlements::register_commands(e);
         scenes::register_commands(e);
     }
 
     fn run_mod_command(&self, host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) -> Flow {
         if let Flow::Cancel = custom::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = settlements::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = markets::run_command(host, e) {
@@ -307,6 +314,10 @@ impl Hooks for Felix {
         }
     }
 
+    fn chunk_load(&self, host: &mut dyn ServerHost, e: &mut ChunkLoadEvent<'_>) {
+        settlements::chunk_load(host, e.dimension, e.chunk, e.new);
+    }
+
     fn level_tick_post(&self, host: HostSide, _e: &mut LevelTickPostEvent) {
         if let HostSide::Server(host) = host {
             companion::level_tick(host);
@@ -321,6 +332,7 @@ impl Hooks for Felix {
             dialogs::level_tick(host);
             rulesets::level_tick(host);
             quest_store::level_tick(host);
+            settlements::level_tick(host);
             builds::level_tick(host);
         }
     }

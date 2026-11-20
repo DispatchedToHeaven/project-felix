@@ -153,6 +153,18 @@ pub fn couple(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef) -> bool {
     true
 }
 
+/// Makes `a` and `b` a couple without a word (a settlement's, made so).
+pub fn bind(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef) {
+    let (Some(ua), Some(ub)) = (a.uuid(host), b.uuid(host)) else { return };
+    let (na, nb) = (name_of(&*host, a), name_of(&*host, b));
+    let mut fa = family_of(host, a);
+    let mut fb = family_of(host, b);
+    fa.partner = Some((ub, nb));
+    fb.partner = Some((ua, na));
+    let _ = FAMILY.set(host, Holder::Entity(a.id()), fa);
+    let _ = FAMILY.set(host, Holder::Entity(b.id()), fb);
+}
+
 /// Couple `a` and `b` have a child by their home (or by `a`).
 pub fn birth(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef) -> Result<String, String> {
     let level = a.level(&*host).ok_or("no level")?;

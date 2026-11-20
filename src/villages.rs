@@ -217,6 +217,19 @@ fn import(host: &mut dyn ServerHost, player: PlayerRef, name: &str) -> Result<St
     Ok(format!("{n} NPCs of {} came{note}", village.name))
 }
 
+/// An NPC of no one's comes to live at `anchor` + its spot (a settlement's; see `settlements`), set
+/// up as an imported one is.
+pub fn settle(host: &mut dyn ServerHost, dim: &str, anchor: [f64; 3], spec: NpcSpec) -> Option<u32> {
+    let mut nbt = Compound::new();
+    nbt.insert("PersistenceRequired".into(), Tag::Byte(1));
+    nbt.insert("CustomName".into(), Tag::String(spec.name.as_str().into()));
+    let e = host.summon(dim, NPC, add(anchor, spec.at), nbt)?;
+    if let Ok(mut p) = PENDING.lock() {
+        p.push((e, spec, anchor));
+    }
+    Some(e)
+}
+
 /// The level tick: the NPCs just summoned get all they had.
 pub fn level_tick(host: &mut dyn ServerHost) {
     let pending = PENDING.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();
