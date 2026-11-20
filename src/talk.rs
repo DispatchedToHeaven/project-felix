@@ -102,10 +102,11 @@ pub fn clear() {
     }
 }
 
-/// Player `uuid` left the game: their talk is over.
+/// Player `uuid` left the game (or the talk): it is over, and the NPC goes on with its day.
 pub fn left(uuid: u128) {
-    if let Ok(mut s) = SESSIONS.lock() {
-        s.remove(&uuid);
+    let had = SESSIONS.lock().ok().and_then(|mut s| s.remove(&uuid));
+    if let Some(s) = had {
+        companion::go_to(s.npc, None);
     }
 }
 
@@ -182,7 +183,8 @@ pub fn register(r: &mut dyn Registrar, view: Arc<dyn IPayloadHandler>, close: Ar
 }
 
 /// The level tick: runs the commands dialog actions queued.
-pub fn level_tick(host: &mut dyn ServerHost) {
+pub fn level_tick(host: &mut dyn ServerHost, dimension: &str) {
+    close_far(host, dimension);
     let lines = PENDING.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();
     for line in lines {
         // A line that may fail (see `queue_try`) says nothing of it.
@@ -215,8 +217,35 @@ pub fn queue(line: String) {
 }
 
 fn end(player: PlayerRef) {
-    if let Ok(mut s) = SESSIONS.lock() {
-        s.remove(&player.uuid());
+    left(player.uuid());
+}
+
+/// Ticks between two looks at the talks open.
+const LOOK_EVERY: u32 = 20;
+static LOOKS: Mutex<u32> = Mutex::new(0);
+
+/// Each second: a talk whose player walked off (or whose NPC is gone) is over.
+fn close_far(host: &mut dyn ServerHost, dimension: &str) {
+    let due = LOOKS.lock().is_ok_and(|mut n| {
+        *n = n.wrapping_add(1);
+        *n % LOOK_EVERY == 0
+    });
+    if !due {
+        return;
+    }
+    let open: Vec<(u128, u32)> = SESSIONS.lock().map(|s| s.iter().map(|(u, x)| (*u, x.npc)).collect()).unwrap_or_default();
+    for (uuid, npc) in open {
+        let Some(p) = host.player(uuid) else { continue };
+        // Players of the level ticking now: its NPCs are the ones that can be asked after.
+        if p.entity().level(&*host).is_none_or(|l| l.dimension_id() != dimension) {
+            continue;
+        }
+        let near = host.entity(npc).and_then(|e| e.position(&*host)).zip(p.entity().position(&*host)).is_some_and(|(a, b)| {
+            (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2) <= (REACH + 3.0) * (REACH + 3.0)
+        });
+        if !near {
+            send_close(host, p);
+        }
     }
 }
 
@@ -604,6 +633,13 @@ fn show(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, dialog: Ar
     });
     if let Ok(mut s) = SESSIONS.lock() {
         s.insert(player.uuid(), Session { npc: npc.id(), dialog, id: id.to_string(), node: node_name.to_string(), buttons, roll: f.roll });
+    }
+    // While they talk it stays where it is, turned to the player.
+    if let Some(at) = npc.position(&*host) {
+        companion::go_to(npc.id(), Some(at));
+    }
+    if let Some(to) = player.entity().position(&*host) {
+        let _ = mod_api::MobRef::new(npc).look_at(host, [to[0], to[1] + 1.5, to[2]]);
     }
     let bytes = crate::serde_json::to_vec(&view).unwrap_or_default();
     let _ = player.send_payload(host, &PayloadId(VIEW.into()), PayloadBytes(bytes));

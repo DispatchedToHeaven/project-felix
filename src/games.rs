@@ -477,6 +477,8 @@ fn outcome_text(g: &Game) -> Option<String> {
 fn after_move(host: &mut dyn ServerHost, npc: EntityRef, now: i64) {
     let mut reaction = None;
     let mut done_between = None;
+    // A real game (ten moves at least) with a player: who, and whether the NPC won (none: a draw).
+    let mut with_player: Option<(PlayerRef, Option<bool>)> = None;
     let (letters, finished) = {
         let Ok(mut games) = GAMES.lock() else { return };
         let Some(g) = games.get_mut(&npc.id()) else { return };
@@ -491,7 +493,12 @@ fn after_move(host: &mut dyn ServerHost, npc: EntityRef, now: i64) {
                 done_between = Some((npc.id(), other, winner));
             } else if let Some(side) = npc_side {
                 let won = text.contains(if side == Color::White { "White wins" } else { "Black wins" });
+                let lost = text.contains(if side == Color::White { "Black wins" } else { "White wins" });
                 reaction = Some(if won { "animation.felix.cheer" } else { "animation.felix.wave" });
+                let human = [g.white, g.black].into_iter().find_map(|s| if let Seat::Player(p) = s { Some(p) } else { None });
+                if let Some(p) = human.filter(|_| g.history.len() >= 10) {
+                    with_player = Some((p, if won { Some(true) } else if lost { Some(false) } else { None }));
+                }
             }
         } else if g.npc_turn() {
             think(g);
@@ -508,6 +515,20 @@ fn after_move(host: &mut dyn ServerHost, npc: EntityRef, now: i64) {
     let _ = finished;
     if let Some((a, b, winner)) = done_between {
         crate::heart::game_over(host, a, b, winner);
+    }
+    if let Some((p, npc_won)) = with_player {
+        let name = p.name(&*host).unwrap_or_default();
+        let (event, line) = match npc_won {
+            Some(true) => ("won_game", format!("Good game, {name}!")),
+            Some(false) => ("lost_game", format!("Well played, {name}. You got me.")),
+            None => ("", format!("A draw, {name}. Again some time?")),
+        };
+        crate::heart::say_to(host, npc, p, &line);
+        if !event.is_empty() {
+            crate::heart::feel(host, npc, Some(p), event);
+            crate::rulebook::notice(npc.id(), event, Some(p.entity().id()));
+        }
+        crate::bonds::add(host, npc, p, 1.0, "a game together");
     }
     send_views(host, npc.id(), &[]);
 }

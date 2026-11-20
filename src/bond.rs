@@ -10,6 +10,9 @@
 //! may say yes (a sweetheart), and after three days more (relation 90, close 80) the player may
 //! propose with a diamond: partners. Hurt it until it dislikes the player and it ends it.
 //!
+//! A player is with one NPC at a time, and remembers which (wherever it is now, loaded or not);
+//! one not seen for ten days has drifted apart. A sweetheart who sees them court another says so.
+//!
 //! Each NPC loves two things and can't stand one, by its UUID; it tells a close enough player.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -56,6 +59,24 @@ pub const COURTING: i64 = 3 * 24000;
 pub const BREAKS_BELOW: i32 = 20;
 /// After a parting, this long before it may be asked out again.
 pub const MENDS_IN: i64 = 3 * 24000;
+
+/// A romance with an NPC not seen for this long has drifted apart, as far as the player goes (it
+/// may be far away, or gone).
+pub const DRIFTS_IN: i64 = 10 * 24000;
+
+/// What a player remembers of who they are with: the NPC's UUID, when they were last together
+/// (game time), its name. Written as one line.
+pub fn partner_line(uuid: u128, seen: i64, name: &str) -> String {
+    format!("{uuid:032x} {seen} {name}")
+}
+
+/// That line read back.
+pub fn partner_read(line: &str) -> Option<(u128, i64, String)> {
+    let mut parts = line.splitn(3, ' ');
+    let uuid = u128::from_str_radix(parts.next()?, 16).ok()?;
+    let seen = parts.next()?.parse().ok()?;
+    Some((uuid, seen, parts.next().unwrap_or("someone").to_string()))
+}
 
 /// The closeness `days` apart cost, known when they meet again: a point a day past three, ten at most.
 pub fn apart_loss(days: i64) -> f32 {
@@ -231,5 +252,7 @@ mod tests {
         assert_eq!(short("minecraft:lily_of_the_valley"), "lily of the valley");
         assert!(yes_chance("happy") > yes_chance("angry"));
         assert_eq!((apart_loss(2), apart_loss(3), apart_loss(5), apart_loss(400)), (0.0, 0.0, 2.0, 10.0));
+        assert_eq!(partner_read(&partner_line(7, 120, "Old Bob")), Some((7, 120, "Old Bob".to_string())));
+        assert_eq!(partner_read("zz 1 x"), None);
     }
 }

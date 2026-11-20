@@ -101,17 +101,20 @@ pub fn place(h: &House, at: [i32; 3]) -> [i32; 3] {
     [h.corner[0] + t[0], t[1], h.corner[1] + t[2]]
 }
 
-/// What goes in a cabin besides its plan (unturned): a bed, a chest.
+/// What goes in a cabin besides its plan (unturned): two beds side by side (a couple shares a
+/// cabin), a chest.
 pub fn furniture() -> Vec<([i32; 3], &'static str)> {
     vec![
         ([3, 1, 1], "minecraft:red_bed[facing=north,part=head]"),
         ([3, 1, 2], "minecraft:red_bed[facing=north,part=foot]"),
+        ([2, 1, 1], "minecraft:red_bed[facing=north,part=head]"),
+        ([2, 1, 2], "minecraft:red_bed[facing=north,part=foot]"),
         ([1, 1, 3], "minecraft:chest[facing=east]"),
     ]
 }
 
 /// Inside a cabin, where its people sleep and keep home.
-pub const INSIDE: [i32; 3] = [2, 1, 2];
+pub const INSIDE: [i32; 3] = [1, 1, 2];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Person {

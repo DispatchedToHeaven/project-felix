@@ -225,6 +225,9 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
                     let paid = crate::market::priced(standing.is_paid(o.price).unwrap_or(o.price), crate::markets::supply_of(host, npc, &o.item));
                     options.push(choice(format!("Sell {} {} for {paid} {money}", o.count, shop::short(&o.item)), vec![Action::Trade(-(i as i32) - 1)]));
                 }
+                if !s.buys.is_empty() && s.currency == crate::market::CURRENCY {
+                    text.push(format!("(I have {} {money} to buy with.)", crate::markets::purse_of(host, npc)));
+                }
                 if let Some(n) = note {
                     text.push(n);
                 }
@@ -275,7 +278,12 @@ pub fn trade(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, n: i3
     } else if buys {
         let Some(paid) = standing.is_paid(o.price) else { return };
         let paid = crate::market::priced(paid, crate::markets::supply_of(host, npc, &o.item));
-        if items_of(host, player, &o.item) < o.count {
+        let purse = crate::markets::purse_of(host, npc);
+        if s.currency == crate::market::CURRENCY && purse < paid {
+            // It pays from its purse: what it earned selling, and its day's pay.
+            crate::heart::say_aloud(host, npc, &format!("I can't pay {paid} {money} today, {name}: I have {purse}. Buy something, or come back tomorrow."));
+            false
+        } else if items_of(host, player, &o.item) < o.count {
             crate::heart::say_aloud(host, npc, &format!("You don't have {} {}, {name}.", o.count, shop::short(&o.item)));
             false
         } else {

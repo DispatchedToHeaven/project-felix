@@ -324,7 +324,7 @@ impl Hooks for Felix {
         if let HostSide::Server(host) = host {
             let dimension = e.level.dimension_id();
             companion::level_tick(host);
-            talk::level_tick(host);
+            talk::level_tick(host, dimension);
             scenes::level_tick(host);
             games::level_tick(host);
             matches::level_tick(host);

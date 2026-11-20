@@ -200,8 +200,46 @@ pub fn closeness(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) -> f32
     tie(host, npc, p.uuid()).map_or(0.0, |t| t.close)
 }
 
-/// The player's partner or sweetheart among the NPCs loaded, if one (its name).
-fn player_taken(host: &mut dyn ServerHost, p: PlayerRef, but: u32) -> Option<String> {
+/// The key a player's romance is remembered under (see `flags`).
+const PARTNER: &str = "felix_partner";
+
+/// Who player `p` remembers being with: its UUID, when they were last together, its name.
+fn partner_of(host: &mut dyn ServerHost, p: PlayerRef) -> Option<(u128, i64, String)> {
+    crate::flags::all(host, p).get(PARTNER).and_then(|l| bond::partner_read(l))
+}
+
+fn remember_partner(host: &mut dyn ServerHost, p: PlayerRef, npc: EntityRef, now: i64) {
+    let Some(uuid) = npc.uuid(host) else { return };
+    let name = npc.name(&*host).unwrap_or_else(|| "someone".into());
+    crate::flags::set(host, p, PARTNER, &bond::partner_line(uuid, now, &name));
+}
+
+fn forget_partner(host: &mut dyn ServerHost, p: PlayerRef) {
+    crate::flags::forget(host, p, PARTNER);
+}
+
+/// The player's partner or sweetheart (not `but`), if they have one: by their own memory,
+/// wherever that NPC is, else among the NPCs loaded (its name).
+fn player_taken(host: &mut dyn ServerHost, p: PlayerRef, but: EntityRef) -> Option<String> {
+    let now = now_of(&*host, but);
+    let mine = but.uuid(host);
+    if let Some((uuid, seen, name)) = partner_of(host, p)
+        && Some(uuid) != mine
+    {
+        match crate::heart::npc_by_uuid(uuid).and_then(|id| host.entity(id)) {
+            // Here: its own tie tells.
+            Some(e) => {
+                if tie(host, e, p.uuid()).is_some_and(|t| t.romance != Romance::None) {
+                    return Some(name);
+                }
+                forget_partner(host, p);
+            }
+            // Away: together still, unless it has been too long.
+            None if now >= seen && now - seen < bond::DRIFTS_IN => return Some(name),
+            None => forget_partner(host, p),
+        }
+    }
+    let but = but.id();
     for id in companion::npcs() {
         if id == but {
             continue;
@@ -283,6 +321,16 @@ pub fn give_held(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) {
         _ => format!("Oh. {cap} {what}. Thanks, I suppose."),
     };
     crate::heart::say_to(host, npc, p, &line);
+    if matches!(word, "love" | "like")
+        && let Some((uuid, _, _)) = partner_of(host, p)
+        && Some(uuid) != npc.uuid(host)
+        && let Some(theirs) = crate::heart::npc_by_uuid(uuid).and_then(|id| host.entity(id))
+        && theirs.position(&*host).zip(npc.position(&*host)).is_some_and(|(a, b)| (a[0] - b[0]).powi(2) + (a[2] - b[2]).powi(2) <= 144.0)
+    {
+        let to = npc.name(&*host).unwrap_or_else(|| "them".into());
+        crate::heart::say_to(host, theirs, p, &format!("{cap} {what} for {to}? I see, {name}."));
+        add(host, theirs, p, -1.0, "jealous");
+    }
     let before = crate::heart::relation_of(npc.id(), p.uuid());
     crate::heart::befriend(host, npc, p, rel);
     crate::flags::tell_change(host, npc, p, before, &format!("gift {word}"));
@@ -342,7 +390,7 @@ pub fn ask_out(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) {
     }
     let relation = crate::heart::relation_of(npc.id(), p.uuid());
     let taken = crate::families::partner_name(host, npc).or_else(|| with_another(host, npc, p.uuid()));
-    let other = player_taken(host, p, npc.id());
+    let other = player_taken(host, p, npc);
     let ok = allows(host, npc);
     if let Err(line) = bond::may_ask(relation, t.close, t.romance, ok, taken.as_deref(), other.as_deref()) {
         crate::heart::say_to(host, npc, p, &line.replace("@player", &name));
@@ -357,6 +405,7 @@ pub fn ask_out(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) {
             t.romance = Romance::Sweetheart;
             t.since = now;
         });
+        remember_partner(host, p, npc, now);
         crate::heart::say_to(host, npc, p, &format!("I was hoping you'd ask, {name}. Yes!"));
         hearts(host, npc);
         crate::heart::feel(host, npc, Some(p), "praise");
@@ -386,6 +435,7 @@ pub fn propose(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef) {
         t.romance = Romance::Partner;
         t.since = now;
     });
+    remember_partner(host, p, npc, now);
     crate::heart::say_to(host, npc, p, &format!("Yes! Yes, {name}, a thousand times yes!"));
     hearts(host, npc);
     crate::heart::feel(host, npc, Some(p), "praise");
@@ -404,6 +454,9 @@ pub fn part(host: &mut dyn ServerHost, npc: EntityRef, p: PlayerRef, by_it: bool
         t.since = now;
         t.close = (t.close - 20.0).max(0.0);
     });
+    if partner_of(host, p).is_some_and(|x| Some(x.0) == npc.uuid(host)) {
+        forget_partner(host, p);
+    }
     let name = p.name(&*host).unwrap_or_default();
     let line = if by_it { format!("I can't do this anymore, {name}. It's over.") } else { format!("I... see. Goodbye, then, {name}.") };
     crate::heart::say_to(host, npc, p, &line);
@@ -437,6 +490,18 @@ static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 /// A monster died: a player's companions near who saw it grow closer to them (a few a day).
 pub fn on_death(host: &mut dyn ServerHost, victim: u32, killer: i32) {
     let Some(v) = host.entity(victim) else { return };
+    // An NPC died: the player who was with it is alone now.
+    if companion::is_npc(&*host, v) {
+        let (Some(uuid), Some(level)) = (v.uuid(host), v.level(&*host)) else { return };
+        let name = v.name(&*host).unwrap_or_else(|| "NPC".into());
+        for p in level.online_players(&*host).unwrap_or_default() {
+            if partner_of(host, p).is_some_and(|x| x.0 == uuid) {
+                forget_partner(host, p);
+                let _ = p.tell(host, Text::literal(format!("{name} is gone. You are alone now.")));
+            }
+        }
+        return;
+    }
     if v.classification(&*host) != Some(MobCategory::Monster) || killer <= 0 {
         return;
     }
@@ -498,6 +563,9 @@ pub fn tick(host: &mut dyn ServerHost) {
                 add(host, e, *p, 0.5, "time together");
                 // A partner brings a little something, once a day.
                 let romance = tie(host, e, p.uuid()).map(|t| (t.romance, t.treat_day)).unwrap_or_default();
+                if romance.0 != Romance::None {
+                    remember_partner(host, *p, e, now);
+                }
                 if romance.0 == Romance::Partner && romance.1 != now / DAY && (now / 1200) % 7 == i64::from(id) % 7 {
                     with_tie(host, e, *p, |t| t.treat_day = now / DAY);
                     let item = ["minecraft:poppy", "minecraft:cookie", "minecraft:apple", "minecraft:sweet_berries"][(now / DAY) as usize % 4];

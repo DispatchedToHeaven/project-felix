@@ -414,7 +414,12 @@ pub fn tick(host: &mut dyn ServerHost) {
         }
         let (i, e) = r.now(t);
         // Rain: it goes home, unless it sleeps, follows or guards, or is home already.
-        let raining = me.level(&*host).and_then(|l| l.is_raining(&*host)) == Some(true);
+        // (Rain that falls on it: one at work under a roof stays there. Once inside it waits the rain out.)
+        let raining = me.level(&*host).is_some_and(|l| {
+            l.is_raining(&*host) == Some(true)
+                && (entry == Some(SHELTER)
+                    || me.position(&*host).is_some_and(|p| l.is_raining_at(&*host, [p[0].floor() as i32, p[1].floor() as i32 + 1, p[2].floor() as i32]) != Some(false)))
+        });
         if raining
             && matches!(e.doing, Doing::Be | Doing::Play)
             && e.place != "home"

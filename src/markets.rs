@@ -369,11 +369,11 @@ pub fn tick(host: &mut dyn ServerHost) {
         let (Some(now), Some(t)) = (level.game_time(&*host), level.day_time(&*host)) else { continue };
         let day = t.div_euclid(24000);
         let job = crate::jobs::job_of(host, *me);
-        // A day's wage for those who work.
+        // A day's wage for those who work; the others pick up a coin a day (odd jobs).
         let purse = PURSE.get(host, Holder::Entity(me.id())).unwrap_or_default();
-        if job.is_some() && purse.day != day {
-            let pay = if purse.day < 0 { 0 } else { market::WAGE };
-            set_purse(host, *me, purse.coins + pay, Some(day));
+        if purse.day != day {
+            let pay = if purse.day < 0 { 0 } else if job.is_some() { market::WAGE } else { 1 };
+            set_purse(host, *me, (purse.coins + pay).min(64), Some(day));
         }
         let hungry = crate::needs::food_of(me.id()) <= HUNGRY;
         if job != Some(Job::Bake) && !hungry {

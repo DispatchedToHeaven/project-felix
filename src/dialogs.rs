@@ -152,8 +152,8 @@ impl IPayloadHandler for SaveDialog {
         }
         if v.get("try").and_then(Value::as_bool) == Some(true) {
             match nearest_npc(&*host, player) {
+                // Spoken once by the NPC nearest: its own dialog stays its own.
                 Some(npc) => {
-                    let _ = crate::talk::DIALOG.set(host, mod_api::Holder::Entity(npc.id()), Some(id.clone()));
                     crate::talk::start_dialog(host, player, npc, &id);
                     return Ok(());
                 }
