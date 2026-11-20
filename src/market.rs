@@ -10,12 +10,33 @@
 pub const CURRENCY: &str = "minecraft:emerald";
 /// A purse holds at most this many.
 pub const MOST: u32 = 64;
-/// What a working NPC earns a day (its goods sold beyond the village).
-pub const WAGE: u32 = 2;
+/// What a working NPC earns a day, besides what it sells beyond the village (see `export`).
+pub const WAGE: u32 = 1;
 /// What a seller keeps for itself.
 pub const KEEP: u64 = 4;
 /// What a buyer buys at once.
 pub const LOT: u64 = 9;
+
+/// What a worker sells beyond the village each day, of `have` of a good, with `people` about: as
+/// much as is over what the village keeps (32, or 6 for each one), three emeralds' worth at most.
+/// How many go, and for how many emeralds.
+pub fn export(item: &str, have: u64, people: u64) -> (u64, u32) {
+    let Some(per) = per_emerald(item).map(u64::from) else { return (0, 0) };
+    let keep = (people * 6).max(32);
+    let lots = (have.saturating_sub(keep) / per).min(3);
+    (lots * per, lots as u32)
+}
+
+/// What each job sells beyond the village.
+pub fn goods(job: &str) -> &'static [&'static str] {
+    match job {
+        "farm" => &["minecraft:wheat", "minecraft:potato", "minecraft:carrot", "minecraft:beetroot"],
+        "wood" => &["minecraft:oak_log", "minecraft:spruce_log", "minecraft:birch_log", "minecraft:jungle_log", "minecraft:acacia_log", "minecraft:dark_oak_log", "minecraft:mangrove_log", "minecraft:cherry_log", "minecraft:pale_oak_log"],
+        "fish" => &["minecraft:cod", "minecraft:salmon"],
+        "bake" => &["minecraft:bread", "minecraft:baked_potato", "minecraft:cooked_cod", "minecraft:cooked_salmon"],
+        _ => &[],
+    }
+}
 
 /// How many of a good go for one emerald.
 pub fn per_emerald(item: &str) -> Option<u32> {
@@ -135,6 +156,13 @@ mod tests {
     #[test]
     fn markets_price_by_supply() {
         assert_eq!(supply(0, 4), Supply::Scarce);
+        // Wheat is 12 an emerald: 32 kept, then whole lots, three at most.
+        assert_eq!(export("minecraft:wheat", 40, 3), (0, 0));
+        assert_eq!(export("minecraft:wheat", 60, 3), (24, 2));
+        assert_eq!(export("minecraft:wheat", 500, 3), (36, 3));
+        assert_eq!(export("minecraft:wheat", 60, 10), (0, 0));
+        assert_eq!(export("minecraft:dirt", 500, 3), (0, 0));
+        assert!(goods("wood").iter().all(|g| per_emerald(g).is_some()));
         assert_eq!(supply(5, 4), Supply::Short);
         assert_eq!(supply(12, 4), Supply::Enough);
         assert_eq!(supply(100, 4), Supply::Plenty);

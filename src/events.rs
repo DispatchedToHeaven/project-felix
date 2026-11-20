@@ -78,6 +78,10 @@ pub fn clear() {
 }
 
 const SPOTS: &str = "events/spots.json";
+/// A spot set for an event gathers the NPCs within this of it (blocks).
+const GATHER_FROM: f64 = 96.0;
+/// Players within this of an NPC at an event hear of it.
+const HEARD_FROM: f64 = 128.0;
 const OVERWORLD: &str = "minecraft:overworld";
 
 fn read_spots(host: &mut dyn ServerHost) {
@@ -125,6 +129,27 @@ fn tell_all(host: &mut dyn ServerHost, line: &str) {
     }
 }
 
+/// Tells `line` to the players near an NPC going to event `id` (none: near one at any event).
+fn tell_near(host: &mut dyn ServerHost, id: Option<&str>, line: &str) {
+    let mut at = Vec::new();
+    for n in crate::companion::npcs() {
+        let Some(e) = host.entity(n) else { continue };
+        let going = match id {
+            Some(id) => gathering(host, e).is_some_and(|g| g.id == id),
+            None => crate::routines::doing(n) == "event",
+        };
+        if going && let Some(p) = e.position(&*host) {
+            at.push(p);
+        }
+    }
+    for p in players(&*host) {
+        let Some(q) = p.entity().position(&*host) else { continue };
+        if at.iter().any(|a| (a[0] - q[0]).hypot(a[2] - q[2]) <= HEARD_FROM) {
+            let _ = p.tell(host, Text::literal(line.to_string()));
+        }
+    }
+}
+
 fn title(e: &Event) -> String {
     let mut c = e.name.chars();
     c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
@@ -152,7 +177,7 @@ pub fn tick(host: &mut dyn ServerHost) {
             let on = (s.forced.contains_key(id) || e.on_at(t)) && !s.stopped.contains_key(id);
             if on && !s.on.contains_key(id) {
                 s.on.insert(id.clone(), On { event: e.clone(), started: now, scene_played: e.scene.is_none() });
-                starts.push(e.clone());
+                starts.push((id.clone(), e.clone()));
             } else if !on && let Some(o) = s.on.remove(id) {
                 ends.push(o.event);
             }
@@ -165,11 +190,11 @@ pub fn tick(host: &mut dyn ServerHost) {
             }
         }
     }
-    for e in starts {
-        tell_all(host, &format!("[{}] It has begun! Everyone is going to the {}.", title(&e), if e.place == "meet" { "meeting place".to_string() } else { e.place.clone() }));
+    for (id, e) in starts {
+        tell_near(host, Some(&id), &format!("[{}] It has begun! Everyone is going to the {}.", title(&e), if e.place == "meet" { "meeting place".to_string() } else { e.place.clone() }));
     }
     for e in ends {
-        tell_all(host, &format!("[{}] It is over for now.", title(&e)));
+        tell_near(host, None, &format!("[{}] It is over for now.", title(&e)));
     }
     play_scenes(host, level, now);
 }
@@ -235,15 +260,22 @@ pub fn gathering(host: &mut dyn ServerHost, npc: EntityRef) -> Option<Gather> {
         v
     };
     let tags = npc.tags(&*host).unwrap_or_default();
+    let here = npc.position(&*host);
     for (id, e, spot) in on {
         if e.who.as_ref().is_some_and(|w| !tags.contains(w)) {
             continue;
         }
+        // A spot set for the event (`/felix event here`) is for the village about it.
+        let spot = spot.filter(|s| here.is_some_and(|h| (h[0] - s[0]).hypot(h[2] - s[2]) <= GATHER_FROM));
         let spot = spot
             .or_else(|| crate::routines::place_named(host, npc, &e.place))
             .or_else(|| crate::routines::place_named(host, npc, "meet"))
             .or_else(|| crate::routines::place_named(host, npc, "home"));
         let Some(spot) = spot else { continue };
+        // Each its own place in a ring about the spot, not all on one block.
+        let k = f64::from(npc.id()) * 2.399_963;
+        let r = 1.5 + f64::from(npc.id() % 3);
+        let spot = [spot[0] + r * k.cos(), spot[1], spot[2] + r * k.sin()];
         let say = (!e.say.is_empty()).then(|| e.say[npc.id() as usize % e.say.len()].clone());
         return Some(Gather { id, spot, say, animation: e.animation.clone() });
     }

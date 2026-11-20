@@ -125,6 +125,8 @@ pub struct Match {
     /// Basketball: shots taken, both sides.
     pub shots: u32,
     pub rng: u64,
+    /// How well the NPC plays (0 to 2, see `bond::skill`).
+    pub skill: u8,
 }
 
 const TARGET: u32 = 5;
@@ -138,7 +140,7 @@ fn idx(s: Side) -> usize {
 impl Match {
     pub fn new(sport: Sport, now: i64, seed: u64) -> Match {
         let phase = if sport == Sport::Basketball { Phase::Aim { at: now + PAUSE } } else { Phase::Serve { by: Side::Npc, at: now } };
-        Match { sport, score: [0, 0], phase, hits: 0, shots: 0, rng: seed | 1 }
+        Match { sport, score: [0, 0], phase, hits: 0, shots: 0, rng: seed | 1, skill: 1 }
     }
 
     fn random(&mut self) -> f32 {
@@ -256,7 +258,8 @@ impl Match {
                 vec![self.point(Side::Npc, now)]
             }
             Phase::Flight { from: Side::Player, arrives, .. } if now >= arrives => {
-                let returns = (0.93 - 0.035 * self.hits.saturating_sub(3) as f32).max(0.45);
+                let base = [0.86, 0.93, 0.97][usize::from(self.skill.min(2))];
+                let returns = (base - 0.035 * self.hits.saturating_sub(3) as f32).max(0.45);
                 if self.random() < returns {
                     self.hits += 1;
                     let key = self.incoming_key();
@@ -287,7 +290,7 @@ impl Match {
                 if self.sport == Sport::Basketball {
                     // The NPC shoots after the player's shot, the player after the NPC's.
                     if self.shots % 2 == 1 {
-                        let made = self.random() < 0.55;
+                        let made = self.random() < [0.42, 0.55, 0.66][usize::from(self.skill.min(2))];
                         self.phase = Phase::Shot { by: Side::Npc, launched: now + 15, arrives: now + 15 + self.sport.flight(0), made };
                         return vec![Event::Swing(Side::Npc)];
                     }
@@ -407,7 +410,7 @@ impl Match {
             Phase::Shot { by, launched, arrives, made } => json!({"p": "shot", "by": side(by), "launched": launched, "arrives": arrives, "made": made}),
             Phase::Over { winner, at } => json!({"p": "over", "winner": winner.map(side), "at": at}),
         };
-        json!({"sport": self.sport.name(), "score": self.score, "phase": phase, "hits": self.hits, "shots": self.shots, "rng": self.rng.to_string()})
+        json!({"sport": self.sport.name(), "score": self.score, "phase": phase, "hits": self.hits, "shots": self.shots, "rng": self.rng.to_string(), "skill": self.skill})
     }
 
     pub fn from_json(v: &Value) -> Option<Match> {
@@ -441,6 +444,7 @@ impl Match {
             hits: v.get("hits")?.as_u64()? as u32,
             shots: v.get("shots")?.as_u64()? as u32,
             rng: v.get("rng")?.as_str()?.parse().ok()?,
+            skill: v.get("skill").and_then(Value::as_u64).map_or(1, |s| s.min(2) as u8),
         })
     }
 }

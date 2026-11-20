@@ -296,8 +296,12 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         Err(_) => return,
     };
     for id in unknown {
-        if host.entity(id).is_none() {
-            continue;
+        let Some(e) = host.entity(id) else { continue };
+        // A wolf of no one has a wolf's 8 hits: an NPC of no one (a villager) has its own 30.
+        if LivingRef::new(e).max_health(&*host).is_some_and(|m| m < 30.0)
+            && let Some(u) = e.uuid(host)
+        {
+            crate::talk::queue(format!("attribute {} minecraft:max_health base set 30", crate::talk::uuid_text(u)));
         }
         let Ok(mut o) = ORDERS.get(host, Holder::Entity(id)) else { continue };
         // A table, court or scene props left from before its world closed go.
@@ -356,6 +360,11 @@ impl EntityPart for CompanionGoals {
     }
 }
 
+/// In water its own goals let go, and the wolf's floating keeps it up (it would drown below).
+fn swimming(cx: &mut GoalContext<'_>) -> bool {
+    cx.mob().entity().is_in_water(cx.host()) == Some(true)
+}
+
 fn distance_sq(a: [f64; 3], b: [f64; 3]) -> f64 {
     (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)
 }
@@ -398,7 +407,7 @@ impl Goal for Go {
         GoalFlags::MOVE.union(GoalFlags::JUMP)
     }
     fn can_use(&mut self, cx: &mut GoalContext<'_>) -> bool {
-        going(cx.mob().entity().id()).is_some()
+        going(cx.mob().entity().id()).is_some() && !swimming(cx)
     }
     fn can_continue(&mut self, cx: &mut GoalContext<'_>) -> bool {
         self.can_use(cx)
@@ -429,7 +438,7 @@ impl Goal for Wait {
         GoalFlags::MOVE.union(GoalFlags::JUMP)
     }
     fn can_use(&mut self, cx: &mut GoalContext<'_>) -> bool {
-        orders_of(cx.mob().entity().id()).is_some_and(|o| o.mode == Mode::Wait)
+        orders_of(cx.mob().entity().id()).is_some_and(|o| o.mode == Mode::Wait) && !swimming(cx)
     }
     fn start(&mut self, cx: &mut GoalContext<'_>) {
         cx.stop_navigation();
@@ -493,6 +502,9 @@ impl Goal for Live {
     fn can_use(&mut self, cx: &mut GoalContext<'_>) -> bool {
         let id = cx.mob().entity().id();
         let Some(o) = orders_of(id).filter(|o| o.mode == Mode::Live) else { return false };
+        if swimming(cx) {
+            return false;
+        }
         match live_of(id) {
             LiveDo::Follow => false,
             LiveDo::Guard => {

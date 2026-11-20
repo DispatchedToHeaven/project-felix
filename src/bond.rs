@@ -195,6 +195,18 @@ fn mix(mut x: u64) -> u64 {
     x ^ (x >> 33)
 }
 
+/// How well an NPC plays games (0: a beginner, 1: fair, 2: good), by its UUID; an upset one plays
+/// worse.
+pub fn skill(uuid: u128, mood: &str) -> u8 {
+    let s = (mix((uuid as u64) ^ ((uuid >> 64) as u64) ^ 0x5EED_6A3E) % 3) as u8;
+    if matches!(mood, "upset" | "angry" | "grieving") { s.saturating_sub(1) } else { s }
+}
+
+/// A skill in words.
+pub fn skill_word(s: u8) -> &'static str {
+    ["a beginner", "fair", "good"][usize::from(s.min(2))]
+}
+
 /// What an NPC loves (two things) and can't stand (one), by its UUID.
 pub fn tastes(uuid: u128) -> ([&'static str; 2], &'static str) {
     let h = mix((uuid as u64) ^ ((uuid >> 64) as u64));
@@ -251,6 +263,8 @@ mod tests {
         assert_eq!(gift("minecraft:bread", 12345).2, "like");
         assert_eq!(short("minecraft:lily_of_the_valley"), "lily of the valley");
         assert!(yes_chance("happy") > yes_chance("angry"));
+        assert!((0..50u128).all(|u| skill(u * 7919, "calm") <= 2 && skill(u * 7919, "angry") <= skill(u * 7919, "calm")));
+        assert!((0..50u128).map(|u| skill(u * 7919, "calm")).collect::<std::collections::HashSet<_>>().len() == 3);
         assert_eq!((apart_loss(2), apart_loss(3), apart_loss(5), apart_loss(400)), (0.0, 0.0, 2.0, 10.0));
         assert_eq!(partner_read(&partner_line(7, 120, "Old Bob")), Some((7, 120, "Old Bob".to_string())));
         assert_eq!(partner_read("zz 1 x"), None);

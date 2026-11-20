@@ -689,7 +689,9 @@ fn feel_at(host: &mut dyn ServerHost, id: u32, event: &str, player: Option<Playe
             (Some((u, _)), Some(by)) => by == *u,
             _ => true,
         };
-        let next = if event == "apology" && !theirs { None } else { c.next(&l.heart.mood, event, relation).map(str::to_string) };
+        // Kind words said too often move neither its liking nor its mood (it sees through it).
+        let flattered = !gate && c.delta(event) > 0;
+        let next = if (event == "apology" && !theirs) || flattered { None } else { c.next(&l.heart.mood, event, relation).map(str::to_string) };
         (c, labels, next, l.name.clone())
     };
     if let (Some(p), Some((label, worse))) = (player, labels) {

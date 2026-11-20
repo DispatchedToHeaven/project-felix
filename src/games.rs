@@ -149,6 +149,8 @@ struct Game {
     /// The other NPC and its orders to go back to.
     other: Option<(u32, Mode)>,
     watchers: Vec<PlayerRef>,
+    /// How well the NPC at this table plays, and the one across (see `bond::skill`).
+    skill: [u8; 2],
 }
 
 #[derive(Clone)]
@@ -266,6 +268,11 @@ pub fn register(r: &mut dyn Registrar, view: Arc<dyn IPayloadHandler>) {
     reg.play_to_client(PayloadId(VIEW.into()), Some(view));
 }
 
+/// How well NPC `npc` plays now.
+pub fn skill_of(host: &mut dyn ServerHost, npc: EntityRef) -> u8 {
+    crate::bond::skill(npc.uuid(host).unwrap_or(0), &crate::heart::mood_of(npc.id()))
+}
+
 fn now_of(host: &dyn mod_api::Host, npc: EntityRef) -> i64 {
     npc.level(host).and_then(|l| l.game_time(host)).unwrap_or(0)
 }
@@ -305,6 +312,7 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, kind: GameKind, player: 
         thinking: None,
         other: None,
         watchers: Vec::new(),
+        skill: [skill_of(host, npc), 1],
     };
     let table = Table { kind: kind.name().into(), board: game.board.letters(), yaw };
     let _ = TABLE.set(host, Holder::Entity(npc.id()), Some(table));
@@ -398,6 +406,7 @@ pub fn start_npcs(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef, kind: G
         thinking: None,
         other: Some((b.id(), restore_b)),
         watchers: Vec::new(),
+        skill: [skill_of(host, a), skill_of(host, b)],
     };
     think(&mut game);
     let table = Table { kind: kind.name().into(), board: game.board.letters(), yaw };
@@ -539,10 +548,17 @@ fn think(g: &mut Game) {
     g.thinking = Some(slot.clone());
     let board = g.board.clone();
     let seed = g.history.len() as u64 * 7919 + g.started as u64;
+    // How far it looks, and how much worse a move it may take, by how well it plays.
+    let skill = if matches!(g.seat(g.board.side()), Seat::Other(_)) { g.skill[1] } else { g.skill[0] };
+    let (chess_at, draughts_at) = match skill {
+        0 => ((2, 60), (4, 30)),
+        1 => ((3, 15), (6, 10)),
+        _ => ((4, 4), (7, 0)),
+    };
     std::thread::spawn(move || {
         let m = match board {
-            Board::Chess(p) => chess::best_move(&p, 3, seed, 15).map(NpcMove::Chess),
-            Board::Checkers(p) => checkers::best_move(&p, 6, seed, 10).map(NpcMove::Checkers),
+            Board::Chess(p) => chess::best_move(&p, chess_at.0, seed, chess_at.1).map(NpcMove::Chess),
+            Board::Checkers(p) => checkers::best_move(&p, draughts_at.0, seed, draughts_at.1).map(NpcMove::Checkers),
         };
         if let Ok(mut s) = slot.lock() {
             *s = Some(m.unwrap_or(NpcMove::None));

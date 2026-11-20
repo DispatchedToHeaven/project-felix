@@ -306,7 +306,8 @@ pub fn stats_line(host: &mut dyn ServerHost, npc: EntityRef) -> String {
     let hits = BASE_DAMAGE + 0.5 * g.level as f64 + weapon_bonus(&item(EquipmentSlot::MainHand));
     let next = if g.level >= MAX_LEVEL { "as strong as I get".to_string() } else { format!("{}/{} to the next", g.xp, need(g.level)) };
     let held = l.equipment(&*host, EquipmentSlot::MainHand).filter(|s| s.count() > 0).map(|s| format!(", holding a {}", short(&item_id(&*host, &s)))).unwrap_or_default();
-    format!("Level {} ({next}). Health {health:.0}/{max:.0}, armour {armour:.0}, I hit for {hits:.1}{held}.", g.level)
+    let games = crate::bond::skill_word(crate::games::skill_of(host, npc));
+    format!("Level {} ({next}). Health {health:.0}/{max:.0}, armour {armour:.0}, I hit for {hits:.1}{held}. At games I'm {games}.", g.level)
 }
 
 /// The `stats` action: it tells the player how strong it is.

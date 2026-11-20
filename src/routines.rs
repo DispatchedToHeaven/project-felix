@@ -137,6 +137,8 @@ struct Day {
     bed: Option<[i32; 3]>,
     /// When it last looked for a bed and found none.
     no_bed: i64,
+    /// The entry it last spoke the words of, and the day.
+    said: Option<(usize, i64)>,
 }
 
 #[derive(Default)]
@@ -478,8 +480,16 @@ pub fn tick(host: &mut dyn ServerHost) {
                 Doing::Be | Doing::Play => LiveDo::Stay,
             };
             companion::set_live(host, me, at, what);
-            if let Some(line) = e.say.get((now as usize / SCAN as usize) % e.say.len().max(1)) {
+            // Its words for this part of the day, once a day (back from the rain, it just goes).
+            let day = now.div_euclid(24000);
+            let said = STATE.lock().ok().and_then(|s| s.days.get(&id).and_then(|d| d.said)) == Some((i, day));
+            if !said && let Some(line) = e.say.get((now as usize / SCAN as usize) % e.say.len().max(1)) {
                 crate::heart::say_aloud(host, me, line);
+                if let Ok(mut s) = STATE.lock()
+                    && let Some(d) = s.days.get_mut(&id)
+                {
+                    d.said = Some((i, day));
+                }
             }
             crate::rulebook::notice(id, &format!("starts:{}", e.name), None);
             if let Ok(mut s) = STATE.lock()

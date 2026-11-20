@@ -143,10 +143,22 @@ pub fn set_extra(dialog: &str, quests: Vec<Quest>) {
         for old in e.1.remove(dialog).unwrap_or_default() {
             e.0.remove(&old);
         }
+        let by_place = format!("{dialog}/");
+        e.0.retain(|k, _| !k.strip_prefix(&by_place).is_some_and(|n| n.chars().all(|c| c.is_ascii_digit())));
+        // Each by its title, so that one moved or another taken out keeps its own (the place in the
+        // file too, for logs from before).
         let mut ids = Vec::new();
         for (n, q) in quests.into_iter().enumerate() {
-            let id = format!("{dialog}/{n}");
-            e.0.insert(id.clone(), Arc::new(q));
+            let q = Arc::new(q);
+            let base = format!("{dialog}/{}", crate::profile::make_id(&q.title));
+            let mut id = base.clone();
+            let mut k = 2;
+            while ids.contains(&id) {
+                id = format!("{base}_{k}");
+                k += 1;
+            }
+            e.0.insert(format!("{dialog}/{n}"), q.clone());
+            e.0.insert(id.clone(), q);
             ids.push(id);
         }
         e.1.insert(dialog.to_string(), ids);

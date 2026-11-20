@@ -198,17 +198,29 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, id: &str, player: Option
         Some(p) => scene::yaw_towards(at, p),
         None => npc.rotation(&*host).map(|r| r[0]).unwrap_or(0.0),
     };
-    // The nearest NPCs free to play take the roles.
-    let mut free: Vec<(f64, EntityRef)> = companion::npcs()
-        .into_iter()
-        .filter(|o| *o != npc.id() && !busy(*o) && !crate::games::busy(*o) && !crate::matches::busy(*o))
-        .filter_map(|o| host.entity(o))
-        .filter_map(|e| Some((e.position(&*host).map(|p| (p[0] - at[0]).powi(2) + (p[2] - at[2]).powi(2))?, e)))
-        .filter(|(d, _)| *d <= 24.0 * 24.0)
-        .collect();
-    free.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // The NPCs free to play take the roles: not asleep, not out with another player; nearest first,
+    // those of no one (or of the lead's owner, or of the player) before others'.
+    let lead_owner = mod_api::LivingRef::new(npc).owner(&*host);
+    let ours = |o: Option<u128>| o.is_none() || o == lead_owner || o == player.map(|p| p.uuid());
+    let mut free: Vec<(bool, f64, EntityRef)> = Vec::new();
+    for o in companion::npcs() {
+        if o == npc.id() || busy(o) || crate::games::busy(o) || crate::matches::busy(o) || crate::routines::asleep(o) {
+            continue;
+        }
+        let Some(e) = host.entity(o) else { continue };
+        let owner = mod_api::LivingRef::new(e).owner(&*host);
+        if !ours(owner) && companion::mode_of(o) == companion::Mode::Follow {
+            continue;
+        }
+        let Some(d) = e.position(&*host).map(|p| (p[0] - at[0]).powi(2) + (p[2] - at[2]).powi(2)) else { continue };
+        if d <= 24.0 * 24.0 {
+            free.push((!ours(owner), d, e));
+        }
+    }
+    free.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    let free: Vec<(f64, EntityRef)> = free.into_iter().map(|(_, d, e)| (d, e)).collect();
     if free.len() < scene.cast.len() {
-        return Err(format!("it needs {} more NPCs near", scene.cast.len() - free.len()));
+        return Err(format!("it needs {} more NPCs near, awake and free", scene.cast.len() - free.len()));
     }
     let mut cast = Vec::new();
     for (role, (_, e)) in scene.cast.iter().zip(free) {

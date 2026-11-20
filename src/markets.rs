@@ -372,8 +372,26 @@ pub fn tick(host: &mut dyn ServerHost) {
         // A day's wage for those who work; the others pick up a coin a day (odd jobs).
         let purse = PURSE.get(host, Holder::Entity(me.id())).unwrap_or_default();
         if purse.day != day {
-            let pay = if purse.day < 0 { 0 } else if job.is_some() { market::WAGE } else { 1 };
-            set_purse(host, *me, (purse.coins + pay).min(64), Some(day));
+            let mut pay = if purse.day < 0 { 0 } else if job.is_some() { market::WAGE } else { 1 };
+            // What its chest has more of than the village needs goes to traders beyond it.
+            if purse.day >= 0
+                && let Some(j) = job
+                && let Some(c) = crate::jobs::chest_of(host, *me).flatten()
+            {
+                let people = village(host, level, at).1;
+                let mut sold = 0;
+                for item in market::goods(j.name()) {
+                    let (n, coins) = market::export(item, crate::jobs::amount(host, c, item), people);
+                    if n > 0 && crate::jobs::take(host, c, item, n as u32) {
+                        pay += coins;
+                        sold += coins;
+                    }
+                }
+                if sold > 0 {
+                    crate::heart::say_aloud(host, *me, &format!("Sold the extra to a trader: {sold} emerald{}.", if sold == 1 { "" } else { "s" }));
+                }
+            }
+            set_purse(host, *me, (purse.coins + pay).min(market::MOST), Some(day));
         }
         let hungry = crate::needs::food_of(me.id()) <= HUNGRY;
         if job != Some(Job::Bake) && !hungry {

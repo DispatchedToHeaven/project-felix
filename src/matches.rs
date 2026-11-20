@@ -176,7 +176,8 @@ pub fn start_npcs(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef, sport: 
         crate::talk::queue(format!("tp {} {:.2} {:.2} {:.2} {:.1} 0", crate::talk::uuid_text(u), spot[0], spot[1], spot[2], yaw + 180.0));
     }
     let seed = now as u64 ^ (a.id() as u64) << 20 ^ 0x5851_F42D_4C95_7F2D;
-    let m = Match::new(sport, now, seed);
+    let mut m = Match::new(sport, now, seed);
+    m.skill = crate::games::skill_of(host, a);
     if let Ok(mut all) = MATCHES.lock() {
         all.insert(a.id(), Running { m, opp: Opp::Npc(b.id(), restore_b), restore, yaw, sent: String::new(), ended: None });
     }
@@ -208,7 +209,8 @@ pub fn start(host: &mut dyn ServerHost, npc: EntityRef, sport: Sport, player: Pl
     let name = player.name(&*host).unwrap_or_default();
     crate::talk::queue(format!("tp {name} {:.2} {:.2} {:.2} {:.1} 8", spot[0], spot[1], spot[2], yaw + 180.0));
     let seed = now as u64 ^ (npc.id() as u64) << 20 ^ 0x9E37_79B9_7F4A_7C15;
-    let m = Match::new(sport, now, seed);
+    let mut m = Match::new(sport, now, seed);
+    m.skill = crate::games::skill_of(host, npc);
     if let Ok(mut all) = MATCHES.lock() {
         all.insert(npc.id(), Running { m, opp: Opp::Player(player), restore, yaw, sent: String::new(), ended: None });
     }
