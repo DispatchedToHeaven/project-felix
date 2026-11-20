@@ -4,11 +4,12 @@
 //! The renderer asks for a pose every frame ([`pose`]); the client tick ([`tick`]) reads the
 //! synced actions and fires the effects the animations passed since the last tick.
 use crate::anim::{Animation, BonePose, EffectKind, LoopMode};
-use crate::molang::{self, MapContext};
+use crate::molang::{self, Context, MapContext};
 use crate::companion::{LOOK, Look, ORDERS, Orders};
 use crate::scene::{self, Scene};
 use crate::games::{TABLE, Table};
 use crate::matches::{Court, SPORT};
+use crate::sports::Match;
 use crate::scenes::{Playing, SCENE};
 use crate::sync::{ACTION, Action};
 use crate::{animations, models};
@@ -64,6 +65,8 @@ impl Layer {
 #[derive(Default)]
 struct Npc {
     model: String,
+    /// The model's own walk and idle animations' names.
+    walk_idle: [String; 2],
     base: Option<Layer>,
     /// The base animation it is blending away from, and when the blend began.
     leaving: Option<(Layer, f64)>,
@@ -89,13 +92,20 @@ struct State {
     scenes: HashMap<u32, Active>,
     /// Game tables, by NPC.
     tables: HashMap<u32, Table>,
-    /// Ball game courts, by NPC.
-    courts: HashMap<u32, Court>,
+    /// Ball game courts, by NPC, with the match read from each.
+    courts: HashMap<u32, (Court, Option<Arc<Match>>)>,
 }
 
-/// Every ball game being played, by NPC.
-pub fn courts() -> Vec<(u32, Court)> {
-    STATE.lock().map(|s| s.courts.iter().map(|(k, v)| (*k, v.clone())).collect()).unwrap_or_default()
+/// NPC `id`'s ball game: which way its court faces, and the match.
+pub fn court_of(id: u32) -> Option<(f32, Arc<Match>)> {
+    let s = STATE.lock().ok()?;
+    let (c, m) = s.courts.get(&id)?;
+    Some((c.yaw, m.clone()?))
+}
+
+/// The NPC playing a ball game with the player whose UUID is `player` (32 hex digits).
+pub fn court_player(player: &str) -> Option<u32> {
+    STATE.lock().ok()?.courts.iter().find(|(_, (c, _))| c.player == player).map(|(id, _)| *id)
 }
 
 /// The client's clock as the renderer last saw it: game time in ticks, with the partial tick.
@@ -134,7 +144,9 @@ pub fn prop_pose(name: &str, t: f32) -> HashMap<String, Full> {
     let (t, _) = a.local_time(t);
     let mut cx = MapContext::default();
     cx.queries.insert("anim_time".into(), t);
-    full_of(a.sample(t, &mut cx)).into_iter().map(|(k, v)| (k.to_ascii_lowercase(), v)).collect()
+    let mut out = HashMap::new();
+    add(&mut out, a.sample(t, &mut cx), 1.0);
+    out
 }
 
 /// The scene actor's animation, as a synced action from the scene's start, while it plays.
@@ -204,42 +216,76 @@ fn context(npc: &Npc, anim_time: f32) -> MapContext {
     cx
 }
 
-fn sample(npc: &Npc, layer: &Layer, now: f64) -> Vec<(String, BonePose)> {
+/// What an animation reads while it is drawn: the NPC's queries and variables, read where they
+/// are (what it sets lasts the frame).
+struct Frame<'a> {
+    npc: &'a Npc,
+    anim_time: f32,
+    set: HashMap<String, f32>,
+    seed: u32,
+}
+
+impl Context for Frame<'_> {
+    fn query(&self, name: &str) -> f32 {
+        let n = self.npc;
+        match name {
+            "anim_time" => self.anim_time,
+            "life_time" => n.age / 20.0,
+            "modified_move_speed" => n.walk_speed,
+            "ground_speed" => n.walk_speed * 4.0,
+            "is_moving" => f32::from(u8::from(n.walk_speed > WALKING)),
+            "is_on_ground" => 1.0,
+            "head_y_rotation" => n.head[0],
+            "head_x_rotation" => n.head[1],
+            other => n.vars.query(other),
+        }
+    }
+    fn var(&self, name: &str) -> f32 {
+        self.set.get(name).copied().unwrap_or_else(|| self.npc.vars.var(name))
+    }
+    fn set_var(&mut self, name: &str, value: f32) {
+        self.set.insert(name.to_string(), value);
+    }
+    fn random(&mut self) -> f32 {
+        let mut x = self.seed.wrapping_add(0x9E37_79B9);
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.seed = x;
+        (x >> 8) as f32 / (1u32 << 24) as f32
+    }
+}
+
+fn sample<'a>(npc: &Npc, layer: &'a Layer, now: f64) -> Vec<(&'a str, BonePose)> {
     let (t, _) = layer.animation.local_time(layer.elapsed(now));
-    let mut cx = context(npc, t);
+    let mut cx = Frame { npc, anim_time: t, set: HashMap::new(), seed: npc.vars.seed };
     layer.animation.sample(t, &mut cx)
 }
 
-fn full_of(poses: Vec<(String, BonePose)>) -> HashMap<String, Full> {
-    poses
-        .into_iter()
-        .map(|(bone, p)| {
-            let d = Full::default();
-            (bone, Full { rotation: p.rotation.unwrap_or(d.rotation), position: p.position.unwrap_or(d.position), scale: p.scale.unwrap_or(d.scale) })
-        })
-        .collect()
+/// Adds `w` of each bone's change in `poses` to `out` (by lowercase bone name).
+fn add(out: &mut HashMap<String, Full>, poses: Vec<(&str, BonePose)>, w: f32) {
+    let d = Full::default();
+    for (bone, p) in poses {
+        let (r, at, s) = (p.rotation.unwrap_or(d.rotation), p.position.unwrap_or(d.position), p.scale.unwrap_or(d.scale));
+        let f = out.entry(bone.to_ascii_lowercase()).or_default();
+        for i in 0..3 {
+            f.rotation[i] += (r[i] - d.rotation[i]) * w;
+            f.position[i] += (at[i] - d.position[i]) * w;
+            f.scale[i] += (s[i] - d.scale[i]) * w;
+        }
+    }
 }
 
 /// Every animated bone's change from rest, by lowercase bone name.
 fn merged(npc: &Npc, now: f64) -> HashMap<String, Full> {
     let mut out = HashMap::new();
-    if let Some(base) = &npc.base {
-        out = full_of(sample(npc, base, now));
+    // The base, blended from the one it is leaving.
+    let leaving = npc.leaving.as_ref().map(|(old, since)| (old, ((now - since) / BASE_BLEND).clamp(0.0, 1.0) as f32));
+    if let Some((old, w)) = leaving {
+        add(&mut out, sample(npc, old, now), 1.0 - w);
     }
-    if let Some((old, since)) = &npc.leaving {
-        let w = ((now - since) / BASE_BLEND).clamp(0.0, 1.0) as f32;
-        let from = full_of(sample(npc, old, now));
-        let names: Vec<String> = from.keys().chain(out.keys()).cloned().collect();
-        let mut blended = HashMap::new();
-        for name in names {
-            let a = from.get(&name).copied().unwrap_or_default();
-            let b = out.get(&name).copied().unwrap_or_default();
-            blended.insert(
-                name,
-                Full { rotation: mix(a.rotation, b.rotation, w), position: mix(a.position, b.position, w), scale: mix(a.scale, b.scale, w) },
-            );
-        }
-        out = blended;
+    if let Some(base) = &npc.base {
+        add(&mut out, sample(npc, base, now), leaving.map_or(1.0, |(_, w)| w));
     }
     if let Some(action) = &npc.action {
         let a = &action.animation;
@@ -251,7 +297,7 @@ fn merged(npc: &Npc, now: f64) -> HashMap<String, Full> {
         }
         let w = w as f32;
         for (bone, p) in sample(npc, action, now) {
-            let base = out.entry(bone).or_default();
+            let base = out.entry(bone.to_ascii_lowercase()).or_default();
             if let Some(r) = p.rotation {
                 base.rotation = mix(base.rotation, r, w);
             }
@@ -263,16 +309,19 @@ fn merged(npc: &Npc, now: f64) -> HashMap<String, Full> {
             }
         }
     }
-    out.into_iter().map(|(k, v)| (k.to_ascii_lowercase(), v)).collect()
+    out
 }
 
 /// Brings `npc`'s layers up to `now`: the base by how fast it walks, the action from the server.
 fn update_layers(npc: &mut Npc, id: u32, actions: &HashMap<u32, Action>, scenes: &HashMap<u32, Active>, now: f64) {
-    let prefix = prefix(&npc.model);
-    let wanted = if npc.walk_speed > WALKING { "walk" } else { "idle" };
-    let wanted = animations::get(&format!("{prefix}{wanted}")).or_else(|| animations::get(&format!("{prefix}idle")));
-    let current = npc.base.as_ref().map(|l| l.animation.name.clone());
-    if wanted.as_ref().map(|a| &a.name) != current.as_ref() {
+    if npc.walk_idle[1].is_empty() {
+        let prefix = prefix(&npc.model);
+        npc.walk_idle = [format!("{prefix}walk"), format!("{prefix}idle")];
+    }
+    let wanted = if npc.walk_speed > WALKING { &npc.walk_idle[0] } else { &npc.walk_idle[1] };
+    let wanted = animations::get(wanted).or_else(|| animations::get(&npc.walk_idle[1]));
+    let changed = wanted.as_ref().map(|a| &a.name) != npc.base.as_ref().map(|l| &l.animation.name);
+    if changed {
         let old = npc.base.take();
         npc.base = wanted.map(|a| Layer::new(a, now));
         npc.leaving = old.map(|l| (l, now));
@@ -309,7 +358,10 @@ pub fn pose(id: u32, model: &str, living: &LivingRenderState, age: f32, now: f64
         return anim_pose_at(&p.anim, p.time);
     }
     let npc = npcs.entry(id).or_default();
-    npc.model = model.to_string();
+    if npc.model != model {
+        npc.model = model.to_string();
+        npc.walk_idle = Default::default();
+    }
     npc.body_rot = living.body_rot;
     npc.walk_speed = living.walk_animation_speed;
     npc.head = [living.y_rot, living.x_rot];
@@ -374,7 +426,18 @@ pub fn tick(host: &mut dyn ClientHost) {
     {
         let Ok(mut state) = STATE.lock() else { return };
         state.tables = tables;
-        state.courts = courts;
+        // A match is read once, again only when it changes.
+        let old = std::mem::take(&mut state.courts);
+        state.courts = courts
+            .into_iter()
+            .map(|(id, c): (u32, Court)| {
+                let m = match old.get(&id) {
+                    Some((o, m)) if o.json == c.json => m.clone(),
+                    _ => crate::serde_json::from_str(&c.json).ok().and_then(|v| Match::from_json(&v)).map(Arc::new),
+                };
+                (id, (c, m))
+            })
+            .collect();
         let mut scenes = std::mem::take(&mut state.scenes);
         scenes.retain(|id, a| playing.get(id) == Some(&a.playing));
         for (id, p) in playing {
@@ -494,7 +557,9 @@ pub fn anim_pose_at(anim: &Animation, t: f32) -> HashMap<String, Full> {
     let t = t.clamp(0.0, anim.length.max(0.0));
     let mut cx = MapContext::default();
     cx.queries.insert("anim_time".into(), t);
-    full_of(anim.sample(t, &mut cx)).into_iter().map(|(k, v)| (k.to_ascii_lowercase(), v)).collect()
+    let mut out = HashMap::new();
+    add(&mut out, anim.sample(t, &mut cx), 1.0);
+    out
 }
 
 /// How NPC `id`'s body was turned when last drawn.

@@ -491,9 +491,67 @@ fn var_name(n: &str) -> Option<String> {
     None
 }
 
+/// Molang that parses back to `e` (written as `q.` / `v.` / `math.`, every operation in
+/// parentheses), for files written back out.
+pub fn show(e: &Expr) -> String {
+    match e {
+        Expr::Block(list) => list.iter().map(|s| format!("{};", show_one(s))).collect::<Vec<_>>().join(" "),
+        e => show_one(e),
+    }
+}
+
+fn show_one(e: &Expr) -> String {
+    match e {
+        Expr::Num(n) if *n < 0.0 => format!("(-{})", -n),
+        Expr::Num(n) => format!("{n}"),
+        Expr::Query(q) => format!("q.{q}"),
+        Expr::Var(v) => v.clone(),
+        Expr::Neg(x) => format!("(-{})", show_one(x)),
+        Expr::Not(x) => format!("(!{})", show_one(x)),
+        Expr::Bin(op, l, r) => {
+            let s = match op {
+                Op::Add => "+",
+                Op::Sub => "-",
+                Op::Mul => "*",
+                Op::Div => "/",
+                Op::Lt => "<",
+                Op::Le => "<=",
+                Op::Gt => ">",
+                Op::Ge => ">=",
+                Op::Eq => "==",
+                Op::Ne => "!=",
+                Op::And => "&&",
+                Op::Or => "||",
+                Op::Coalesce => "??",
+            };
+            format!("({} {s} {})", show_one(l), show_one(r))
+        }
+        Expr::Cond(c, t, f) => format!("({} ? {} : {})", show_one(c), show_one(t), show_one(f)),
+        Expr::Call(f, args) => format!("math.{f}({})", args.iter().map(show_one).collect::<Vec<_>>().join(", ")),
+        Expr::Assign(v, x) => format!("{v} = {}", show_one(x)),
+        Expr::Return(x) => format!("return {}", show_one(x)),
+        Expr::Block(list) => format!("({})", list.iter().map(show_one).collect::<Vec<_>>().join("; ")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shown_parses_back() {
+        for src in [
+            "math.sin(query.anim_time * 360) * 10 + -2",
+            "v.speed = 3; t.x = v.speed * 2; return t.x + 1;",
+            "v.a = 1;",
+            "1 > 0 && !(2 < 1) ? 5 : v.unset ?? 4",
+            "-(1 - 2) - 3 / 4 * math.pi",
+            "math.clamp(q.foo(1), 0, 2) == 1 || 0.125 != 3",
+        ] {
+            let e = parse(src).unwrap();
+            assert_eq!(parse(&show(&e)).unwrap(), e, "{src} -> {}", show(&e));
+        }
+    }
 
     #[test]
     fn deep_nesting_is_refused() {

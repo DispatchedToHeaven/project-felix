@@ -195,7 +195,8 @@ fn hand_on(m: &LoadedModel, i: usize, right: bool) -> Option<[f32; 3]> {
 }
 
 fn bone_extras(draw: &mut dyn BlockEntityDrawContext, m: &LoadedModel, i: usize) {
-    let Some(x) = EXTRAS.lock().ok().and_then(|e| e.clone()) else { return };
+    let Ok(guard) = EXTRAS.lock() else { return };
+    let Some(x) = guard.as_ref() else { return };
     let b = &m.bones[i];
     for (bone, colour) in &x.armour {
         if b.lower == *bone && !b.part.polygons.is_empty() {

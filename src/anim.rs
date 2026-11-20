@@ -126,7 +126,7 @@ impl Animation {
 
     /// Every bone's pose at `time` (seconds into the animation). `cx` answers Molang;
     /// `query.anim_time` should be `time`.
-    pub fn sample(&self, time: f32, cx: &mut dyn Context) -> Vec<(String, BonePose)> {
+    pub fn sample(&self, time: f32, cx: &mut dyn Context) -> Vec<(&str, BonePose)> {
         self.bones
             .iter()
             .map(|t| {
@@ -135,7 +135,7 @@ impl Animation {
                     position: t.position.as_ref().map(|c| convert(Kind::Position, c.sample(time, cx))),
                     scale: t.scale.as_ref().map(|c| c.sample(time, cx)),
                 };
-                (t.bone.clone(), pose)
+                (t.bone.as_str(), pose)
             })
             .collect()
     }

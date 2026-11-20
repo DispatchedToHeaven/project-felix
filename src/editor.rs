@@ -482,7 +482,10 @@ pub fn render(host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
         draw.text(label, [rx + 4.0, y + 2.0], [0xFFFF_6060, 0xFF60_FF60, 0xFF60_A0FF][axis], false);
         let field = [rx + 14.0, y, 46.0, 12.0];
         draw.fill(field, if key_here.is_some() { 0xC060_5020 } else { 0xC030_3040 });
-        draw.text(&fmt(v[axis]), [field[0] + 3.0, y + 2.0], 0xFFFF_FFFF, false);
+        // Molang from the file: kept as it is until the keyframe is changed.
+        let molang = ed.anim.formula(&bone_now, ed.channel, ed.time).is_some_and(|f| f[axis].is_some());
+        let shown = if molang { "Molang".to_string() } else { fmt(v[axis]) };
+        draw.text(&shown, [field[0] + 3.0, y + 2.0], if molang { 0xFFD0_A0FF } else { 0xFFFF_FFFF }, false);
         buttons.push((field, Do::Value(axis)));
         let step = ed.step();
         button(draw, &mut buttons, [rx + 62.0, y, 14.0, 12.0], "-", Do::Nudge(axis, -step), false, mouse);
@@ -532,7 +535,11 @@ pub fn render(host: &dyn ClientHost, e: &mut ScreenRenderPostEvent<'_>) {
             }
         } else {
             for fx in &ed.anim.effects {
-                let color = if matches!(fx.kind, EffectKind::Sound(_)) { 0xFF60_C0FF } else { 0xFFFF_70C0 };
+                let color = match fx.kind {
+                    EffectKind::Sound(_) => 0xFF60_C0FF,
+                    EffectKind::Particle(..) => 0xFFFF_70C0,
+                    EffectKind::Script(_) => 0xFF70_E070,
+                };
                 draw.fill([tx(fx.time) - 2.0, ry + 3.0, 4.0, 5.0], color);
             }
         }

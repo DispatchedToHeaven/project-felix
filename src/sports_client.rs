@@ -36,7 +36,7 @@ static MINE: LazyLock<Mutex<Mine>> = LazyLock::new(Default::default);
 /// The client tick: which match is the player's, and their presses sent to the server.
 pub fn tick(host: &mut dyn ClientHost) {
     let me = host.local_player().map(|p| format!("{:032x}", p.uuid()));
-    let npc = me.and_then(|me| runtime::courts().into_iter().find(|(_, c)| c.player == me).map(|(id, _)| id));
+    let npc = me.and_then(|me| runtime::court_player(&me));
     let mut names = [String::new(), String::new(), String::new()];
     for (i, (id, _, _)) in KEYS.iter().enumerate() {
         let key = host.mod_key(MOD, id).map(|(k, _)| k).unwrap_or_default();
@@ -74,8 +74,7 @@ pub fn draw_layer(_host: &dyn ClientHost, e: &mut GuiLayerDrawEvent<'_>) {
         Err(_) => return,
     };
     let Some(npc) = npc else { return };
-    let Some(court) = runtime::courts().into_iter().find(|(id, _)| *id == npc).map(|(_, c)| c) else { return };
-    let Some(m) = crate::serde_json::from_str(&court.json).ok().and_then(|v| Match::from_json(&v)) else { return };
+    let Some((_, m)) = runtime::court_of(npc) else { return };
     let now = runtime::clock();
     let draw = &mut *e.draw;
     let [w, h] = draw.size();

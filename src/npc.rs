@@ -41,10 +41,7 @@ impl EntityRenderer for NpcRenderer {
         if let Some(t) = &table {
             living.body_rot = t.yaw;
         }
-        let court = runtime::courts()
-            .into_iter()
-            .find(|(id, _)| *id == entity.id)
-            .and_then(|(_, c)| Some((c.yaw, crate::sports::Match::from_json(&crate::serde_json::from_str(&c.json).ok()?)?)));
+        let court = runtime::court_of(entity.id);
         if let Some((yaw, _)) = &court {
             living.body_rot = *yaw;
         }

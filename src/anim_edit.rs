@@ -3,7 +3,7 @@
 //! `.animation.json` that Blockbench opens. No mod API types here.
 
 use crate::anim::{self, Animation, BoneTrack, Channel, Effect, Keyframe, Lerp, LoopMode, Num};
-use crate::molang::MapContext;
+use crate::molang::{self, Expr, MapContext};
 use crate::serde_json::{Map, Value, json};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,8 +54,19 @@ pub struct EditAnim {
     pub length: f32,
     pub mode: LoopMode,
     pub tracks: Vec<Track>,
-    /// Sounds, particles and timeline lines kept as they came (editing them is for later).
+    /// Sounds, particles and timeline scripts.
     pub effects: Vec<Effect>,
+    /// Keyframes whose values are Molang in the file, kept as they came until changed here.
+    pub molang: Vec<Formula>,
+}
+
+/// A keyframe's Molang values (by axis; none: a plain number).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Formula {
+    pub bone: String,
+    pub channel: usize,
+    pub time: f32,
+    pub axes: [Option<Expr>; 3],
 }
 
 /// Times snap to this (seconds).
@@ -71,7 +82,7 @@ fn same(a: f32, b: f32) -> bool {
 
 impl EditAnim {
     pub fn new(name: &str) -> EditAnim {
-        EditAnim { name: name.to_string(), length: 2.0, mode: LoopMode::Loop, tracks: Vec::new(), effects: Vec::new() }
+        EditAnim { name: name.to_string(), length: 2.0, mode: LoopMode::Loop, tracks: Vec::new(), effects: Vec::new(), molang: Vec::new() }
     }
 
     pub fn track(&self, bone: &str) -> Option<&Track> {
@@ -91,9 +102,19 @@ impl EditAnim {
         self.track(bone)?.channels[channel].iter().find(|k| same(k.time, time))
     }
 
+    /// The Molang of `bone`'s keyframe at `time` in `channel`, if the file had any.
+    pub fn formula(&self, bone: &str, channel: usize, time: f32) -> Option<&[Option<Expr>; 3]> {
+        self.molang.iter().find(|f| f.channel == channel && same(f.time, time) && f.bone.eq_ignore_ascii_case(bone)).map(|f| &f.axes)
+    }
+
+    fn drop_formula(&mut self, bone: &str, channel: usize, time: f32) {
+        self.molang.retain(|f| !(f.channel == channel && same(f.time, time) && f.bone.eq_ignore_ascii_case(bone)));
+    }
+
     /// Sets (or adds) the keyframe at `time`, keeping its ease if it existed.
     pub fn set_key(&mut self, bone: &str, channel: usize, time: f32, value: [f32; 3]) {
         let time = snap(time).clamp(0.0, self.length);
+        self.drop_formula(bone, channel, time);
         let keys = &mut self.track_mut(bone).channels[channel];
         match keys.iter_mut().find(|k| same(k.time, time)) {
             Some(k) => k.value = value,
@@ -105,6 +126,7 @@ impl EditAnim {
     }
 
     pub fn remove_key(&mut self, bone: &str, channel: usize, time: f32) -> bool {
+        self.drop_formula(bone, channel, time);
         let keys = &mut self.track_mut(bone).channels[channel];
         let before = keys.len();
         keys.retain(|k| !same(k.time, time));
@@ -124,10 +146,10 @@ impl EditAnim {
         self.effects.sort_by(|a, b| a.time.total_cmp(&b.time));
     }
 
-    /// Removes every sound and particle at `time`; true if there were any.
+    /// Removes every sound, particle and script at `time`; true if there were any.
     pub fn remove_effects_at(&mut self, time: f32) -> bool {
         let before = self.effects.len();
-        self.effects.retain(|e| !same(e.time, time) || matches!(e.kind, anim::EffectKind::Script(_)));
+        self.effects.retain(|e| !same(e.time, time));
         before != self.effects.len()
     }
 
@@ -139,7 +161,7 @@ impl EditAnim {
             .filter_map(|e| match &e.kind {
                 anim::EffectKind::Sound(s) => Some(format!("sound {}", s.trim_start_matches("minecraft:"))),
                 anim::EffectKind::Particle(p, l) => Some(format!("particle {}{}", p.trim_start_matches("minecraft:"), l.as_ref().map(|l| format!(" @{l}")).unwrap_or_default())),
-                anim::EffectKind::Script(_) => None,
+                anim::EffectKind::Script(e) => Some(format!("script {}", molang::show(e))),
             })
             .collect()
     }
@@ -152,8 +174,15 @@ impl EditAnim {
         t
     }
 
-    fn channel(keys: &[Key]) -> Channel {
-        let num = |v: [f32; 3]| [Num::Const(v[0]), Num::Const(v[1]), Num::Const(v[2])];
+    /// `keys` to play, with the Molang of `formulas` (this bone and channel's) where the file had it.
+    fn channel(keys: &[Key], formulas: &[&Formula]) -> Channel {
+        let num = |v: [f32; 3], t: f32| -> [Num; 3] {
+            let f = formulas.iter().find(|f| same(f.time, t)).map(|f| &f.axes);
+            std::array::from_fn(|i| match f.and_then(|f| f[i].clone()) {
+                Some(e) => Num::Expr(e),
+                None => Num::Const(v[i]),
+            })
+        };
         let keyframes = keys
             .iter()
             .enumerate()
@@ -164,8 +193,8 @@ impl EditAnim {
                     Ease::Step => Lerp::Step,
                 };
                 // After a step the next keyframe arrives with the step's value, as the file has it.
-                let pre = if j > 0 && keys[j - 1].ease == Ease::Step { keys[j - 1].value } else { k.value };
-                Keyframe { time: k.time, pre: num(pre), post: num(k.value), lerp }
+                let pre = if j > 0 && keys[j - 1].ease == Ease::Step { num(keys[j - 1].value, keys[j - 1].time) } else { num(k.value, k.time) };
+                Keyframe { time: k.time, pre, post: num(k.value, k.time), lerp }
             })
             .collect();
         Channel { keyframes }
@@ -175,7 +204,7 @@ impl EditAnim {
     pub fn value_at(&self, bone: &str, channel: usize, time: f32) -> [f32; 3] {
         let rest = if channel == 2 { [1.0; 3] } else { [0.0; 3] };
         match self.track(bone).map(|t| &t.channels[channel]) {
-            Some(keys) if !keys.is_empty() => Self::channel(keys).sample(time, &mut MapContext::default()),
+            Some(keys) if !keys.is_empty() => Self::channel(keys, &[]).sample(time, &mut MapContext::default()),
             _ => rest,
         }
     }
@@ -187,7 +216,10 @@ impl EditAnim {
             .iter()
             .filter(|t| t.channels.iter().any(|c| !c.is_empty()))
             .map(|t| {
-                let ch = |i: usize| (!t.channels[i].is_empty()).then(|| Self::channel(&t.channels[i]));
+                let ch = |i: usize| {
+                    let f: Vec<&Formula> = self.molang.iter().filter(|f| f.channel == i && f.bone.eq_ignore_ascii_case(&t.bone)).collect();
+                    (!t.channels[i].is_empty()).then(|| Self::channel(&t.channels[i], &f))
+                };
                 BoneTrack { bone: t.bone.clone(), rotation: ch(0), position: ch(1), scale: ch(2) }
             })
             .collect();
@@ -199,7 +231,14 @@ impl EditAnim {
     pub fn to_bedrock(&self) -> String {
         let time = |t: f32| format!("{}", (t * 100.0).round() / 100.0);
         let num = |v: f32| json!((v * 1000.0).round() / 1000.0);
-        let vec = |v: [f32; 3]| json!([num(v[0]), num(v[1]), num(v[2])]);
+        // A keyframe's values; Molang as the file had it.
+        let vec = |v: [f32; 3], f: Option<&[Option<Expr>; 3]>| {
+            let axis = |i: usize| match f.and_then(|f| f[i].as_ref()) {
+                Some(e) => json!(molang::show(e)),
+                None => num(v[i]),
+            };
+            json!([axis(0), axis(1), axis(2)])
+        };
         let mut bones = Map::new();
         for t in &self.tracks {
             let mut b = Map::new();
@@ -210,18 +249,19 @@ impl EditAnim {
                 let mut frames = Map::new();
                 for (j, k) in keys.iter().enumerate() {
                     let prev_step = j > 0 && keys[j - 1].ease == Ease::Step;
+                    let here = self.formula(&t.bone, i, k.time);
                     let v = if prev_step {
                         let mut m = Map::new();
-                        m.insert("pre".into(), vec(keys[j - 1].value));
-                        m.insert("post".into(), vec(k.value));
+                        m.insert("pre".into(), vec(keys[j - 1].value, self.formula(&t.bone, i, keys[j - 1].time)));
+                        m.insert("post".into(), vec(k.value, here));
                         if k.ease == Ease::Smooth {
                             m.insert("lerp_mode".into(), json!("catmullrom"));
                         }
                         Value::Object(m)
                     } else if k.ease == Ease::Smooth {
-                        json!({ "post": vec(k.value), "lerp_mode": "catmullrom" })
+                        json!({ "post": vec(k.value, here), "lerp_mode": "catmullrom" })
                     } else {
-                        vec(k.value)
+                        vec(k.value, here)
                     };
                     frames.insert(time(k.time), v);
                 }
@@ -259,6 +299,7 @@ impl EditAnim {
         }
         let mut sounds = Map::new();
         let mut particles = Map::new();
+        let mut timeline = Map::new();
         for e in &self.effects {
             match &e.kind {
                 anim::EffectKind::Sound(s) => {
@@ -272,7 +313,9 @@ impl EditAnim {
                     }
                     put(&mut particles, time(e.time), Value::Object(m));
                 }
-                anim::EffectKind::Script(_) => {}
+                anim::EffectKind::Script(s) => {
+                    put(&mut timeline, time(e.time), json!(molang::show(s)));
+                }
             }
         }
         if !sounds.is_empty() {
@@ -281,13 +324,17 @@ impl EditAnim {
         if !particles.is_empty() {
             a.insert("particle_effects".into(), Value::Object(particles));
         }
+        if !timeline.is_empty() {
+            a.insert("timeline".into(), Value::Object(timeline));
+        }
         let mut anims = Map::new();
         anims.insert(self.name.clone(), Value::Object(a));
         let root = json!({ "format_version": "1.8.0", "animations": anims });
         crate::serde_json::to_string_pretty(&root).unwrap_or_default()
     }
 
-    /// An animation read from a file, made editable: Molang values are read at time 0, easings
+    /// An animation read from a file, made editable: Molang values show as read at time 0 and are
+    /// kept (until their keyframe is changed), easings
     /// other than smooth become linear, and a keyframe whose `pre` differs from the one before
     /// makes that one a step.
     pub fn from_animation(a: &Animation) -> EditAnim {
@@ -303,6 +350,7 @@ impl EditAnim {
             out
         };
         let mut tracks = Vec::new();
+        let mut molang = Vec::new();
         for t in &a.bones {
             let mut track = Track { bone: t.bone.clone(), ..Default::default() };
             for (i, c) in [&t.rotation, &t.position, &t.scale].into_iter().enumerate() {
@@ -319,12 +367,19 @@ impl EditAnim {
                     }
                     let ease = if k.lerp == Lerp::Smooth { Ease::Smooth } else { Ease::Linear };
                     keys.push(Key { time: k.time, value: post, ease });
+                    if k.post.iter().any(|n| matches!(n, Num::Expr(_))) {
+                        let axes = std::array::from_fn(|j| match &k.post[j] {
+                            Num::Expr(e) => Some(e.clone()),
+                            Num::Const(_) => None,
+                        });
+                        molang.push(Formula { bone: t.bone.clone(), channel: i, time: k.time, axes });
+                    }
                 }
                 track.channels[i] = keys;
             }
             tracks.push(track);
         }
-        EditAnim { name: a.name.clone(), length: a.length.max(SNAP), mode: a.mode, tracks, effects: a.effects.clone() }
+        EditAnim { name: a.name.clone(), length: a.length.max(SNAP), mode: a.mode, tracks, effects: a.effects.clone(), molang }
     }
 }
 
@@ -342,6 +397,25 @@ mod tests {
         assert!(text.contains("minecraft:a") && text.contains("minecraft:b"), "{text}");
         let back = anim::parse(text.as_bytes()).unwrap();
         assert_eq!(back[0].effects.len(), 2);
+    }
+
+    #[test]
+    fn molang_and_scripts_are_kept() {
+        let file = r#"{"animations":{"animation.t.m":{"loop":true,"animation_length":1,
+            "bones":{"head":{"rotation":{"0":["math.sin(q.anim_time * 360) * 10", 5, 0],"1":[0,0,0]}}},
+            "timeline":{"0.5":"v.done = 1;"}}}}"#;
+        let a = EditAnim::from_animation(&anim::parse(file.as_bytes()).unwrap()[0]);
+        assert_eq!(a.effects_at(0.5), vec!["script v.done = 1;"]);
+        let back = anim::parse(a.to_bedrock().as_bytes()).unwrap();
+        assert_eq!(back, anim::parse(file.as_bytes()).unwrap());
+        // The preview plays the Molang too.
+        let played = a.to_animation().bones[0].rotation.as_ref().unwrap().keyframes[0].post[0].clone();
+        assert!(matches!(played, Num::Expr(_)));
+        // A keyframe changed here is a number from then on.
+        let mut b = a.clone();
+        b.set_key("head", 0, 0.0, [1.0, 2.0, 3.0]);
+        assert!(b.formula("head", 0, 0.0).is_none() && !b.to_bedrock().contains("math"));
+        assert!(b.remove_effects_at(0.5) && !b.to_bedrock().contains("timeline"));
     }
 
     #[test]
