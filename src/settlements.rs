@@ -107,6 +107,17 @@ fn q(line: String) {
 }
 
 /// The settlement made at `center` in this world.
+/// Every settlement built: its middle and name.
+pub fn list(host: &mut dyn ServerHost) -> Vec<([i32; 2], String)> {
+    read(host);
+    STATE.lock().map(|s| s.built.clone()).unwrap_or_default()
+}
+
+/// How many cabins the settlement at `center` was built with.
+pub fn houses(host: &mut dyn ServerHost, center: [i32; 2]) -> usize {
+    host.level(OVERWORLD).map_or(0, |l| site_at(&*host, l, center).houses.len())
+}
+
 fn site_at(host: &dyn mod_api::Host, level: LevelRef, center: [i32; 2]) -> Site {
     let seed = level.seed(host).unwrap_or(0);
     settle::site(settle::hash(seed, center[0], center[1], 0x5E77_1E))

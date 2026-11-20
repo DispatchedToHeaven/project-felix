@@ -144,6 +144,12 @@ const FIRST: &[&str] = &["Oak", "Ash", "Elder", "Thorn", "Bright", "Mill", "Ston
 const LAST: &[&str] = &["hollow", "ford", "stead", "field", "brook", "dale", "wick", "hearth", "rest", "glen"];
 const CHARACTERS: &[&str] = &["projectfelix:kind", "projectfelix:stoic", "projectfelix:touchy"];
 
+/// A newcomer's name, by `seed`: one no one in the village has, if there is one.
+pub fn newcomer_name(seed: u64, taken: &[String]) -> String {
+    let start = (seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize;
+    (0..NAMES.len()).map(|i| NAMES[(start + i) % NAMES.len()]).find(|n| !taken.iter().any(|t| t == n)).unwrap_or(NAMES[start % NAMES.len()]).to_string()
+}
+
 /// The settlement seed `h` makes.
 pub fn site(h: u64) -> Site {
     let mut r = h;

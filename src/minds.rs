@@ -101,6 +101,16 @@ pub fn breaking(id: u32) -> Option<Break> {
     STATE.lock().ok()?.minds.get(&id)?.breaking()
 }
 
+/// A loaded NPC's mood (none: not looked at yet).
+pub fn mood(id: u32) -> Option<f32> {
+    STATE.lock().ok()?.minds.get(&id).map(|m| m.mood)
+}
+
+/// Whether a loaded NPC slept without a bed last night.
+pub fn slept_rough(id: u32, now: i64) -> bool {
+    STATE.lock().ok().and_then(|s| s.minds.get(&id).map(|m| m.has_memory("slept_rough", now))).unwrap_or(false)
+}
+
 pub fn inspired(id: u32) -> Option<Inspiration> {
     STATE.lock().ok()?.minds.get(&id)?.inspired()
 }

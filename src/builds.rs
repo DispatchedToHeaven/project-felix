@@ -178,6 +178,11 @@ fn needs(cells: &[([i32; 3], Option<String>)], from: usize) -> BTreeMap<String, 
     out
 }
 
+/// Everything building plan `p` at `site` takes, by item.
+pub fn materials(p: &Plan, site: &Site) -> BTreeMap<String, u32> {
+    needs(&placed(p, site), 0)
+}
+
 fn short(item: &str) -> String {
     item.trim_start_matches("minecraft:").replace('_', " ")
 }

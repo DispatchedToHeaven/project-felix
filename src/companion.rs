@@ -303,6 +303,11 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         {
             crate::talk::queue(format!("attribute {} minecraft:max_health base set 30", crate::talk::uuid_text(u)));
         }
+        // A wolf finds its way 16 blocks at most: an NPC walks across its village (to a field, a
+        // new cabin), so 48.
+        if let Some(u) = e.uuid(host) {
+            crate::talk::queue(format!("attribute {} minecraft:follow_range base set 48", crate::talk::uuid_text(u)));
+        }
         let Ok(mut o) = ORDERS.get(host, Holder::Entity(id)) else { continue };
         // A table, court or scene props left from before its world closed go.
         crate::games::forget_stale(host, id);

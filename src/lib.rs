@@ -40,6 +40,8 @@
 //! - `skill` is what an NPC is good at, what it loves doing, and its past (no mod API types);
 //!   `skills` has it learn by doing, work by its skill, and tell of it.
 //! - `doors` opens the wooden doors and gates NPCs come to, and shuts them after.
+//! - `chief` is what a village head decides (no mod API types); `chiefs` has each settlement choose
+//!   one and has it see to the village each morning.
 //! - `remark` is what companions say on the way (no mod API types); `companions` has them say it
 //!   and help their hurt player.
 //! - `bond` is how close an NPC and a player are, up to romance (no mod API types); `bonds` keeps it.
@@ -114,6 +116,8 @@ pub mod minds;
 pub mod skill;
 pub mod skills;
 pub mod doors;
+pub mod chief;
+pub mod chiefs;
 pub mod job;
 pub mod jobs;
 pub mod geo;
@@ -239,6 +243,7 @@ impl Hooks for Felix {
         needs::register_commands(e);
         minds::register_commands(e);
         skills::register_commands(e);
+        chiefs::register_commands(e);
         builds::register_commands(e);
         squad::register_commands(e);
         families::register_commands(e);
@@ -276,6 +281,9 @@ impl Hooks for Felix {
             return Flow::Cancel;
         }
         if let Flow::Cancel = builds::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = chiefs::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = skills::run_command(host, e) {
@@ -360,6 +368,7 @@ impl Hooks for Felix {
             markets::tick(host);
             if dimension == "minecraft:overworld" {
                 events::tick(host);
+                chiefs::tick(host);
             }
             needs::tick(host);
             minds::tick(host);
@@ -437,6 +446,7 @@ impl Hooks for Felix {
         minds::clear();
         skills::clear();
         doors::clear();
+        chiefs::clear();
         quests::clear();
         routines::clear();
         rulebook::clear();

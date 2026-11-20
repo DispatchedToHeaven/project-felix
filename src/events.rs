@@ -325,6 +325,17 @@ pub fn register_commands(e: &mut RegisterCommandsEvent<'_>) {
     e.commands.push(Command::op("felix event here <id:text>", 2));
 }
 
+/// Starts event `id` now (a village head calls it); false if there is none of that name.
+pub fn start(host: &mut dyn ServerHost, id: &str) -> bool {
+    let Some(ev) = event_named(id) else { return false };
+    let now = host.level(OVERWORLD).and_then(|l| l.game_time(&*host)).unwrap_or(0);
+    if let Ok(mut s) = STATE.lock() {
+        s.stopped.remove(id);
+        s.forced.insert(id.to_string(), now + ev.length());
+    }
+    true
+}
+
 fn full_id(id: &str) -> String {
     let id = id.trim();
     if id.contains(':') { id.to_string() } else { format!("projectfelix:{id}") }

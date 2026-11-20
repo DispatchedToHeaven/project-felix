@@ -248,6 +248,7 @@ pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
         // It says how it really feels: its mood, what is on its mind, its traits (see `minds`).
         json!({ "text": "How are you?", "actions": [ { "mind": true } ] }),
         json!({ "text": "What are you good at?", "actions": [ { "skills": true } ] }),
+        json!({ "text": "About the village...", "goto": "village" }),
         json!({ "text": "Have an apple.", "if": { "item": "minecraft:apple" }, "actions": [ { "take": "minecraft:apple" }, { "feel": "gift" } ], "goto": "thanks" }),
         json!({ "text": "I'm sorry.", "if": { "all": [ { "not": fine }, { "fault": true } ] }, "actions": [ { "feel": "apology" } ], "goto": "sorry" }),
         json!({ "text": "Who upset you?", "if": { "all": [ { "not": fine }, { "fault": false } ] }, "goto": "not_you" }),
@@ -269,6 +270,12 @@ pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
             { "text": "Will you marry me?", "if": { "romance": "sweetheart" }, "actions": [ { "propose": true } ] },
             { "text": "Come live with me, here.", "if": { "romance": "partner" }, "actions": [ { "place": "home" } ], "goto": "moved_in" },
             { "text": "I think we should part ways.", "if": { "any": [ { "romance": "sweetheart" }, { "romance": "partner" } ] }, "actions": [ { "part": true } ] },
+            { "text": "Something else...", "goto": back } ] })),
+        ("village".to_string(), json!({ "text": "Yes?", "options": [
+            { "text": "Who leads this village?", "actions": [ { "village": "head" } ] },
+            { "text": "How is the village doing?", "actions": [ { "village": "report" } ] },
+            { "text": "Does the village need anything?", "actions": [ { "village": "needs" } ] },
+            { "text": "I brought something for the village.", "actions": [ { "village": "give" } ] },
             { "text": "Something else...", "goto": back } ] })),
         ("moved_in".to_string(), json!({ "text": "Home is wherever you are, @player.", "options": again })),
         ("event_today".to_string(), json!({ "text": "It's the @event, @player! Everyone's here. Come and join us.", "options": again })),
