@@ -12,5 +12,14 @@
   "item.projectfelix.musket": "Musket",
   "item.projectfelix.blunderbuss": "Blunderbuss",
   "item.projectfelix.cartridge": "Paper Cartridge",
-  "itemGroup.projectfelix.arms": "Project Felix: Firearms"
+  "itemGroup.projectfelix.arms": "Project Felix: Firearms",
+  "item.projectfelix.pistol": "Pistol",
+  "item.projectfelix.submachine_gun": "Submachine Gun",
+  "item.projectfelix.assault_rifle": "Assault Rifle",
+  "item.projectfelix.shotgun": "Shotgun",
+  "item.projectfelix.sniper_rifle": "Sniper Rifle",
+  "item.projectfelix.pistol_rounds": "Pistol Rounds",
+  "item.projectfelix.rifle_rounds": "Rifle Rounds",
+  "item.projectfelix.shotgun_shells": "Shotgun Shells",
+  "key.projectfelix.reload": "Firearms: reload"
 }

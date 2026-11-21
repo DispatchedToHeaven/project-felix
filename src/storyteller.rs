@@ -442,6 +442,11 @@ fn short(item: &str) -> String {
     item.trim_start_matches("minecraft:").replace('_', " ")
 }
 
+/// Whether raiders are at village `name` now.
+pub fn raided_now(name: &str) -> bool {
+    STATE.lock().is_ok_and(|s| s.tales.get(name).is_some_and(|t| t.raid.is_some()))
+}
+
 /// Days since raiders last came at village `name` (many: never).
 pub fn days_since_raid(host: &mut dyn ServerHost, name: &str, day: i64) -> i64 {
     read(host);

@@ -54,8 +54,8 @@
 //!   errands between villages.
 //! - `defence` is how a village defends itself (no mod API types): guards, who takes up arms,
 //!   help from friends, raiders routed or plundering; `defences` has fighting learned and count.
-//! - `gun` is firearms (no mod API types): flintlocks, loading, aim, hits; `guns` has players and
-//!   NPCs load and fire them.
+//! - `gun` is firearms (no mod API types): flintlocks and modern guns, magazines, aim, hits;
+//!   `guns` has players and NPCs load and fire them.
 //! - `remark` is what companions say on the way (no mod API types); `companions` has them say it
 //!   and help their hurt player.
 //! - `bond` is how close an NPC and a player are, up to romance (no mod API types); `bonds` keeps it.
@@ -81,7 +81,7 @@
 //! - `npc` is the NPC entity type (`projectfelix:npc`) and its renderer.
 use mod_api::{
     ScreenKeyPressedPreEvent, ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
-    ScreenCharTypedPreEvent, ChunkLoadEvent, LevelTickPreEvent, ClientPlayerLoggingOutEvent, EntityLeaveLevelEvent, PlayerLoggedOutEvent, ServerStoppedEvent, ServerTickEvent, ServerTickPhase, LivingDamagePostEvent, LivingDamagePreEvent, LivingDeathEvent, ServerChatEvent, LevelRandomHost, AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
+    ScreenCharTypedPreEvent, ChunkLoadEvent, LevelTickPreEvent, ClientPlayerLoggingOutEvent, EntityLeaveLevelEvent, PlayerLoggedOutEvent, ServerStoppedEvent, ServerTickEvent, ServerTickPhase, LivingDamagePostEvent, LivingDamagePreEvent, LivingDeathEvent, ServerChatEvent, LevelRandomHost, AddClientReloadListenersEvent, AddServerReloadListenersEvent, GuiLayerDrawEvent, RegisterGuiLayersEvent, ClientHost, ClientTickPostEvent, ComputeFovModifierEvent, EntityInteractEvent, EntitySizeEvent, Flow, Hooks,
     Host, HostSide, InteractionKeyMappingTriggeredEvent, InteractionResult, LevelTickPostEvent, RegisterCommandsEvent,
     RegisterEntityRenderersEvent, Registrar, RegistrationContext, RunModCommandEvent, ScreenMouseButtonPressedPreEvent,
     ScreenRenderPostEvent, ServerHost,
@@ -414,6 +414,7 @@ impl Hooks for Felix {
             minds::tick(host);
             skills::tick(host);
             defences::tick(host);
+            guns::tick(host);
             doors::tick(host);
             healers::tick(host);
             squad::tick(host);
@@ -735,6 +736,11 @@ impl Hooks for Felix {
         models::forget_npcs();
     }
 
+    /// Crouching with a scoped gun looks through its scope.
+    fn compute_fov_modifier(&self, host: &dyn ClientHost, e: &mut ComputeFovModifierEvent<'_>) {
+        guns::fov(host, e);
+    }
+
     fn client_tick_post(&self, host: &mut dyn ClientHost, _e: &mut ClientTickPostEvent) {
         runtime::tick(host);
         gear::client_tick(&*host);
@@ -749,6 +755,7 @@ impl Hooks for Felix {
         quest_editor::tick(host);
         book_screen::tick(host);
         squad::client_tick(host);
+        guns::client_tick(host);
         scene_editor::tick(host);
         skins::tick(host);
         sports_client::tick(host);

@@ -183,6 +183,7 @@ pub const THOUGHTS: &[Thought] = &[
     t("stores_spoiled", "Food went bad", -3.0, DAY, 1),
     t("new_face", "Someone new came", 2.0, DAY, 1),
     t("plundered", "Raiders took our stores", -6.0, 2 * DAY, 1),
+    t("gunfire", "Gunfire close by", -3.0, DAY / 6, 1),
     t("fought", "Stood up to raiders", 4.0, 2 * DAY, 1),
     t("stood_by", "Neighbours fought beside us", 4.0, 2 * DAY, 1),
     t("quarrel", "Fell out with the neighbours", -2.0, 2 * DAY, 1),

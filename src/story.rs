@@ -233,10 +233,11 @@ pub const RAID_LASTS: i64 = DAY / 8;
 pub const CARAVAN_STAYS: i64 = DAY;
 
 /// The caravans there are (their shops), and which one comes.
-pub const CARAVANS: [(&str, &str); 3] = [
+pub const CARAVANS: [(&str, &str); 4] = [
     ("projectfelix:caravan_goods", "a trade caravan"),
     ("projectfelix:caravan_herbs", "a herb seller's cart"),
     ("projectfelix:caravan_smith", "a travelling smith"),
+    ("projectfelix:caravan_arms", "an arms dealer's cart"),
 ];
 
 pub fn caravan(roll: u64) -> (&'static str, &'static str) {
