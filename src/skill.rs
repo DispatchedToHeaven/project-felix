@@ -19,9 +19,13 @@ pub enum Skill {
     Building,
     Trading,
     Talking,
+    Healing,
 }
 
-pub const SKILLS: [Skill; 7] = [Skill::Farming, Skill::Woodcutting, Skill::Fishing, Skill::Cooking, Skill::Building, Skill::Trading, Skill::Talking];
+/// How many skills there are.
+pub const N: usize = 8;
+
+pub const SKILLS: [Skill; N] = [Skill::Farming, Skill::Woodcutting, Skill::Fishing, Skill::Cooking, Skill::Building, Skill::Trading, Skill::Talking, Skill::Healing];
 
 impl Skill {
     pub fn index(self) -> usize {
@@ -36,6 +40,7 @@ impl Skill {
             Skill::Building => "building",
             Skill::Trading => "trading",
             Skill::Talking => "talking",
+            Skill::Healing => "healing",
         }
     }
     pub fn parse(s: &str) -> Option<Skill> {
@@ -122,6 +127,8 @@ pub const CHILDHOODS: &[Past] = &[
     past("orphan", "I grew up an orphan, on the streets", &[(Skill::Talking, 2), (Skill::Trading, 2)], None),
     past("bookworm", "I spent my childhood with my nose in books", &[(Skill::Talking, 3)], None),
     past("builders_kid", "My mother built houses; I carried her tools", &[(Skill::Building, 3), (Skill::Woodcutting, 1)], None),
+    // New ones go last: an NPC's past is picked by its place in the list.
+    past("herb_child", "I gathered herbs with my grandmother, who healed the village", &[(Skill::Healing, 4), (Skill::Farming, 1)], None),
 ];
 
 pub const ADULTHOODS: &[Past] = &[
@@ -134,6 +141,7 @@ pub const ADULTHOODS: &[Past] = &[
     past("guard", "then I stood guard at a city gate", &[(Skill::Talking, 1)], None),
     past("storyteller", "then I told stories for a living", &[(Skill::Talking, 6)], None),
     past("drifter", "then I drifted, never staying long", &[(Skill::Fishing, 2), (Skill::Woodcutting, 2), (Skill::Farming, 1)], None),
+    past("healer", "then I tended the sick and the hurt", &[(Skill::Healing, 6), (Skill::Talking, 1)], None),
 ];
 
 fn mix(mut x: u64) -> u64 {
@@ -146,25 +154,40 @@ fn mix(mut x: u64) -> u64 {
 
 /// An NPC's life before, by its UUID: its childhood and its trade, mostly the one of its `job`.
 pub fn past_of(uuid: u128, job: Option<&str>) -> (&'static Past, Option<&'static Past>) {
+    past_in(uuid, job, CHILDHOODS.len(), ADULTHOODS.len())
+}
+
+/// How many pasts there were before healing came: NPCs made then keep the past they had.
+pub const LEGACY: (usize, usize) = (8, 9);
+
+/// An NPC's past from the first `nc` childhoods and `na` trades.
+pub fn past_in(uuid: u128, job: Option<&str>, nc: usize, na: usize) -> (&'static Past, Option<&'static Past>) {
+    let (cs, ads) = (&CHILDHOODS[..nc.min(CHILDHOODS.len())], &ADULTHOODS[..na.min(ADULTHOODS.len())]);
     let h = mix((uuid as u64) ^ ((uuid >> 64) as u64) ^ 0xBAC5_7041);
-    let child = &CHILDHOODS[(h % CHILDHOODS.len() as u64) as usize];
+    let child = &cs[(h % cs.len() as u64) as usize];
     // Children have no trade yet.
     if job == Some("child") {
         return (child, None);
     }
-    let fits: Vec<&Past> = ADULTHOODS.iter().filter(|p| job.is_some() && p.job == job).collect();
+    let fits: Vec<&Past> = ads.iter().filter(|p| job.is_some() && p.job == job).collect();
     let h2 = mix(h);
-    let adult = if !fits.is_empty() && h2 % 10 < 7 { fits[(h2 >> 8) as usize % fits.len()] } else { &ADULTHOODS[(h2 >> 16) as usize % ADULTHOODS.len()] };
+    let adult = if !fits.is_empty() && h2 % 10 < 7 { fits[(h2 >> 8) as usize % fits.len()] } else { &ads[(h2 >> 16) as usize % ads.len()] };
     (child, Some(adult))
 }
 
+/// The past named `child` and `adult` (empty: none yet).
+pub fn past_named(child: &str, adult: &str) -> Option<(&'static Past, Option<&'static Past>)> {
+    let c = CHILDHOODS.iter().find(|p| p.id == child)?;
+    Some((c, ADULTHOODS.iter().find(|p| p.id == adult)))
+}
+
 /// Its skills to begin with (levels) and passions (0, 1, 2), by its UUID and past.
-pub fn start(uuid: u128, job: Option<&str>) -> ([u8; 7], [u8; 7]) {
+pub fn start(uuid: u128, job: Option<&str>) -> ([u8; N], [u8; N]) {
     let (child, adult) = past_of(uuid, job);
     let mut h = mix((uuid as u64).rotate_left(17) ^ ((uuid >> 64) as u64) ^ 0x5C111);
-    let mut levels = [0u8; 7];
-    let mut passions = [0u8; 7];
-    for i in 0..7 {
+    let mut levels = [0u8; N];
+    let mut passions = [0u8; N];
+    for i in 0..N {
         h = mix(h);
         levels[i] = (h % 4) as u8;
         passions[i] = match (h >> 8) % 100 {
@@ -189,18 +212,21 @@ pub fn start(uuid: u128, job: Option<&str>) -> ([u8; 7], [u8; 7]) {
 /// An NPC's skills: experience of each, and passions.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Skills {
-    pub xp: [f32; 7],
-    pub passion: [u8; 7],
+    pub xp: [f32; N],
+    pub passion: [u8; N],
     /// When each was last used (game time).
-    pub used: [i64; 7],
+    pub used: [i64; N],
     /// The day fading was last counted.
     pub faded: i64,
+    /// Its past: childhood and trade ids (none: not kept yet, an NPC made before it was).
+    pub past: Option<(String, String)>,
 }
 
 impl Skills {
     pub fn new(uuid: u128, job: Option<&str>) -> Skills {
         let (levels, passion) = start(uuid, job);
-        Skills { xp: levels.map(xp_for), passion, used: [0; 7], faded: 0 }
+        let (c, a) = past_of(uuid, job);
+        Skills { xp: levels.map(xp_for), passion, used: [0; N], faded: 0, past: Some((c.id.to_string(), a.map_or(String::new(), |a| a.id.to_string()))) }
     }
 
     pub fn level(&self, s: Skill) -> u8 {
@@ -224,7 +250,7 @@ impl Skills {
             return;
         }
         self.faded = now;
-        for i in 0..7 {
+        for i in 0..N {
             if now - self.used[i] >= day || now < self.used[i] {
                 let l = level_of(self.xp[i]);
                 self.xp[i] = (self.xp[i] - fade(l)).max(xp_for(l.saturating_sub(1)));
@@ -241,17 +267,19 @@ impl Skills {
     }
 
     pub fn to_json(&self) -> Value {
-        json!({ "xp": self.xp.to_vec(), "passion": self.passion.to_vec(), "used": self.used.to_vec(), "faded": self.faded })
+        json!({ "xp": self.xp.to_vec(), "passion": self.passion.to_vec(), "used": self.used.to_vec(), "faded": self.faded, "past": self.past.as_ref().map(|(c, a)| json!([c, a])) })
     }
 
     pub fn from_json(v: &Value) -> Option<Skills> {
-        let arr = |k: &str| v.get(k).and_then(Value::as_array).filter(|a| a.len() == 7);
+        let arr = |k: &str| v.get(k).and_then(Value::as_array).filter(|a| a.len() >= 7);
         let xp = arr("xp")?;
-        let mut s = Skills { xp: [0.0; 7], passion: [0; 7], used: [0; 7], faded: v.get("faded").and_then(Value::as_i64).unwrap_or(0) };
-        for i in 0..7 {
+        let mut s = Skills { xp: [0.0; N], passion: [0; N], used: [0; N], faded: v.get("faded").and_then(Value::as_i64).unwrap_or(0), past: None };
+        s.past = v.get("past").and_then(Value::as_array).and_then(|p| Some((p.first()?.as_str()?.to_string(), p.get(1)?.as_str()?.to_string())));
+        // Skills added since (healing) start at nothing.
+        for i in 0..N.min(xp.len()) {
             s.xp[i] = (xp[i].as_f64().unwrap_or(0.0) as f32).clamp(0.0, xp_for(20));
-            s.passion[i] = arr("passion").and_then(|a| a[i].as_u64()).unwrap_or(0).min(2) as u8;
-            s.used[i] = arr("used").and_then(|a| a[i].as_i64()).unwrap_or(0);
+            s.passion[i] = arr("passion").and_then(|a| a.get(i)?.as_u64()).unwrap_or(0).min(2) as u8;
+            s.used[i] = arr("used").and_then(|a| a.get(i)?.as_i64()).unwrap_or(0);
         }
         Some(s)
     }
@@ -278,7 +306,7 @@ mod tests {
         assert_eq!(level_of(54_999.0), 9);
         assert_eq!(level_of(55_000.0), 10);
         assert_eq!(level_of(1e9), 20);
-        let mut s = Skills { xp: [0.0; 7], passion: [0, 2, 0, 0, 0, 0, 0], used: [0; 7], faded: 0 };
+        let mut s = Skills { xp: [0.0; N], passion: [0, 2, 0, 0, 0, 0, 0, 0], used: [0; N], faded: 0, past: None };
         assert_eq!(s.practice(Skill::Woodcutting, 700.0, 5), Some(1));
         assert_eq!(s.practice(Skill::Farming, 700.0, 5), None);
         assert!(s.xp[1] > s.xp[0] * 4.0);

@@ -425,7 +425,7 @@ pub fn tick(host: &mut dyn ServerHost) {
     for (id, entry_job, place) in at_work {
         let Some(me) = host.entity(id) else { continue };
         // In a break it does no work (see `minds`).
-        if crate::minds::breaking(id).is_some() {
+        if crate::minds::breaking(id).is_some() || crate::healers::bedridden(id) {
             continue;
         }
         let Some(job) = entry_job.as_deref().and_then(Job::parse).or_else(|| job_of(host, me)) else { continue };

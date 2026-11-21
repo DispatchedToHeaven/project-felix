@@ -248,6 +248,8 @@ pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
         // It says how it really feels: its mood, what is on its mind, its traits (see `minds`).
         json!({ "text": "How are you?", "actions": [ { "mind": true } ] }),
         json!({ "text": "What are you good at?", "actions": [ { "skills": true } ] }),
+        json!({ "text": "Are you hurt?", "actions": [ { "health": "ask" } ] }),
+        json!({ "text": "Let me patch you up.", "actions": [ { "health": "tend" } ] }),
         json!({ "text": "About the village...", "goto": "village" }),
         json!({ "text": "Have an apple.", "if": { "item": "minecraft:apple" }, "actions": [ { "take": "minecraft:apple" }, { "feel": "gift" } ], "goto": "thanks" }),
         json!({ "text": "I'm sorry.", "if": { "all": [ { "not": fine }, { "fault": true } ] }, "actions": [ { "feel": "apology" } ], "goto": "sorry" }),

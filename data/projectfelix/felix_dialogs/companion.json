@@ -104,6 +104,22 @@
           ]
         },
         {
+          "text": "Are you hurt?",
+          "actions": [
+            {
+              "health": "ask"
+            }
+          ]
+        },
+        {
+          "text": "Let me patch you up.",
+          "actions": [
+            {
+              "health": "tend"
+            }
+          ]
+        },
+        {
           "text": "About the village...",
           "goto": "village"
         },

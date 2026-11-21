@@ -175,6 +175,7 @@ pub const THOUGHTS: &[Thought] = &[
     t("fought", "Got into a fight", -6.0, DAY, 2),
     t("funeral", "Said goodbye", 4.0, 2 * DAY, 1),
     t("wedding", "A lovely wedding", 5.0, DAY, 1),
+    t("cared_for", "Was cared for", 3.0, DAY, 1),
     t("liked_work", "Good day's work", 3.0, DAY / 2, 1),
     // Now.
     t("hungry", "Hungry", -6.0, 0, 1),
@@ -199,6 +200,7 @@ pub const THOUGHTS: &[Thought] = &[
     t("night_good", "Loves the night", 6.0, 0, 1),
     t("with_love", "Has someone", 4.0, 0, 1),
     t("rival_near", "A rival nearby", -3.0, 0, 1),
+    t("ill", "Feeling ill", -8.0, 0, 1),
     t("work_like", "Doing work it likes", 5.0, 0, 1),
     t("work_love", "Doing work it loves", 9.0, 0, 1),
     t("cheerful", "Cheerful", 6.0, 0, 1),

@@ -750,6 +750,11 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
                     crate::chiefs::talk(host, npc, p, what);
                 }
             }
+            Action::Health(what) => {
+                if let Some(p) = player {
+                    crate::healers::talk(host, npc, p, what);
+                }
+            }
             Action::Shop(id) => {
                 if let Some(p) = player {
                     crate::shops::board(host, p, npc, id);

@@ -62,6 +62,15 @@ pub fn of(host: &mut dyn ServerHost, npc: EntityRef) -> Skills {
         return s;
     }
     let s = match SKILLS.get(host, Holder::Entity(npc.id())).ok().flatten() {
+        // Made before pasts were kept: the past it had then.
+        Some(mut s) if s.past.is_none() => {
+            let uuid = npc.uuid(host).unwrap_or(0);
+            let job = job_name(host, npc);
+            let (c, a) = skill::past_in(uuid, job.as_deref(), skill::LEGACY.0, skill::LEGACY.1);
+            s.past = Some((c.id.to_string(), a.map_or(String::new(), |a| a.id.to_string())));
+            let _ = SKILLS.set(host, Holder::Entity(npc.id()), Some(s.clone()));
+            s
+        }
         Some(s) => s,
         None => {
             let uuid = npc.uuid(host).unwrap_or(0);
@@ -135,7 +144,7 @@ pub fn work_thought(host: &mut dyn ServerHost, npc: EntityRef) -> Option<&'stati
 pub fn tell(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef) {
     let uuid = npc.uuid(host).unwrap_or(0);
     let job = job_name(host, npc);
-    let (child, adult) = skill::past_of(uuid, job.as_deref());
+    let (child, adult) = of(host, npc).past.as_ref().and_then(|(c, a)| skill::past_named(c, a)).unwrap_or_else(|| skill::past_of(uuid, job.as_deref()));
     let past = match adult {
         Some(a) => format!("{}, {}.", child.says, a.says),
         None => format!("{}.", child.says),
@@ -189,7 +198,7 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
             let k = of(host, first);
             let uuid = first.uuid(host).unwrap_or(0);
             let job = job_name(host, first);
-            let (child, adult) = skill::past_of(uuid, job.as_deref());
+            let (child, adult) = of(host, first).past.as_ref().and_then(|(c, a)| skill::past_named(c, a)).unwrap_or_else(|| skill::past_of(uuid, job.as_deref()));
             let name = first.name(&*host).unwrap_or_else(|| "NPC".into());
             let list: Vec<String> = skill::SKILLS
                 .iter()
@@ -212,7 +221,7 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
                 _ => None,
             });
             let (Some(s), Some(l)) = (s, l) else {
-                let _ = host.commands().feedback(Text::literal("Skills: farming, woodcutting, fishing, cooking, building, trading, talking."));
+                let _ = host.commands().feedback(Text::literal("Skills: farming, woodcutting, fishing, cooking, building, trading, talking, healing."));
                 return Flow::Cancel;
             };
             for n in &npcs {

@@ -101,6 +101,11 @@ pub fn breaking(id: u32) -> Option<Break> {
     STATE.lock().ok()?.minds.get(&id)?.breaking()
 }
 
+/// How rested a loaded NPC is (0..100).
+pub fn rest(id: u32) -> Option<f32> {
+    STATE.lock().ok()?.minds.get(&id).map(|m| m.rest)
+}
+
 /// A loaded NPC's mood (none: not looked at yet).
 pub fn mood(id: u32) -> Option<f32> {
     STATE.lock().ok()?.minds.get(&id).map(|m| m.mood)
@@ -310,6 +315,10 @@ fn current(host: &mut dyn ServerHost, npc: EntityRef, m: &mut Mind, traits: &[Tr
     }
     if crate::families::partner_name(host, npc).is_some() {
         out.push("with_love");
+    }
+    // Sick (see `healers`).
+    if crate::healers::sick(id) {
+        out.push("ill");
     }
     // A rival within 8 blocks (see `social`).
     if let Some(p) = npc.position(&*host) {

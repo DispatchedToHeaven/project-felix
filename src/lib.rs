@@ -45,6 +45,8 @@
 //! - `social` is what NPCs say to each other (chat, heart-to-hearts, insults, fights; no mod API
 //!   types); `heart` has them say it, `families` part couples who fall out, `chiefs` holds
 //!   weddings and goodbyes.
+//! - `health` is wounds, infections, sickness and scars (no mod API types); `healers` keeps them
+//!   on the server: hits become wounds, the sick keep to bed, the best healer about tends them.
 //! - `remark` is what companions say on the way (no mod API types); `companions` has them say it
 //!   and help their hurt player.
 //! - `bond` is how close an NPC and a player are, up to romance (no mod API types); `bonds` keeps it.
@@ -122,6 +124,8 @@ pub mod doors;
 pub mod chief;
 pub mod chiefs;
 pub mod social;
+pub mod health;
+pub mod healers;
 pub mod job;
 pub mod jobs;
 pub mod geo;
@@ -248,6 +252,7 @@ impl Hooks for Felix {
         minds::register_commands(e);
         skills::register_commands(e);
         chiefs::register_commands(e);
+        healers::register_commands(e);
         builds::register_commands(e);
         squad::register_commands(e);
         families::register_commands(e);
@@ -285,6 +290,9 @@ impl Hooks for Felix {
             return Flow::Cancel;
         }
         if let Flow::Cancel = builds::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = healers::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = chiefs::run_command(host, e) {
@@ -378,6 +386,7 @@ impl Hooks for Felix {
             minds::tick(host);
             skills::tick(host);
             doors::tick(host);
+            healers::tick(host);
             squad::tick(host);
             families::tick(host);
             bonds::tick(host);
@@ -413,6 +422,7 @@ impl Hooks for Felix {
             companion::forget(e.entity);
             minds::forget(e.entity);
             skills::forget(e.entity);
+            healers::forget(e.entity);
             gear::forget(e.entity);
             speech::forget(e.entity);
             builds::forget(e.entity);
@@ -451,6 +461,7 @@ impl Hooks for Felix {
         skills::clear();
         doors::clear();
         chiefs::clear();
+        healers::clear();
         quests::clear();
         routines::clear();
         rulebook::clear();
@@ -475,6 +486,10 @@ impl Hooks for Felix {
     /// Armour an NPC wears takes its share of a hit (the game doesn't count an NPC's armour).
     fn living_damage_pre(&self, _level: &mut dyn LevelRandomHost, e: &mut LivingDamagePreEvent<'_>) {
         gear::on_damage_pre(e);
+        // What gets through is a wound (see `healers`).
+        if e.kind == companion::NPC {
+            healers::on_damage(e.entity, e.container.new_damage(), e.source.causing > 0);
+        }
     }
 
     fn living_damage_post(&self, _level: &mut dyn LevelRandomHost, e: &mut LivingDamagePostEvent<'_>) {
