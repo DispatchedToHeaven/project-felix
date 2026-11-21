@@ -3,7 +3,7 @@
 //! Each village has its own tale. Days go in cycles of ten: five when trouble may come, five
 //! quieter ones. On any day something may happen: a wanderer asks to stay (likelier the smaller
 //! the village), a trade caravan comes by, a few stray animals wander in; and on the restless days
-//! raiders come (more of them the richer and older the village), a blight withers the crops, a
+//! raiders come (more of them, and better armed, the richer and older the village), a blight withers the crops, a
 //! sickness goes round, or the stores spoil. Where there are other villages, neighbours may fall
 //! out over something, and friends send food to a village that is short of it (see `faction`).
 //! The first days are spared, trouble keeps a few days
@@ -224,7 +224,24 @@ pub fn pick(t: &Teller, w: &World, roll: u64) -> Option<Incident> {
 /// How many raiders come, and how many of them shoot: more the richer and older the village.
 pub fn raiders(w: &World, days_in: i64) -> (u32, u32) {
     let n = (1 + w.people as u64 / 4 + wealth(w) / 150 + days_in.max(0) as u64 / 10).clamp(1, 8) as u32;
-    (n, n / 3)
+    (n, (n + 1) / 3)
+}
+
+/// What the `k`th raider carries (the first `ranged` of them guns), `days_in` days into the
+/// village's tale: blades and flintlocks at first; later some come with better guns, their leader
+/// (the first) soonest.
+pub fn raider_arms(k: u32, ranged: u32, days_in: i64, roll: u64) -> &'static str {
+    if k >= ranged {
+        return ["minecraft:iron_sword", "minecraft:stone_axe", "minecraft:iron_axe", "minecraft:stone_sword"][(roll.wrapping_add(u64::from(k)) % 4) as usize];
+    }
+    let modern = days_in >= 40 || (k == 0 && days_in >= 20);
+    let guns = if modern { ["projectfelix:pistol", "projectfelix:shotgun", "projectfelix:submachine_gun"] } else { ["projectfelix:flintlock_pistol", "projectfelix:musket", "projectfelix:blunderbuss"] };
+    guns[((roll >> 8).wrapping_add(u64::from(k)) % 3) as usize]
+}
+
+/// What the raiders still standing (`left` of them) ask to go away, in emeralds.
+pub fn payoff(left: u32) -> u32 {
+    (4 * left).max(8)
 }
 
 /// How long a village has to drive raiders off before they plunder it and leave (game time).
@@ -364,6 +381,15 @@ mod tests {
         let (n, ranged) = raiders(&big, 40);
         assert!(n >= 6 && ranged >= 2, "{n} {ranged}");
         assert!(raiders(&big, 400).0 <= 8);
+        // Two bring one gun; blades for the rest; better guns late, the leader's first.
+        assert_eq!(raiders(&World { people: 5, ..world(5) }, 3).1, 1);
+        assert!(raider_arms(2, 1, 5, 77).starts_with("minecraft:"));
+        assert!(raider_arms(0, 1, 5, 77).contains("flintlock") || raider_arms(0, 1, 5, 77).contains("musket") || raider_arms(0, 1, 5, 77).contains("blunderbuss"));
+        let modern = ["projectfelix:pistol", "projectfelix:shotgun", "projectfelix:submachine_gun"];
+        assert!(modern.contains(&raider_arms(0, 2, 25, 77)) && !modern.contains(&raider_arms(1, 2, 25, 77)));
+        assert!(modern.contains(&raider_arms(1, 2, 45, 77)));
+        assert_eq!(payoff(1), 8);
+        assert_eq!(payoff(5), 20);
     }
 
     #[test]

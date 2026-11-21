@@ -29,6 +29,8 @@ struct State {
     holding: HashMap<u32, u128>,
     /// No fighting before this, after falling back.
     calm: HashMap<u32, i64>,
+    /// Those with a gun and nobody's orders, walking up to what they would shoot.
+    advancing: HashSet<u32>,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -240,24 +242,42 @@ pub fn tick(host: &mut dyn ServerHost) {
             }
         }
         let Some((tid, last)) = STATE.lock().ok().and_then(|s| s.aims.get(id).copied()) else { continue };
-        let target = host.entity(tid).filter(|t| LivingRef::new(*t).alive(&*host) == Some(true));
-        let (Some(target), Some(at)) = (target, me.position(&*host)) else {
+        // One with a gun and nobody to place it (a guard, a raider) walks up to its shot itself.
+        let own_way = gun.is_some() && OWNERS.lock().is_ok_and(|o| !o.contains_key(id));
+        let let_go = |host: &mut dyn ServerHost| {
             if let Ok(mut s) = STATE.lock() {
                 s.aims.remove(id);
+                if s.advancing.remove(id) {
+                    companion::go_to(*id, None);
+                }
             }
+            let _ = host;
+        };
+        let target = host.entity(tid).filter(|t| LivingRef::new(*t).alive(&*host) == Some(true));
+        let (Some(target), Some(at)) = (target, me.position(&*host)) else {
+            let_go(host);
             continue;
         };
         let Some(to) = target.position(&*host) else { continue };
         let (dx, dz) = (to[0] - at[0], to[2] - at[2]);
         let flat = (dx * dx + dz * dz).sqrt();
-        if flat > range * 1.5 {
-            if let Ok(mut s) = STATE.lock() {
-                s.aims.remove(id);
-            }
+        if flat > if own_way { 64.0 } else { range * 1.5 } {
+            let_go(host);
             continue;
         }
         let _ = mob.look_at(host, [to[0], to[1] + 1.2, to[2]]);
-        if flat > range || LivingRef::new(me).has_line_of_sight(&*host, target) != Some(true) {
+        let sees = LivingRef::new(me).has_line_of_sight(&*host, target) == Some(true);
+        if own_way {
+            if flat > range * 0.8 || !sees {
+                companion::go_to(*id, Some(to));
+                if let Ok(mut s) = STATE.lock() {
+                    s.advancing.insert(*id);
+                }
+            } else if STATE.lock().is_ok_and(|mut s| s.advancing.remove(id)) {
+                companion::go_to(*id, None);
+            }
+        }
+        if flat > range || !sees {
             continue;
         }
         if let Some(g) = gun {
@@ -278,6 +298,7 @@ pub fn tick(host: &mut dyn ServerHost) {
     if let Ok(mut s) = STATE.lock() {
         s.aims.retain(|id, _| npcs.contains(id));
         s.calm.retain(|id, t| npcs.contains(id) && *t > 0);
+        s.advancing.retain(|id| npcs.contains(id));
         s.holding.retain(|id, _| npcs.contains(id) && companion::mode_of(*id) == Mode::Wait);
     }
 }

@@ -133,7 +133,8 @@ fn hurt(host: &mut dyn ServerHost, npc: EntityRef, n: f32) {
     if let Ok(mut s) = STATE.lock() {
         s.own.insert(npc.id());
     }
-    crate::talk::queue(format!("damage {} {n:.1} minecraft:generic", crate::talk::uuid_text(u)));
+    // (One gone meanwhile is no failure.)
+    crate::talk::queue_try(format!("damage {} {n:.1} minecraft:generic", crate::talk::uuid_text(u)));
 }
 
 fn tell_near(host: &mut dyn ServerHost, npc: EntityRef, line: &str) {
@@ -245,7 +246,8 @@ pub fn tick(host: &mut dyn ServerHost) {
                 s.kept.remove(id);
             }
         }
-        if h.needs_tending(now) {
+        // (Nobody of the village tends those who came to rob it.)
+        if h.needs_tending(now) && !npc.tags(&*host).unwrap_or_default().iter().any(|t| t == "felix_raider") {
             patients.push(*id);
         }
         put(host, npc, h);

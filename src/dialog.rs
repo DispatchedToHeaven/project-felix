@@ -172,6 +172,8 @@ pub enum Action {
     Village(String),
     /// Its village among others: `standing`, `ties`, `errand`, `word`, `help`.
     Faction(String),
+    /// A raider's terms: `price` (it names them), `pay` (the player pays the raiders off).
+    Raid(String),
     /// Its health: `ask` (it tells), `tend` (the player patches it up).
     Health(String),
     Remember(String, String),
@@ -432,7 +434,7 @@ pub fn commands(action: &Action, player: &str, npc: &str) -> Vec<String> {
         Action::Tag(t) => vec![format!("tag {player} add {t}")],
         Action::Untag(t) => vec![format!("tag {player} remove {t}")],
         Action::Sound(s) => vec![format!("execute as {npc} at @s run playsound {s} neutral @a ~ ~ ~")],
-        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Place(_) | Action::Shop(_) | Action::Trade(_) | Action::Gear(_) | Action::Stats | Action::Mind | Action::Skills | Action::Village(_) | Action::Faction(_) | Action::Health(_) | Action::Remember(..) | Action::Forget(_) | Action::Dialog(_) | Action::Feed | Action::Family | Action::Gift | Action::Tastes | Action::AskOut | Action::Propose | Action::Part | Action::Reminisce => Vec::new(),
+        Action::Animation(_) | Action::Order(_) | Action::Scene(_) | Action::Game(..) | Action::Sport(_) | Action::EditAnimation(_) | Action::JoinGame | Action::OpenGame | Action::Feel(_) | Action::Relation(_) | Action::News | Action::Quests(_) | Action::Quest(_) | Action::HandIn | Action::GiveUp | Action::Place(_) | Action::Shop(_) | Action::Trade(_) | Action::Gear(_) | Action::Stats | Action::Mind | Action::Skills | Action::Village(_) | Action::Faction(_) | Action::Raid(_) | Action::Health(_) | Action::Remember(..) | Action::Forget(_) | Action::Dialog(_) | Action::Feed | Action::Family | Action::Gift | Action::Tastes | Action::AskOut | Action::Propose | Action::Part | Action::Reminisce => Vec::new(),
     }
 }
 
@@ -634,6 +636,8 @@ pub fn read_actions(v: Option<&Value>) -> Result<Vec<Action>, String> {
                 Action::Skills
             } else if let Some(v) = s("village") {
                 Action::Village(v)
+            } else if let Some(v) = s("raid") {
+                Action::Raid(v)
             } else if let Some(v) = s("faction") {
                 Action::Faction(v)
             } else if let Some(v) = s("health") {

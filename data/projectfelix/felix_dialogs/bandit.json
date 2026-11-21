@@ -1,0 +1,13 @@
+{
+  "start": "hello",
+  "nodes": {
+    "hello": {
+      "text": "Stay out of our way, @player. Or pay for the trouble we've been put to.",
+      "options": [
+        { "text": "How much to leave these folk alone?", "actions": [ { "raid": "price" } ] },
+        { "text": "Take the emeralds and go.", "actions": [ { "raid": "pay" } ] },
+        { "text": "Never mind." }
+      ]
+    }
+  }
+}

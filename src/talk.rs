@@ -750,6 +750,11 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
                     crate::chiefs::talk(host, npc, p, what);
                 }
             }
+            Action::Raid(what) => {
+                if let Some(p) = player {
+                    crate::storyteller::talk(host, npc, p, what);
+                }
+            }
             Action::Faction(what) => {
                 if let Some(p) = player {
                     crate::factions::talk(host, npc, p, what);

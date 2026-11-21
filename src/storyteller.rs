@@ -1,7 +1,7 @@
 //! The storyteller on the server (see `story`): once a day, after its head's morning, each Felix
 //! village may have something come to it. A wanderer settles (sometimes hurt); a caravan stops
 //! for a day, sells to players and swaps with the village what it lacks; stray animals wander in;
-//! raiders come at the village: its guards and those who can fight take up arms, the rest run
+//! raiders (people, with names and arms of their own, who can be paid to go) come at the village: its guards and those who can fight take up arms, the rest run
 //! home, a friendly village sends help, friendly players hear of it; raiders who lose half their
 //! number run, raiders not driven off in time plunder the stores (see `defence`), and those who
 //! fight them are thanked; a blight sets the crops back; a sickness goes round; rot gets
@@ -48,6 +48,8 @@ struct State {
     militia: HashMap<String, Vec<u32>>,
     /// The villages whose helpers have their blades.
     armed: Vec<String>,
+    /// The villages whose raiders were just paid to go, and by whom.
+    paid: HashMap<String, String>,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -279,12 +281,36 @@ fn happen(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[Ent
             let (n, ranged) = story::raiders(&w, w.day - tale(name, w.day).teller.since);
             // From out of sight if there is dry land there, else nearer.
             let Some(at) = [32.0, 24.0, 16.0].into_iter().find_map(|d| spot_out(host, center, d, r)) else { return None };
-            let tags = format!("Tags:[\"felix_raider\",\"{}\"],PersistenceRequired:1b,CanJoinRaid:0b", tag_of(name, "raider"));
+            // Raiders are people: each with a name, and arms by what the village is worth to them
+            // (see `story::raider_arms`); the first leads them, and is the hardest to bring down.
+            let days_in = w.day - tale(name, w.day).teller.since;
+            let mut taken: Vec<String> = people.iter().map(|e| name_of(&*host, *e)).collect();
+            let look = companion::Look::of_model(companion::DEFAULT_MODEL);
             let mut came = 0;
             for k in 0..n {
-                let kind = if k < ranged { "minecraft:pillager" } else { "minecraft:vindicator" };
-                if run(host, &format!("summon {kind} {} {} {} {{{tags}}}", at[0] as f64 + 0.5 + (k % 3) as f64, at[1], at[2] as f64 + 0.5 + (k / 3) as f64)) {
-                    came += 1;
+                let who = crate::settle::newcomer_name((r >> 12).wrapping_add(u64::from(k) * 17), &taken);
+                taken.push(who.clone());
+                let spec = NpcSpec {
+                    name: who,
+                    model: look.model.clone(),
+                    texture: look.texture.clone(),
+                    dialog: Some("projectfelix:bandit".into()),
+                    character: Some("projectfelix:touchy".into()),
+                    places: vec![("home".into(), [0.0; 3])],
+                    tags: vec!["felix_raider".into(), tag_of(name, "raider")],
+                    // (They are sent on to the middle of the village once they are there: see `raid_tick`.)
+                    orders: "wait".into(),
+                    level: if k == 0 && n >= 3 { 4 } else { 0 },
+                    ..NpcSpec::default()
+                };
+                let anchor = [f64::from(at[0]) + 0.5 + f64::from(k % 3), f64::from(at[1]), f64::from(at[2]) + 0.5 + f64::from(k / 3)];
+                let Some(id) = crate::villages::settle(host, OVERWORLD, anchor, spec) else { continue };
+                came += 1;
+                if let Some(u) = host.entity(id).and_then(|e| e.uuid(host)).map(crate::talk::uuid_text) {
+                    let arms = story::raider_arms(k, ranged, days_in, r);
+                    crate::talk::queue_try(format!("item replace entity {u} weapon.mainhand with {arms}"));
+                    // What it carried may be found by its body.
+                    crate::talk::queue_try(format!("data merge entity {u} {{drop_chances:{{mainhand:0.5f}}}}"));
                 }
             }
             if came == 0 {
@@ -442,6 +468,34 @@ fn short(item: &str) -> String {
     item.trim_start_matches("minecraft:").replace('_', " ")
 }
 
+/// What a raider says of its terms (the `raid` dialog action): `price` (what the raiders still
+/// standing ask to go), `pay` (the player pays it in emeralds: the raid is over, nothing taken).
+pub fn talk(host: &mut dyn ServerHost, npc: EntityRef, player: mod_api::PlayerRef, what: &str) {
+    read(host);
+    let tags = npc.tags(&*host).unwrap_or_default();
+    let village = crate::settlements::list(host).into_iter().find(|(_, n)| tags.contains(&tag_of(n, "raider")));
+    let Some((center, name)) = village.filter(|(_, n)| raided_now(n)) else {
+        crate::heart::say_to(host, npc, player, "We've no business with you.");
+        return;
+    };
+    let price = story::payoff(tagged(host, center, &tag_of(&name, "raider")).len() as u32);
+    let pname = player.name(&*host).unwrap_or_default();
+    let have: u32 = player.inventory(&*host).unwrap_or_default().iter().filter(|s| s.item().id(&*host) == "minecraft:emerald").map(|s| s.count()).sum();
+    let line = if what != "pay" {
+        format!("{price} emeralds, and we walk away from {name}. Otherwise we take what we like.")
+    } else if have < price {
+        format!("That's {have}. I said {price}.")
+    } else {
+        crate::talk::queue(format!("clear {pname} minecraft:emerald {price}"));
+        if let Ok(mut s) = STATE.lock() {
+            s.paid.insert(name.clone(), pname.clone());
+        }
+        crate::factions::deed(host, &name, player, crate::faction::Deed::PaidOff);
+        "A pleasure. Come on, we're done here.".to_string()
+    };
+    crate::heart::say_to(host, npc, player, &line);
+}
+
 /// Whether raiders are at village `name` now.
 pub fn raided_now(name: &str) -> bool {
     STATE.lock().is_ok_and(|s| s.tales.get(name).is_some_and(|t| t.raid.is_some()))
@@ -488,8 +542,22 @@ fn raid_tick(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[
     {
         s.armed.push(name.to_string());
     }
+    // (Just come, they may not be told from others yet.)
+    if raiders.is_empty() && now < end - story::RAID_LASTS + 60 {
+        return;
+    }
+    // Raiders make for the middle of the village and hold it, and those who came to help stand
+    // there with its folk: a post to go to, and to fight about (see `companion`).
+    let y = ground(host, center[0], center[1]).map_or(64.0, f64::from);
+    for (k, e) in raiders.iter().chain(helpers.iter()).enumerate() {
+        if companion::mode_of(e.id()) != companion::Mode::Live {
+            let post = [f64::from(center[0]) + 0.5 + 2.0 * (k % 3) as f64 - 2.0, y, f64::from(center[1]) + 0.5 + 2.0 * (k / 3) as f64 - 2.0];
+            companion::set_live(host, *e, post, companion::LiveDo::Guard);
+        }
+    }
+    let paid = STATE.lock().ok().and_then(|mut s| s.paid.remove(name));
     let routed = crate::defence::routed(t.raiders, raiders.len() as u32);
-    let over = raiders.is_empty() || routed || now >= end;
+    let over = raiders.is_empty() || routed || now >= end || paid.is_some();
     if over {
         let won = raiders.is_empty() || routed;
         for e in &raiders {
@@ -511,7 +579,10 @@ fn raid_tick(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[
                 crate::minds::remember(host, *e, "fought");
             }
         }
-        let line = if won {
+        let line = if let Some(p) = &paid {
+            remember_all(host, people, "spared");
+            format!("{p} pays the raiders off: they leave {name} be.")
+        } else if won {
             remember_all(host, people, "raid_won");
             if let Some(h) = crate::chiefs::head_of(host, name, people) {
                 crate::heart::say_aloud(host, h, "They're gone! Well done, everyone.");

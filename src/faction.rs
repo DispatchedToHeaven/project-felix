@@ -107,6 +107,8 @@ pub enum Deed {
     QuestDone,
     /// Carried word between it and another village.
     Envoy,
+    /// Paid raiders to leave it be.
+    PaidOff,
     Hit,
     Killed,
 }
@@ -120,6 +122,7 @@ impl Deed {
             Deed::Tended => 2,
             Deed::QuestDone => 4,
             Deed::Envoy => 6,
+            Deed::PaidOff => 5,
             Deed::Hit => -4,
             Deed::Killed => -40,
         }
