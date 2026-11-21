@@ -176,6 +176,12 @@ pub const THOUGHTS: &[Thought] = &[
     t("funeral", "Said goodbye", 4.0, 2 * DAY, 1),
     t("wedding", "A lovely wedding", 5.0, DAY, 1),
     t("cared_for", "Was cared for", 3.0, DAY, 1),
+    t("raided", "Raiders came", -6.0, 2 * DAY, 1),
+    t("raid_won", "Drove off raiders", 6.0, 2 * DAY, 1),
+    t("caravan", "A caravan came by", 3.0, DAY, 1),
+    t("crops_lost", "The crops failed", -4.0, 2 * DAY, 1),
+    t("stores_spoiled", "Food went bad", -3.0, DAY, 1),
+    t("new_face", "Someone new came", 2.0, DAY, 1),
     t("liked_work", "Good day's work", 3.0, DAY / 2, 1),
     // Now.
     t("hungry", "Hungry", -6.0, 0, 1),

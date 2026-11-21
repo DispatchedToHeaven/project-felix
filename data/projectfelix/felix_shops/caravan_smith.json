@@ -1,0 +1,16 @@
+{
+  "currency": "minecraft:emerald",
+  "restock": 20,
+  "sells": [
+    { "item": "minecraft:iron_axe", "count": 1, "price": 3, "stock": 2 },
+    { "item": "minecraft:iron_pickaxe", "count": 1, "price": 4, "stock": 2 },
+    { "item": "minecraft:iron_sword", "count": 1, "price": 4, "stock": 2 },
+    { "item": "minecraft:shield", "count": 1, "price": 3, "stock": 2 },
+    { "item": "minecraft:chainmail_chestplate", "count": 1, "price": 7, "stock": 1 }
+  ],
+  "buys": [
+    { "item": "minecraft:coal", "count": 15, "price": 1, "stock": 20 },
+    { "item": "minecraft:iron_ingot", "count": 4, "price": 1, "stock": 12 },
+    { "item": "minecraft:copper_ingot", "count": 10, "price": 1, "stock": 8 }
+  ]
+}

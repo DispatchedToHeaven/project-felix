@@ -1,0 +1,16 @@
+{
+  "currency": "minecraft:emerald",
+  "restock": 20,
+  "sells": [
+    { "item": "minecraft:honey_bottle", "count": 2, "price": 1, "stock": 6 },
+    { "item": "minecraft:glow_berries", "count": 6, "price": 1, "stock": 4 },
+    { "item": "minecraft:sweet_berries", "count": 10, "price": 1, "stock": 4 },
+    { "item": "minecraft:golden_apple", "count": 1, "price": 10, "stock": 1 },
+    { "item": "minecraft:glistering_melon_slice", "count": 2, "price": 3, "stock": 2 }
+  ],
+  "buys": [
+    { "item": "minecraft:dandelion", "count": 12, "price": 1, "stock": 6 },
+    { "item": "minecraft:poppy", "count": 12, "price": 1, "stock": 6 },
+    { "item": "minecraft:brown_mushroom", "count": 8, "price": 1, "stock": 6 }
+  ]
+}

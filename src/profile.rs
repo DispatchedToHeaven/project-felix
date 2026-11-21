@@ -275,6 +275,7 @@ pub fn social(back: &str) -> (Vec<Value>, Vec<(String, Value)>) {
             { "text": "Something else...", "goto": back } ] })),
         ("village".to_string(), json!({ "text": "Yes?", "options": [
             { "text": "Who leads this village?", "actions": [ { "village": "head" } ] },
+            { "text": "What's been happening?", "actions": [ { "village": "news" } ] },
             { "text": "How is the village doing?", "actions": [ { "village": "report" } ] },
             { "text": "Does the village need anything?", "actions": [ { "village": "needs" } ] },
             { "text": "I brought something for the village.", "actions": [ { "village": "give" } ] },

@@ -782,6 +782,14 @@
           ]
         },
         {
+          "text": "What's been happening?",
+          "actions": [
+            {
+              "village": "news"
+            }
+          ]
+        },
+        {
           "text": "How is the village doing?",
           "actions": [
             {

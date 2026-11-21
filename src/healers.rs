@@ -97,6 +97,17 @@ pub fn bedridden(id: u32) -> bool {
     STATE.lock().ok().is_some_and(|s| s.kept.contains(&id))
 }
 
+/// NPC `npc` falls sick with `what`: false if it was sick already.
+pub fn make_sick(host: &mut dyn ServerHost, npc: EntityRef, what: &str) -> bool {
+    let mut h = get(host, npc);
+    if h.sick.is_some() {
+        return false;
+    }
+    h.fall_sick(what);
+    put(host, npc, h);
+    true
+}
+
 /// Whether a loaded NPC is sick.
 pub fn sick(id: u32) -> bool {
     STATE.lock().ok().is_some_and(|s| s.cache.get(&id).is_some_and(|h| h.sick.is_some()))

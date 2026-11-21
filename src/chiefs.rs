@@ -2,7 +2,7 @@
 //! grown-ups, and each morning the head sees to the village: calls a festival when spirits are low,
 //! has a cabin built (from the village's logs) when someone slept without a bed, gives work to
 //! those with none, takes in a newcomer when there is room, and asks travellers for what the village
-//! lacks. Players ask any villager who leads them, and the head how the village is doing and what
+//! lacks. Players ask any villager who leads them and what has happened lately, and the head how the village is doing and what
 //! it needs, and bring it. `/felix village`, `/felix village elect|morning|newcomer|build`.
 use crate::chief::{self, Candidate, Decision, Report};
 use crate::companion::{self, DEFAULT_MODEL, Look};
@@ -155,13 +155,13 @@ fn tag_of(name: &str) -> String {
 }
 
 /// The loaded people of village `name`.
-fn members(host: &mut dyn ServerHost, name: &str) -> Vec<EntityRef> {
+pub fn members(host: &mut dyn ServerHost, name: &str) -> Vec<EntityRef> {
     let tag = tag_of(name);
     companion::npcs().into_iter().filter_map(|id| host.entity(id)).filter(|e| e.tags(&*host).unwrap_or_default().contains(&tag)).collect()
 }
 
 /// The village NPC `npc` belongs to, if any.
-fn village_of(host: &mut dyn ServerHost, npc: EntityRef) -> Option<String> {
+pub fn village_of(host: &mut dyn ServerHost, npc: EntityRef) -> Option<String> {
     let tags = npc.tags(&*host).unwrap_or_default();
     crate::settlements::list(host).into_iter().map(|(_, n)| n).find(|n| tags.contains(&tag_of(n)))
 }
@@ -187,7 +187,7 @@ fn name_of(host: &dyn mod_api::Host, e: EntityRef) -> String {
 }
 
 /// Says `line` to the players within 64 of the village middle.
-fn tell_near(host: &mut dyn ServerHost, center: [i32; 2], line: &str) {
+pub fn tell_near(host: &mut dyn ServerHost, center: [i32; 2], line: &str) {
     let Some(level) = host.level(OVERWORLD) else { return };
     for p in level.online_players(&*host).unwrap_or_default() {
         let near = p.entity().position(&*host).is_some_and(|q| (q[0] - center[0] as f64).powi(2) + (q[2] - center[1] as f64).powi(2) < 64.0 * 64.0);
@@ -232,7 +232,8 @@ fn elect(host: &mut dyn ServerHost, name: &str, people: &[EntityRef], center: [i
 }
 
 /// How the village stands.
-fn report(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[EntityRef], now: i64) -> Report {
+pub fn report(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[EntityRef], now: i64) -> Report {
+    read(host);
     let v = village(name);
     let head = v.head.as_ref().map(|h| h.0);
     let mut r = Report { people: people.len(), ..Report::default() };
@@ -276,10 +277,10 @@ fn report(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[Ent
     r
 }
 
-const LOGS: [&str; 6] = ["minecraft:oak_log", "minecraft:spruce_log", "minecraft:birch_log", "minecraft:jungle_log", "minecraft:acacia_log", "minecraft:dark_oak_log"];
+pub const LOGS: [&str; 6] = ["minecraft:oak_log", "minecraft:spruce_log", "minecraft:birch_log", "minecraft:jungle_log", "minecraft:acacia_log", "minecraft:dark_oak_log"];
 
 /// The village's chests (of its people with jobs).
-fn chests(host: &mut dyn ServerHost, people: &[EntityRef]) -> Vec<(mod_api::LevelRef, [i32; 3])> {
+pub fn chests(host: &mut dyn ServerHost, people: &[EntityRef]) -> Vec<(mod_api::LevelRef, [i32; 3])> {
     let mut out = Vec::new();
     for e in people {
         if let Some(c) = crate::jobs::chest_of(host, *e).flatten()
@@ -292,7 +293,7 @@ fn chests(host: &mut dyn ServerHost, people: &[EntityRef]) -> Vec<(mod_api::Leve
 }
 
 /// Takes `n` logs from the village's chests; false (and none taken) if it hasn't that many.
-fn take_logs(host: &mut dyn ServerHost, people: &[EntityRef], mut n: u64) -> bool {
+pub fn take_logs(host: &mut dyn ServerHost, people: &[EntityRef], mut n: u64) -> bool {
     let cs = chests(host, people);
     let have: u64 = cs.iter().map(|c| LOGS.iter().map(|l| crate::jobs::amount(host, *c, l)).sum::<u64>()).sum();
     if have < n {
@@ -429,6 +430,13 @@ fn finish_cabin(host: &mut dyn ServerHost, name: &str, people: &[EntityRef], b: 
 
 /// A newcomer comes to live in the village, to do `job`.
 fn newcomer(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[EntityRef], job: &str, now: i64) -> String {
+    newcomer_as(host, name, center, people, job, now, "a traveller").0
+}
+
+/// A newcomer (`what`: `a traveller`, `a wanderer`...) comes to live in the village, to do
+/// `job`: what is said, and the entity.
+pub fn newcomer_as(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[EntityRef], job: &str, now: i64, what: &str) -> (String, Option<u32>) {
+    read(host);
     let taken: Vec<String> = people.iter().map(|e| name_of(&*host, *e)).collect();
     let who = crate::settle::newcomer_name(now as u64 ^ center[0] as u64, &taken);
     // Its places: a worker's of that job, anyone's meeting place, the newest cabin (else the middle).
@@ -443,8 +451,8 @@ fn newcomer(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[E
         }
     }
     let v = village(name);
-    let Ok(h) = host.surface_heights(OVERWORLD, &[(center[0] + 2, center[1] + 2)], Heightmap::MotionBlockingNoLeaves) else { return String::new() };
-    let Some(Some(y)) = h.first().copied() else { return String::new() };
+    let Ok(h) = host.surface_heights(OVERWORLD, &[(center[0] + 2, center[1] + 2)], Heightmap::MotionBlockingNoLeaves) else { return (String::new(), None) };
+    let Some(Some(y)) = h.first().copied() else { return (String::new(), None) };
     let anchor = [center[0] as f64 + 2.5, y as f64, center[1] as f64 + 2.5];
     let rel = |p: [f64; 3]| [p[0] - anchor[0], p[1] - anchor[1], p[2] - anchor[2]];
     // No bed of its own yet: the head has a cabin built when it sleeps without one.
@@ -478,13 +486,29 @@ fn newcomer(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[E
         job: Some(job.to_string()),
         ..NpcSpec::default()
     };
-    crate::villages::settle(host, OVERWORLD, anchor, spec);
+    let id = crate::villages::settle(host, OVERWORLD, anchor, spec);
     let mut v = village(name);
     v.newcomer = now;
-    let line = format!("{who}, a traveller, has come to live in {name}.");
+    let line = format!("{who}, {what}, has come to live in {name}.");
     note(&mut v, now / DAY, &line);
     set_village(name, v);
-    line
+    (line, id)
+}
+
+/// Puts `line` in village `name`'s news (what its head tells of the last days), and saves.
+pub fn record(host: &mut dyn ServerHost, name: &str, now: i64, line: &str) {
+    read(host);
+    let mut v = village(name);
+    note(&mut v, now / DAY, line);
+    set_village(name, v);
+    write(host);
+}
+
+/// Village `name`'s head, if it is about.
+pub fn head_of(host: &mut dyn ServerHost, name: &str, people: &[EntityRef]) -> Option<EntityRef> {
+    read(host);
+    let (u, _) = village(name).head?;
+    people.iter().find(|e| e.uuid(host) == Some(u)).copied()
 }
 
 /// NPC `victim` died: its village says goodbye the next morning.
@@ -679,6 +703,15 @@ pub fn talk(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef, what: 
     let head_name = v.head.as_ref().map(|h| h.1.clone()).unwrap_or_else(|| "nobody yet".into());
     if what == "head" {
         let line = if is_head { format!("That would be me. I look after {name}.") } else { format!("{head_name} is our head. Ask them about {name}.") };
+        crate::heart::say_to(host, npc, player, &line);
+        return;
+    }
+    // The news anyone of the village tells: the last few things that happened.
+    if what == "news" {
+        let line = match v.log.len() {
+            0 => format!("Nothing much happens in {name}. Which suits us fine."),
+            n => v.log[n.saturating_sub(3)..].join(" "),
+        };
         crate::heart::say_to(host, npc, player, &line);
         return;
     }
