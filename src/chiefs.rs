@@ -43,6 +43,8 @@ struct Village {
     build: Option<Build>,
     wants: Vec<(String, u32)>,
     log: Vec<String>,
+    /// Who died, to be said goodbye to the next morning.
+    funerals: Vec<String>,
 }
 
 #[derive(Default)]
@@ -100,6 +102,7 @@ fn read(host: &mut dyn ServerHost) {
                     build,
                     wants: x.get("wants").and_then(Value::as_array).map(|a| a.iter().filter_map(|w| Some((w.get(0)?.as_str()?.to_string(), w.get(1)?.as_u64()? as u32))).collect()).unwrap_or_default(),
                     log: x.get("log").and_then(Value::as_array).map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+                    funerals: x.get("funerals").and_then(Value::as_array).map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).collect()).unwrap_or_default(),
                 },
             );
         }
@@ -124,6 +127,7 @@ fn write(host: &mut dyn ServerHost) {
                         "homes_for": b.homes_for.iter().map(|u| hex(*u)).collect::<Vec<_>>() })),
                     "wants": x.wants.iter().map(|(i, n)| json!([i, n])).collect::<Vec<_>>(),
                     "log": x.log,
+                    "funerals": x.funerals,
                 }),
             );
         }
@@ -483,8 +487,55 @@ fn newcomer(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[E
     line
 }
 
+/// NPC `victim` died: its village says goodbye the next morning.
+pub fn on_death(host: &mut dyn ServerHost, victim: EntityRef) {
+    read(host);
+    let Some(name) = village_of(host, victim) else { return };
+    let who = name_of(&*host, victim);
+    let mut v = village(&name);
+    v.funerals.push(who);
+    set_village(&name, v);
+    write(host);
+}
+
+/// NPCs `a` and `b` married: their village celebrates.
+pub fn wedding(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef) {
+    read(host);
+    let Some(name) = village_of(host, a) else { return };
+    let (na, nb) = (name_of(&*host, a), name_of(&*host, b));
+    let center = crate::settlements::list(host).into_iter().find(|(_, n)| *n == name).map(|(c, _)| c).unwrap_or([0, 0]);
+    let now = a.level(&*host).and_then(|l| l.game_time(&*host)).unwrap_or(0);
+    for e in members(host, &name) {
+        if e.id() != a.id() && e.id() != b.id() {
+            crate::minds::remember(host, e, "wedding");
+        }
+    }
+    let line = format!("{na} and {nb} are married! All of {name} celebrates.");
+    let mut v = village(&name);
+    note(&mut v, now / DAY, &line);
+    set_village(&name, v);
+    write(host);
+    tell_near(host, center, &line);
+}
+
 /// The head sees to the village this morning.
 fn morning(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[EntityRef], now: i64) {
+    // First, goodbyes for those who died: the head says a few words, everyone remembers.
+    let gone = std::mem::take(&mut village(name).funerals);
+    if !gone.is_empty() {
+        let mut v = village(name);
+        v.funerals.clear();
+        let line = format!("{name} says goodbye to {}.", gone.join(" and "));
+        note(&mut v, now / DAY, &line);
+        set_village(name, v);
+        for e in people {
+            crate::minds::remember(host, *e, "funeral");
+        }
+        if let Some(h) = village(name).head.and_then(|(u, _)| people.iter().find(|e| e.uuid(host) == Some(u)).copied()) {
+            crate::heart::say_aloud(host, h, &format!("We'll miss you, {}. Rest well.", gone.join(" and ")));
+        }
+        tell_near(host, center, &line);
+    }
     let r = report(host, name, center, people, now);
     let head = village(name).head.and_then(|(u, _)| people.iter().find(|e| e.uuid(host) == Some(u)).copied());
     let head_name = head.map(|h| name_of(&*host, h)).unwrap_or_else(|| "The village".into());

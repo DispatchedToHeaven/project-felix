@@ -311,6 +311,20 @@ fn current(host: &mut dyn ServerHost, npc: EntityRef, m: &mut Mind, traits: &[Tr
     if crate::families::partner_name(host, npc).is_some() {
         out.push("with_love");
     }
+    // A rival within 8 blocks (see `social`).
+    if let Some(p) = npc.position(&*host) {
+        for o in companion::npcs() {
+            if o == id {
+                continue;
+            }
+            let Some(e) = host.entity(o) else { continue };
+            let near = e.position(&*host).is_some_and(|q| (q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2) + (q[2] - p[2]).powi(2) < 64.0);
+            if near && e.uuid(host).is_some_and(|u| crate::heart::relation_of(id, u) <= crate::social::RIVAL_AT) {
+                out.push("rival_near");
+                break;
+            }
+        }
+    }
     // Doing work it likes (see `skills`).
     if let Some(t) = crate::skills::work_thought(host, npc) {
         out.push(t);

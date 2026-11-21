@@ -1204,6 +1204,8 @@ fn a_minute(host: &mut dyn ServerHost) {
 enum Talk {
     News { teller: u32, hearer: u32, news: News },
     Chat { speaker: u32, hearer: u32 },
+    /// Words of any kind, friends or not (see `social`).
+    Social,
 }
 
 fn online(host: &dyn mod_api::Host, near: EntityRef, uuid: u128) -> Option<PlayerRef> {
@@ -1242,7 +1244,7 @@ fn gossip(host: &mut dyn ServerHost, now: i64, only: Option<&[u32]>) -> usize {
     talks
 }
 
-/// NPCs `a` and `b` talk, if either counts the other a friend.
+/// NPCs `a` and `b` talk: friends tell their news or chat; anyone passes words (see `social`).
 fn talk(host: &mut dyn ServerHost, a: u32, b: u32, now: i64) -> bool {
     // Sleepers don't talk.
     if crate::routines::asleep(a) || crate::routines::asleep(b) {
@@ -1257,18 +1259,23 @@ fn talk(host: &mut dyn ServerHost, a: u32, b: u32, now: i64) -> bool {
             x.heart.value(y.uuid).unwrap_or_else(|| base_for(x, &c, y.uuid, y.owner)) >= c.friend_at
         };
         if !likes(la, lb) && !likes(lb, la) {
-            return false;
-        }
+            Talk::Social
+        } else {
         let from_a = la.heart.to_tell(&lb.heart, lb.uuid).cloned();
         let from_b = lb.heart.to_tell(&la.heart, la.uuid).cloned();
         match (from_a, from_b) {
             (Some(x), Some(y)) if y.at > x.at => Talk::News { teller: b, hearer: a, news: y },
             (Some(x), _) => Talk::News { teller: a, hearer: b, news: x },
             (None, Some(y)) => Talk::News { teller: b, hearer: a, news: y },
-            (None, None) if coin < 0.5 => Talk::Chat { speaker: a, hearer: b },
+            (None, None) if coin < 0.3 => Talk::Social,
+            (None, None) if coin < 0.65 => Talk::Chat { speaker: a, hearer: b },
             (None, None) => Talk::Chat { speaker: b, hearer: a },
         }
+        }
     };
+    if let Talk::Social = plan {
+        return social_talk(host, a, b, now);
+    }
     let (Some(ea), Some(eb)) = (host.entity(a), host.entity(b)) else { return false };
     // They turn to each other.
     for (me, other) in [(ea, eb), (eb, ea)] {
@@ -1291,6 +1298,7 @@ fn talk(host: &mut dyn ServerHost, a: u32, b: u32, now: i64) -> bool {
             say(host, e, &sn, &line.replace("@listener", &hn));
             true
         }
+        Talk::Social => false,
         Talk::News { teller, hearer, news } => {
             let (tn, hn) = (name_of(teller), name_of(hearer));
             let (te, he) = if teller == a { (ea, eb) } else { (eb, ea) };
@@ -1301,6 +1309,64 @@ fn talk(host: &mut dyn ServerHost, a: u32, b: u32, now: i64) -> bool {
             true
         }
     }
+}
+
+/// How NPC `id` thinks of the one with `uuid` moves by `delta`.
+fn shift(id: u32, uuid: u128, name: &str, delta: f32) {
+    if let Ok(mut s) = STATE.lock()
+        && let Some(l) = s.live.get_mut(&id)
+    {
+        let c = l.character();
+        let base = base_for(l, &c, uuid, None);
+        l.heart.change(uuid, name, true, base, delta);
+        l.dirty = true;
+    }
+}
+
+/// NPCs `a` and `b` pass words (see `social`): one speaks, the other answers; it moves how they
+/// think of each other, may stay with the hearer, and an insult may come to blows.
+fn social_talk(host: &mut dyn ServerHost, a: u32, b: u32, now: i64) -> bool {
+    let (Some(ea), Some(eb)) = (host.entity(a), host.entity(b)) else { return false };
+    let (speaker, hearer, es, eh) = if random() < 0.5 { (a, b, ea, eb) } else { (b, a, eb, ea) };
+    let who = |id: u32| STATE.lock().ok().and_then(|s| s.live.get(&id).map(|l| (l.uuid, l.name.clone())));
+    let (Some((us, ns)), Some((uh, nh))) = (who(speaker), who(hearer)) else { return false };
+    let traits = crate::mind::traits(us);
+    let mood = crate::minds::mood(speaker).unwrap_or(50.0);
+    let act = crate::social::pick(&crate::social::weights(&traits, mood, crate::social::fit(us, uh)), random());
+    for (me, other) in [(es, eh), (eh, es)] {
+        if let Some(p) = other.position(&*host) {
+            let _ = MobRef::new(me).look_at(host, [p[0], p[1] + 1.6, p[2]]);
+        }
+    }
+    say(host, es, &ns, &crate::social::line(act, random()).replace("@n", &nh));
+    say(host, eh, &nh, crate::social::reply(act, random()));
+    let (to_speaker, to_hearer) = crate::social::opinion(act);
+    shift(hearer, us, &ns, to_speaker);
+    shift(speaker, uh, &nh, to_hearer);
+    if let Some(t) = crate::social::thought(act) {
+        crate::minds::remember(host, eh, t);
+    }
+    if matches!(act, crate::social::Act::Chat | crate::social::Act::HeartToHeart | crate::social::Act::KindWords) {
+        crate::minds::enjoy(host, es, crate::mind::TALK, 6.0);
+        crate::minds::enjoy(host, eh, crate::mind::TALK, 6.0);
+    }
+    // An insult may come to blows: both get hurt, and after it they think better or worse of each other.
+    if random() < crate::social::fight_chance(act, &crate::mind::traits(uh)) {
+        for (e, n) in [(es, &ns), (eh, &nh)] {
+            if let Some(u) = e.uuid(host) {
+                crate::talk::queue(format!("damage {} 2 minecraft:generic", crate::talk::uuid_text(u)));
+            }
+            crate::routines::play_animation(host, e, "animation.felix.angry");
+            crate::minds::remember(host, e, "fought");
+            let _ = n;
+        }
+        let after = crate::social::after_fight(random());
+        shift(hearer, us, &ns, after);
+        shift(speaker, uh, &nh, after);
+        say(host, eh, &nh, "Right, that's it!");
+        let _ = now;
+    }
+    true
 }
 
 /// NPC `id` hears `news`: thinks of the player as it was told, and keeps it to tell on.

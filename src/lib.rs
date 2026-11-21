@@ -42,6 +42,9 @@
 //! - `doors` opens the wooden doors and gates NPCs come to, and shuts them after.
 //! - `chief` is what a village head decides (no mod API types); `chiefs` has each settlement choose
 //!   one and has it see to the village each morning.
+//! - `social` is what NPCs say to each other (chat, heart-to-hearts, insults, fights; no mod API
+//!   types); `heart` has them say it, `families` part couples who fall out, `chiefs` holds
+//!   weddings and goodbyes.
 //! - `remark` is what companions say on the way (no mod API types); `companions` has them say it
 //!   and help their hurt player.
 //! - `bond` is how close an NPC and a player are, up to romance (no mod API types); `bonds` keeps it.
@@ -118,6 +121,7 @@ pub mod skills;
 pub mod doors;
 pub mod chief;
 pub mod chiefs;
+pub mod social;
 pub mod job;
 pub mod jobs;
 pub mod geo;

@@ -155,6 +155,7 @@ pub fn on_death(host: &mut dyn ServerHost, victim: u32) {
     let f = family_of(host, v);
     let kin: Vec<u128> = f.partner.iter().chain(&f.children).chain(&f.parents).map(|(u, _)| *u).collect();
     crate::minds::on_death(host, v, &kin);
+    crate::chiefs::on_death(host, v);
     let Some((partner, _)) = f.partner else { return };
     let Some(o) = crate::heart::npc_by_uuid(partner).and_then(|id| host.entity(id)) else { return };
     let mut f = family_of(host, o);
@@ -187,6 +188,10 @@ pub fn couple(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef) -> bool {
     }
     crate::heart::say_aloud(host, a, &format!("{nb}, will you share my home?"));
     crate::heart::say_aloud(host, b, &format!("Oh, {na}... yes! Yes, I will!"));
+    // A wedding: they remember it, and their village celebrates (see `chiefs`).
+    crate::minds::remember(host, a, "married");
+    crate::minds::remember(host, b, "married");
+    crate::chiefs::wedding(host, a, b);
     true
 }
 
@@ -331,6 +336,28 @@ pub fn tick(host: &mut dyn ServerHost) {
             if near && liked && roll < u64::from(COUPLE_CHANCE) && couple(host, *a, *b) {
                 taken.extend([a.id(), b.id()]);
             }
+        }
+    }
+    // Partners who have come to dislike each other part (see `social`).
+    for (a, fa) in &fams {
+        let Some((pu, pn)) = fa.partner.clone() else { continue };
+        let Some(b) = crate::heart::npc_by_uuid(pu).and_then(|id| host.entity(id)) else { continue };
+        let Some(ua) = a.uuid(host) else { continue };
+        if ua > pu {
+            continue;
+        }
+        if crate::heart::relation_of(a.id(), pu) <= crate::social::PART_AT || crate::heart::relation_of(b.id(), ua) <= crate::social::PART_AT {
+            let an = name_of(&*host, *a);
+            let mut f = family_of(host, *a);
+            f.partner = None;
+            let _ = FAMILY.set(host, Holder::Entity(a.id()), f);
+            let mut g = family_of(host, b);
+            g.partner = None;
+            let _ = FAMILY.set(host, Holder::Entity(b.id()), g);
+            crate::heart::say_aloud(host, *a, &format!("I can't do this anymore, {pn}. It's over."));
+            crate::heart::say_aloud(host, b, &format!("Fine! Go, {an}!"));
+            crate::minds::remember(host, *a, "broke_up");
+            crate::minds::remember(host, b, "broke_up");
         }
     }
     // Children: a couple together by their home, now and then.
