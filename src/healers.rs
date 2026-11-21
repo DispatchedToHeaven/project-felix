@@ -192,7 +192,8 @@ pub fn tick(host: &mut dyn ServerHost) {
         let Some(now) = npc.level(&*host).and_then(|l| l.game_time(&*host)) else { continue };
         let mut h = get(host, npc);
         let prev = h.last;
-        let in_bed = crate::routines::bed_of(*id).is_some();
+        // Asleep in its bed, or kept to it.
+        let in_bed = crate::routines::bed_of(*id).is_some() || bedridden(*id);
         let rested = crate::minds::rest(*id).unwrap_or(60.0);
         // Sleeping rough it may catch something.
         if prev > 0 && h.sick.is_none() && roll() < health::catch_chance(now - prev, crate::minds::slept_rough(*id, now), false) {
@@ -350,6 +351,7 @@ pub fn talk(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef, what: 
     put(host, npc, h);
     crate::minds::remember(host, npc, "cared_for");
     crate::heart::befriend(host, npc, player, 3);
+    crate::factions::deed_by(host, npc, player, crate::faction::Deed::Tended);
     let line = if used.is_some() { format!("Thank you, {name}. That feels better already.") } else { format!("Thank you, {name}. A clean bandage will do.") };
     crate::heart::say_to(host, npc, player, &line);
 }

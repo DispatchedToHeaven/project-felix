@@ -3,7 +3,8 @@
 //! for a day, sells to players and swaps with the village what it lacks; stray animals wander in;
 //! raiders come at the village, its folk run home, its guards and the players about fight, and
 //! those who fight them are thanked; a blight sets the crops back; a sickness goes round; rot gets
-//! into the stores. Everyone remembers it, the head tells of it ("What's been happening?").
+//! into the stores; it falls out with another village, or a friendly one sends it food in a hungry
+//! time (see `factions`). Everyone remembers it, the head tells of it ("What's been happening?").
 //! `/felix story`, `/felix story <incident>` (at the nearest village).
 use crate::companion;
 use crate::serde_json::{Value, json};
@@ -171,7 +172,9 @@ fn world(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[Enti
     let r = crate::chiefs::report(host, name, center, people, now);
     let farmers = people.iter().filter(|e| crate::jobs::job_of(host, **e).is_some_and(|j| j.name() == "farm")).count();
     let since_death = tale(name, now / DAY).death.map_or(99, |d| now / DAY - d);
-    World { day: now / DAY, people: r.people, food: r.food, logs: r.logs, mood: r.mood, farmers, since_death }
+    let neighbours = crate::factions::neighbours(host, name);
+    let aid = neighbours > 0 && crate::factions::aid_for(host, name, r.people, r.food).is_some();
+    World { day: now / DAY, people: r.people, food: r.food, logs: r.logs, mood: r.mood, farmers, since_death, neighbours, aid }
 }
 
 /// `i` comes to the village: what is said of it (none: it could not happen now).
@@ -223,7 +226,9 @@ fn happen(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[Ent
             let mut t = tale(name, now / DAY);
             t.caravan = Some(now + story::CARAVAN_STAYS);
             set_tale(name, t);
-            let mut line = format!("{} has come to {name}: {who} trades until tomorrow.", capital(what));
+            // From a village it gets on with, if there is one (see `factions`).
+            let from = crate::factions::caravan_from(host, name, r >> 24, now).map(|f| format!(" from {f}")).unwrap_or_default();
+            let mut line = format!("{}{from} has come to {name}: {who} trades until tomorrow.", capital(what));
             // The village swaps with it what it lacks.
             let chests = crate::chiefs::chests(host, people);
             let wheat: u64 = chests.iter().map(|c| crate::jobs::amount(host, *c, "minecraft:wheat")).sum();
@@ -340,6 +345,29 @@ fn happen(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[Ent
             }
             remember_all(host, people, "stores_spoiled");
             format!("Rot has got into the stores of {name}: {lost} food had to be thrown out.")
+        }
+        Incident::Quarrel => {
+            let (other, over, bond) = crate::factions::fall_out(host, name, r, now)?;
+            remember_all(host, people, "quarrel");
+            let line = format!("{name} and {other} have fallen out over {over}.{}", if bond == crate::faction::Bond::Feud { " They are at feud now." } else { "" });
+            crate::chiefs::record(host, &other, now, &line);
+            line
+        }
+        Incident::Aid => {
+            let (from, n) = crate::factions::aid_for(host, name, w.people, w.food)?;
+            let chest = crate::chiefs::chests(host, people).first().copied()?;
+            let got = crate::jobs::put_item(host, chest, "minecraft:bread", n);
+            if got == 0 {
+                return None;
+            }
+            crate::factions::send_aid(host, &from, name, got, now);
+            remember_all(host, people, "aid");
+            if let Some(h) = head {
+                crate::heart::say_aloud(host, h, &format!("Bread from {from}! We won't forget this."));
+            }
+            let line = format!("Hearing {name} is short of food, its friends in {from} have sent {got} bread.");
+            crate::chiefs::record(host, &from, now, &line);
+            line
         }
     };
     let mut t = tale(name, now / DAY);

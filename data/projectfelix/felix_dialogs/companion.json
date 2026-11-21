@@ -814,6 +814,59 @@
           ]
         },
         {
+          "text": "What do folk here think of me?",
+          "actions": [
+            {
+              "faction": "standing"
+            }
+          ]
+        },
+        {
+          "text": "Could the village spare me some food?",
+          "actions": [
+            {
+              "faction": "help"
+            }
+          ]
+        },
+        {
+          "text": "About other villages...",
+          "goto": "abroad"
+        },
+        {
+          "text": "Something else...",
+          "goto": "main"
+        }
+      ]
+    },
+    "abroad": {
+      "text": "Yes?",
+      "options": [
+        {
+          "text": "How do you get on with other villages?",
+          "actions": [
+            {
+              "faction": "ties"
+            }
+          ]
+        },
+        {
+          "text": "Can I carry word to another village for you?",
+          "actions": [
+            {
+              "faction": "errand"
+            }
+          ]
+        },
+        {
+          "text": "I bring word from another village.",
+          "actions": [
+            {
+              "faction": "word"
+            }
+          ]
+        },
+        {
           "text": "Something else...",
           "goto": "main"
         }

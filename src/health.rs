@@ -6,7 +6,9 @@
 //! it stops by itself. Wounds heal half a point an hour, twice that in bed, more when tended well.
 //! A wound left untended for four hours may turn infected; an infection, like a sickness, grows each
 //! day while the body fights it off; whichever gets there first wins, and losing is death. Tending
-//! (by a healer, or a player) slows it, and rest in bed helps the body.
+//! (by a healer, or a player) slows it, and rest in bed helps the body: a cough passes by itself,
+//! the flu with rest, a fever or an infection only with someone's care, and the worn out are in
+//! danger from them all.
 
 use crate::serde_json::{Value, json};
 
@@ -83,6 +85,22 @@ pub fn quality(potency: f32, skill: u8) -> f32 {
     (potency * (0.3 + 0.045 * skill.min(20) as f32)).clamp(0.1, 1.5)
 }
 
+/// How fast a sickness grows a day when nobody tends it: a cough is mild, a fever hard.
+pub fn strength(name: &str) -> f32 {
+    if name.contains("cough") {
+        0.4
+    } else if name.contains("fever") {
+        0.6
+    } else {
+        0.5
+    }
+}
+
+/// How fast an infection grows a day in a wound tended this well (0: not at all).
+pub fn festers(tended: f32) -> f32 {
+    0.7 * (1.0 - 0.55 * tended.clamp(0.0, 1.0))
+}
+
 /// The chance it falls sick over `dt` ticks: one in seventy a day, twice that sleeping rough, twice
 /// again soaked.
 pub fn catch_chance(dt: i64, rough: bool, soaked: bool) -> f32 {
@@ -138,7 +156,7 @@ impl Health {
         self.sick.as_ref().is_some_and(|s| s.severity > 0.35) || self.wounds.iter().any(|w| w.bleeding || w.infection.is_some_and(|i| i.0 > 0.35)) || self.pain() > 0.45
     }
 
-    /// Brings it to `now`: `in_bed` while it slept, `rested` how rested it is (0..100), and
+    /// Brings it to `now`: `in_bed` while it sleeps or keeps to its bed, `rested` how rested it is (0..100), and
     /// `roll` for chances.
     pub fn advance(&mut self, now: i64, in_bed: bool, rested: f32, roll: &mut dyn FnMut() -> f32) -> Change {
         let mut c = Change::default();
@@ -173,8 +191,8 @@ impl Health {
                 }
             }
             if let Some((sev, imm)) = &mut w.infection {
-                *sev += days * if w.tended >= 0.5 { 0.35 } else { 0.85 };
-                *imm += days * 0.65 * body;
+                *sev += days * festers(w.tended);
+                *imm += days * 0.6 * body;
                 if *sev >= 1.0 {
                     c.died_of = Some("an infection".into());
                 }
@@ -211,8 +229,8 @@ impl Health {
         // Sickness: it grows, the body fights back; tending in the last half day slows it.
         if let Some(s) = &mut self.sick {
             let tended = now - s.tended_at < DAY / 2 && now >= s.tended_at;
-            s.severity += days * if tended { 0.6 - 0.3 * s.quality.min(1.0) } else { 0.7 };
-            s.immunity += days * 0.55 * body;
+            s.severity += days * strength(&s.name) * if tended { 0.75 - 0.35 * s.quality.min(1.0) } else { 1.0 };
+            s.immunity += days * 0.5 * body;
             if s.severity >= 1.0 {
                 c.died_of = Some(s.name.clone());
             } else if s.immunity >= s.severity && s.immunity >= 0.4 {
@@ -339,6 +357,55 @@ mod tests {
             rec = rec.or(c.recovered);
         }
         assert_eq!(rec.as_deref(), Some("infection"));
+    }
+
+    /// Lives through `days` of sickness `name` (or of an infected wound, `name` empty) step by
+    /// step as the game does: to bed when it is bad, tended twice a day with `care` if any.
+    fn lives(name: &str, care: Option<f32>, rested: f32) -> (bool, i64) {
+        let mut h = Health { last: 1, ..Health::default() };
+        if name.is_empty() {
+            h.add_wound(wound(4.0, true, 0.9, 1));
+            h.wounds[0].infection = Some((0.05, 0.0));
+            h.wounds[0].checked = true;
+        } else {
+            h.fall_sick(name);
+        }
+        for step in 1..=(6 * DAY / 100) {
+            let now = 1 + step * 100;
+            if let Some(q) = care
+                && h.needs_tending(now)
+            {
+                h.tend(q, now);
+            }
+            let c = h.advance(now, h.bedridden(), rested, &mut rolls(0.99));
+            if c.died_of.is_some() {
+                return (false, now);
+            }
+            if c.recovered.is_some() {
+                return (true, now);
+            }
+        }
+        panic!("{name}: neither well nor dead: {h:?}");
+    }
+
+    #[test]
+    fn rest_and_care_decide() {
+        // A cough passes by itself, even worn out; the flu with rest.
+        assert!(lives("a cough", None, 80.0).0);
+        assert!(lives("a bad cough", None, 10.0).0);
+        assert!(lives("the flu", None, 80.0).0);
+        assert!(!lives("the flu", None, 10.0).0, "worn out, nobody cares for it");
+        // A fever needs someone: even poor care (no medicine, no skill) saves the rested.
+        assert!(!lives("a fever", None, 80.0).0);
+        assert!(lives("a fever", Some(0.1), 80.0).0);
+        assert!(lives("a fever", Some(0.8), 10.0).0, "good care saves the worn out too");
+        // So does an infected wound.
+        assert!(!lives("", None, 80.0).0);
+        assert!(lives("", Some(0.1), 80.0).0);
+        assert!(lives("", Some(1.0), 10.0).0);
+        // Nobody is ill for long: a day or two either way.
+        assert!(lives("the flu", None, 80.0).1 < 2 * DAY);
+        assert!(lives("a fever", None, 80.0).1 > DAY, "there is a day to help");
     }
 
     #[test]

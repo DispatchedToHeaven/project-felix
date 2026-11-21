@@ -182,6 +182,9 @@ pub const THOUGHTS: &[Thought] = &[
     t("crops_lost", "The crops failed", -4.0, 2 * DAY, 1),
     t("stores_spoiled", "Food went bad", -3.0, DAY, 1),
     t("new_face", "Someone new came", 2.0, DAY, 1),
+    t("quarrel", "Fell out with the neighbours", -2.0, 2 * DAY, 1),
+    t("aid", "Friends sent us food", 5.0, 2 * DAY, 1),
+    t("good_word", "Good word from another village", 3.0, DAY, 1),
     t("liked_work", "Good day's work", 3.0, DAY / 2, 1),
     // Now.
     t("hungry", "Hungry", -6.0, 0, 1),

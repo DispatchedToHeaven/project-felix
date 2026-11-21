@@ -4,7 +4,9 @@
 //! quieter ones. On any day something may happen: a wanderer asks to stay (likelier the smaller
 //! the village), a trade caravan comes by, a few stray animals wander in; and on the restless days
 //! raiders come (more of them the richer and older the village), a blight withers the crops, a
-//! sickness goes round, or the stores spoil. The first days are spared, trouble keeps a few days
+//! sickness goes round, or the stores spoil. Where there are other villages, neighbours may fall
+//! out over something, and friends send food to a village that is short of it (see `faction`).
+//! The first days are spared, trouble keeps a few days
 //! apart, each kind of thing its own longer while, and a village in grief or low spirits is let off
 //! more often.
 
@@ -28,9 +30,23 @@ pub enum Incident {
     Blight,
     Outbreak,
     Spoilage,
+    /// It falls out with another village.
+    Quarrel,
+    /// A friendly village sends it food.
+    Aid,
 }
 
-pub const ALL: [Incident; 7] = [Incident::Wanderer, Incident::Caravan, Incident::Strays, Incident::Raid, Incident::Blight, Incident::Outbreak, Incident::Spoilage];
+pub const ALL: [Incident; 9] = [
+    Incident::Wanderer,
+    Incident::Caravan,
+    Incident::Strays,
+    Incident::Raid,
+    Incident::Blight,
+    Incident::Outbreak,
+    Incident::Spoilage,
+    Incident::Quarrel,
+    Incident::Aid,
+];
 
 impl Incident {
     pub fn id(self) -> &'static str {
@@ -42,6 +58,8 @@ impl Incident {
             Incident::Blight => "blight",
             Incident::Outbreak => "outbreak",
             Incident::Spoilage => "spoilage",
+            Incident::Quarrel => "quarrel",
+            Incident::Aid => "aid",
         }
     }
 
@@ -63,6 +81,8 @@ impl Incident {
             Incident::Blight => 8,
             Incident::Outbreak => 10,
             Incident::Spoilage => 6,
+            Incident::Quarrel => 8,
+            Incident::Aid => 3,
         }
     }
 
@@ -80,6 +100,11 @@ impl Incident {
             Incident::Outbreak => 0.4,
             Incident::Spoilage if w.food < 16 => 0.0,
             Incident::Spoilage => 0.5,
+            Incident::Quarrel if w.neighbours == 0 => 0.0,
+            Incident::Quarrel => 0.3,
+            // Help comes when it is needed, if there is a friend to send it.
+            Incident::Aid if w.aid => 4.0,
+            Incident::Aid => 0.0,
         }
     }
 }
@@ -95,6 +120,10 @@ pub struct World {
     pub farmers: usize,
     /// Days since someone of the village died (large: none lately).
     pub since_death: i64,
+    /// The other villages it knows of.
+    pub neighbours: usize,
+    /// Whether it is short of food and a friendly village could send some.
+    pub aid: bool,
 }
 
 /// What it is worth to raiders.
@@ -252,6 +281,8 @@ pub fn news(i: Incident, village: &str) -> String {
         Incident::Blight => format!("A blight has struck the fields of {village}."),
         Incident::Outbreak => format!("A sickness is going round {village}."),
         Incident::Spoilage => format!("Rot has got into the stores of {village}."),
+        Incident::Quarrel => format!("{village} has fallen out with its neighbours."),
+        Incident::Aid => format!("Friends have sent food to {village}."),
     }
 }
 
@@ -260,7 +291,7 @@ mod tests {
     use super::*;
 
     fn world(day: i64) -> World {
-        World { day, people: 6, food: 60, logs: 40, mood: 55.0, farmers: 2, since_death: 99 }
+        World { day, people: 6, food: 60, logs: 40, mood: 55.0, farmers: 2, since_death: 99, neighbours: 0, aid: false }
     }
 
     #[test]
@@ -340,6 +371,22 @@ mod tests {
         assert_eq!(swap(6, 60, 4, 64), Some(("minecraft:wheat", 32, "minecraft:oak_log", 16)));
         assert_eq!(swap(6, 60, 40, 64), None);
         assert_eq!(swap(6, 10, 4, 0), None);
+    }
+
+    #[test]
+    fn neighbours_matter() {
+        let t = Teller::new(0, 0);
+        let count = |w: &World, i: Incident| (0..4_000u64).filter(|r| pick(&t, w, r.wrapping_mul(0x2545_F491_4F6C_DD1D)) == Some(i)).count();
+        // Alone, no quarrels and no help.
+        assert_eq!(count(&world(7), Incident::Quarrel), 0);
+        assert_eq!(count(&world(7), Incident::Aid), 0);
+        let near = World { neighbours: 2, ..world(7) };
+        assert!(count(&near, Incident::Quarrel) > 0);
+        assert_eq!(count(&near, Incident::Aid), 0);
+        // Short of food with a friend who can help, help is what mostly comes.
+        let hungry = World { neighbours: 2, aid: true, food: 2, ..world(7) };
+        assert!(count(&hungry, Incident::Aid) > count(&hungry, Incident::Caravan) * 2);
+        assert!(!Incident::Quarrel.bad() && !Incident::Aid.bad());
     }
 
     #[test]

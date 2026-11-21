@@ -49,6 +49,9 @@
 //!   on the server: hits become wounds, the sick keep to bed, the best healer about tends them.
 //! - `story` is the storyteller (no mod API types); `storyteller` tells each village's tale on
 //!   the server: wanderers, caravans, strays, raids, blights, sicknesses, spoiled stores.
+//! - `faction` is villages among others (no mod API types): a player's standing with a village,
+//!   the ties between villages; `factions` keeps them on the server: deeds, prices, enemies,
+//!   errands between villages.
 //! - `remark` is what companions say on the way (no mod API types); `companions` has them say it
 //!   and help their hurt player.
 //! - `bond` is how close an NPC and a player are, up to romance (no mod API types); `bonds` keeps it.
@@ -130,6 +133,8 @@ pub mod health;
 pub mod healers;
 pub mod story;
 pub mod storyteller;
+pub mod faction;
+pub mod factions;
 pub mod job;
 pub mod jobs;
 pub mod geo;
@@ -258,6 +263,7 @@ impl Hooks for Felix {
         chiefs::register_commands(e);
         healers::register_commands(e);
         storyteller::register_commands(e);
+        factions::register_commands(e);
         builds::register_commands(e);
         squad::register_commands(e);
         families::register_commands(e);
@@ -295,6 +301,9 @@ impl Hooks for Felix {
             return Flow::Cancel;
         }
         if let Flow::Cancel = builds::run_command(host, e) {
+            return Flow::Cancel;
+        }
+        if let Flow::Cancel = factions::run_command(host, e) {
             return Flow::Cancel;
         }
         if let Flow::Cancel = storyteller::run_command(host, e) {
@@ -390,6 +399,7 @@ impl Hooks for Felix {
                 events::tick(host);
                 chiefs::tick(host);
                 storyteller::tick(host);
+                factions::tick(host);
             }
             needs::tick(host);
             minds::tick(host);
@@ -472,6 +482,7 @@ impl Hooks for Felix {
         chiefs::clear();
         healers::clear();
         storyteller::clear();
+        factions::clear();
         quests::clear();
         routines::clear();
         rulebook::clear();
@@ -515,6 +526,7 @@ impl Hooks for Felix {
         gear::on_death(host, e.entity, e.source.causing);
         bonds::on_death(host, e.entity, e.source.causing);
         storyteller::on_death(host, e.entity, e.source.causing);
+        factions::on_death(host, e.entity, e.source.causing);
         families::on_death(host, e.entity);
         Flow::Continue
     }

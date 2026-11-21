@@ -182,6 +182,11 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
                 text.push("I don't trade with you, @player.".into());
             } else {
                 text.push("What will it be, @player?".into());
+                // What the player is to its village counts too (see `factions`).
+                let (folk, folk_note) = crate::factions::price_factor(host, npc, player);
+                if !folk_note.is_empty() {
+                    text.push(folk_note.into());
+                }
                 text.push(
                     match standing {
                         Standing::Friend => "(friend's prices)",
@@ -201,10 +206,11 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
                 // What the village has moves the prices (see `market`).
                 let mut note: Option<String> = None;
                 for (i, o) in s.sells.iter().enumerate() {
+                    let (deal, count) = crate::faction::deal(standing.pays(o.price).unwrap_or(o.price), o.count, folk);
                     let n = match chest {
                         // Its job's goods only, and none without a chest.
                         Some(None) => Some(0),
-                        Some(Some(c)) => Some((crate::jobs::amount(host, c, &o.item) / u64::from(o.count.max(1))).min(9999) as u32),
+                        Some(Some(c)) => Some((crate::jobs::amount(host, c, &o.item) / u64::from(count.max(1))).min(9999) as u32),
                         None => left(stock_key(host, npc), &id, &s, false, i, o, now),
                     };
                     if n == Some(0) {
@@ -214,9 +220,9 @@ pub fn board(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, named
                     if note.is_none() {
                         note = crate::market::note(&o.item, supply);
                     }
-                    let price = crate::market::priced(crate::events::price(host, npc, standing.pays(o.price).unwrap_or(o.price)), supply);
+                    let price = crate::market::priced(crate::events::price(host, npc, deal), supply);
                     let stock = n.map(|n| format!(" ({n} left)")).unwrap_or_default();
-                    options.push(choice(format!("Buy {} {} for {price} {money}{stock}", o.count, shop::short(&o.item)), vec![Action::Trade(i as i32)]));
+                    options.push(choice(format!("Buy {count} {} for {price} {money}{stock}", shop::short(&o.item)), vec![Action::Trade(i as i32)]));
                 }
                 for (i, o) in s.buys.iter().enumerate() {
                     if left(stock_key(host, npc), &id, &s, true, i, o, now) == Some(0) {
@@ -300,16 +306,19 @@ pub fn trade(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, n: i3
         }
     } else {
         let Some(price) = standing.pays(o.price) else { return };
+        // What the player is to its village: a better or worse deal (see `factions`).
+        let folk = crate::factions::price_factor(host, npc, player).0;
+        let (price, count) = crate::faction::deal(price, o.count, folk);
         let price = crate::market::priced(crate::events::price(host, npc, price), crate::markets::supply_of(host, npc, &o.item));
         if items_of(host, player, &s.currency) < price {
             crate::heart::say_aloud(host, npc, &format!("That's {price} {money}, {name}. You're short."));
             false
-        } else if chest.is_some_and(|c| !crate::jobs::take(host, c, &o.item, o.count)) {
+        } else if chest.is_some_and(|c| !crate::jobs::take(host, c, &o.item, count)) {
             crate::heart::say_aloud(host, npc, &format!("Sorry, {name}, my chest is out of that."));
             false
         } else {
             crate::talk::queue(format!("clear {name} {} {price}", s.currency));
-            crate::talk::queue(format!("give {name} {} {}", o.item, o.count));
+            crate::talk::queue(format!("give {name} {} {count}", o.item));
             if s.currency == crate::market::CURRENCY {
                 crate::markets::earn(host, npc, price);
             }
@@ -320,6 +329,7 @@ pub fn trade(host: &mut dyn ServerHost, player: PlayerRef, npc: EntityRef, n: i3
         take_one(stock_key(host, npc), &id, buys, i);
         crate::talk::queue(format!("execute at {} run playsound minecraft:entity.villager.trade neutral @a ~ ~ ~", crate::talk::uuid_text(npc.uuid(host).unwrap_or(0))));
         crate::heart::feel(host, npc, Some(player), "trade");
+        crate::factions::deed_by(host, npc, player, crate::faction::Deed::Traded);
     }
     if let Ok(mut st) = STATE.lock() {
         st.reopen.push((player, npc.id(), named, now + 2));

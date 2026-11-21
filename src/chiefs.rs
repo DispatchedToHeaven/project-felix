@@ -3,7 +3,7 @@
 //! has a cabin built (from the village's logs) when someone slept without a bed, gives work to
 //! those with none, takes in a newcomer when there is room, and asks travellers for what the village
 //! lacks. Players ask any villager who leads them and what has happened lately, and the head how the village is doing and what
-//! it needs, and bring it. `/felix village`, `/felix village elect|morning|newcomer|build`.
+//! it needs, and bring it (which the village remembers: see `factions`). `/felix village`, `/felix village elect|morning|newcomer|build`.
 use crate::chief::{self, Candidate, Decision, Report};
 use crate::companion::{self, DEFAULT_MODEL, Look};
 use crate::serde_json::{Value, json};
@@ -198,7 +198,12 @@ pub fn tell_near(host: &mut dyn ServerHost, center: [i32; 2], line: &str) {
 }
 
 fn note(v: &mut Village, day: i64, line: &str) {
-    v.log.push(format!("Day {day}: {line}"));
+    let new = format!("Day {day}: {line}");
+    // The same thing told again, or told more fully, is one line.
+    if v.log.last().is_some_and(|l| new.starts_with(l.as_str())) {
+        v.log.pop();
+    }
+    v.log.push(new);
     if v.log.len() > 8 {
         v.log.remove(0);
     }
@@ -511,6 +516,12 @@ pub fn head_of(host: &mut dyn ServerHost, name: &str, people: &[EntityRef]) -> O
     people.iter().find(|e| e.uuid(host) == Some(u)).copied()
 }
 
+/// The name of village `name`'s head (about or not).
+pub fn head_name(host: &mut dyn ServerHost, name: &str) -> Option<String> {
+    read(host);
+    village(name).head.map(|h| h.1)
+}
+
 /// NPC `victim` died: its village says goodbye the next morning.
 pub fn on_death(host: &mut dyn ServerHost, victim: EntityRef) {
     read(host);
@@ -737,16 +748,8 @@ pub fn talk(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef, what: 
                 let line = format!("{} is building us a new cabin.", name_of(&*host, e));
                 crate::heart::say_to(host, npc, player, &line);
             }
-            // What the village thinks of the player.
-            let liked: Vec<i32> = people.iter().map(|e| crate::heart::relation_of(e.id(), player.uuid())).collect();
-            let avg = if liked.is_empty() { 0 } else { liked.iter().sum::<i32>() / liked.len() as i32 };
-            let word = match avg {
-                i32::MIN..=-30 => "Folk here don't trust you, I'm afraid.",
-                -29..=4 => "Folk here don't know you well yet.",
-                5..=29 => "Folk here think well of you.",
-                _ => "Folk here think the world of you.",
-            };
-            crate::heart::say_to(host, npc, player, word);
+            // What the village thinks of the player (see `factions`).
+            crate::factions::talk(host, npc, player, "standing");
         }
         "needs" => {
             let line = if v.wants.is_empty() {
@@ -811,6 +814,7 @@ fn give(host: &mut dyn ServerHost, npc: EntityRef, player: PlayerRef, name: &str
     for e in people {
         crate::heart::befriend(host, *e, player, 2);
     }
+    crate::factions::deed(host, name, player, crate::faction::Deed::Brought(given));
     let now = npc.level(&*host).and_then(|l| l.game_time(&*host)).unwrap_or(0);
     note(&mut v, now / DAY, &format!("{pname} brought {}.", what.join(" and ")));
     set_village(name, v);

@@ -261,7 +261,8 @@ pub fn register(r: &mut dyn Registrar) {
 }
 
 /// Server level tick: reads the orders of NPCs the goals asked about, and points guards at the
-/// monsters near their posts (each tick); the wolf's own attack goals do the fighting.
+/// monsters (and their village's enemies) near their posts (each tick); the wolf's own attack goals
+/// do the fighting.
 pub fn level_tick(host: &mut dyn ServerHost) {
     // A guard with nothing to fight looks about twice a second.
     let look = SERVER.lock().map(|mut s| {
@@ -286,7 +287,8 @@ pub fn level_tick(host: &mut dyn ServerHost) {
         if keep || (current.is_none() && !look) {
             continue;
         }
-        let next = nearest_monster(&*host, me, post);
+        // Monsters first, then an enemy of its village (see `factions`).
+        let next = nearest_monster(&*host, me, post).or_else(|| crate::factions::foe_near(&*host, me, post));
         if next.is_some() || current.is_some() {
             mob.set_target(host, next.map(LivingRef::new));
         }

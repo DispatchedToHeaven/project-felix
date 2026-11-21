@@ -1130,6 +1130,8 @@ fn hurt(host: &mut dyn ServerHost, victim: u32, by: u32) {
         // An NPC hit by a player: it and its friends who saw.
         (Some((uuid, owner, name)), Some(p)) => {
             feel_at(host, victim, "hurt_by_player", Some(p), 1.0, None);
+            // Its village thinks less of them (see `factions`).
+            crate::factions::hit(host, v, p);
             let at = v.position(&*host).unwrap_or([0.0; 3]);
             for (friend, closeness) in friends_of(uuid, owner, victim) {
                 if noticed(&*host, friend, v, at) {

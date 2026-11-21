@@ -425,7 +425,7 @@ fn talk(host: &mut dyn ServerHost, player: PlayerRef, b: &[u8]) {
     let Some(npc) = npc_near(host, player, id) else { return };
     // A sleeper wakes first; one that hates the player won't talk at all.
     crate::routines::wake(host, npc, Some(player));
-    if !crate::heart::talks_to(host, npc, player) {
+    if crate::factions::shuns(host, npc, player) || !crate::heart::talks_to(host, npc, player) {
         return;
     }
     crate::quests::on_talk(host, npc, player);
@@ -748,6 +748,11 @@ pub fn run_for(host: &mut dyn ServerHost, player: Option<PlayerRef>, npc: Entity
             Action::Village(what) => {
                 if let Some(p) = player {
                     crate::chiefs::talk(host, npc, p, what);
+                }
+            }
+            Action::Faction(what) => {
+                if let Some(p) = player {
+                    crate::factions::talk(host, npc, p, what);
                 }
             }
             Action::Health(what) => {

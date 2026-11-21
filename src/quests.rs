@@ -404,6 +404,12 @@ fn end(host: &mut dyn ServerHost, player: PlayerRef, npc: Option<EntityRef>, a: 
     {
         crate::companion::go_to(g, None);
     }
+    // A quest done for one of a village counts with its village (see `factions`).
+    if done
+        && let Some(g) = crate::heart::npc_by_uuid(a.npc).and_then(|g| host.entity(g))
+    {
+        crate::factions::deed_by(host, g, player, crate::faction::Deed::QuestDone);
+    }
     let player_name = player.name(&*host).unwrap_or_default();
     let line = fill(if done { &q.done } else { &q.fail }, &player_name, &a.npc_name);
     // A delivery's thanks are the one delivered to's (said already).
