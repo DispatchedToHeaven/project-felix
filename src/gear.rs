@@ -125,6 +125,9 @@ pub fn weapon_bonus(item: &str) -> f64 {
         8.0
     } else if id == "mace" {
         5.0
+    } else if crate::gun::gun(item).is_some() {
+        // A gun swung as a club (shot from, it does its own harm: see `guns`).
+        2.0
     } else if id.ends_with("_pickaxe") || id.ends_with("_shovel") || id.ends_with("_hoe") {
         by([1.0, 1.0, 2.0, 2.0, 3.0, 4.0, 5.0])
     } else {

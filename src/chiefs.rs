@@ -641,9 +641,16 @@ fn morning(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[En
                 crate::jobs::set_job(host, e, "");
                 crate::routines::set_place(host, e, "guard", [f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5]);
                 crate::routines::set_routine(host, e, Some("projectfelix:guard"));
-                // A blade from the village: iron if it has the metal, else stone.
-                let iron = chests(host, people).into_iter().find(|c| crate::jobs::amount(host, *c, "minecraft:iron_ingot") >= 2 && crate::jobs::take(host, *c, "minecraft:iron_ingot", 2));
-                let blade = if iron.is_some() { "minecraft:iron_sword" } else { "minecraft:stone_sword" };
+                // Its arms from the village: a gun if the chests hold one, else a blade, iron if
+                // it has the metal, else stone.
+                let cs = chests(host, people);
+                let gun = crate::gun::GUNS.iter().find(|g| cs.iter().any(|c| crate::jobs::amount(host, *c, g.id) >= 1 && crate::jobs::take(host, *c, g.id, 1)));
+                let iron = gun.is_none() && cs.iter().any(|c| crate::jobs::amount(host, *c, "minecraft:iron_ingot") >= 2 && crate::jobs::take(host, *c, "minecraft:iron_ingot", 2));
+                let blade = match gun {
+                    Some(g) => g.id,
+                    None if iron => "minecraft:iron_sword",
+                    None => "minecraft:stone_sword",
+                };
                 crate::talk::queue_try(format!("item replace entity {} weapon.mainhand with {blade}", crate::talk::uuid_text(u)));
                 let line = format!("{head_name} makes {} a guard of {name}.", name_of(&*host, e));
                 let mut v = village(name);

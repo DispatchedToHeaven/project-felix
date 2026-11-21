@@ -1,0 +1,1 @@
+{ "type": "minecraft:crafting_shaped", "category": "equipment", "pattern": ["CIF", "IPP"], "key": { "C": "minecraft:copper_ingot", "I": "minecraft:iron_ingot", "F": "minecraft:flint", "P": "#minecraft:planks" }, "result": { "id": "projectfelix:blunderbuss", "count": 1 } }

@@ -54,6 +54,8 @@
 //!   errands between villages.
 //! - `defence` is how a village defends itself (no mod API types): guards, who takes up arms,
 //!   help from friends, raiders routed or plundering; `defences` has fighting learned and count.
+//! - `gun` is firearms (no mod API types): flintlocks, loading, aim, hits; `guns` has players and
+//!   NPCs load and fire them.
 //! - `remark` is what companions say on the way (no mod API types); `companions` has them say it
 //!   and help their hurt player.
 //! - `bond` is how close an NPC and a player are, up to romance (no mod API types); `bonds` keeps it.
@@ -139,6 +141,8 @@ pub mod faction;
 pub mod factions;
 pub mod defence;
 pub mod defences;
+pub mod gun;
+pub mod guns;
 pub mod job;
 pub mod jobs;
 pub mod geo;
@@ -209,6 +213,7 @@ impl Hooks for Felix {
         book_screen::register(r);
         scene_editor::register(r);
         squad::register(r);
+        guns::register(r);
     }
 
     /// Models from `assets/<namespace>/geo/*.geo.json` and animations from
@@ -449,6 +454,7 @@ impl Hooks for Felix {
             healers::forget(e.entity);
             defences::forget(e.entity);
             gear::forget(e.entity);
+            guns::forget(e.entity);
             speech::forget(e.entity);
             builds::forget(e.entity);
         }
@@ -498,6 +504,7 @@ impl Hooks for Felix {
         shops::clear();
         speech::clear();
         squad::clear();
+        guns::clear();
         squad::clear_owners();
         talk::clear();
         villages::clear();

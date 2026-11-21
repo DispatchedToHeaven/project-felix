@@ -7,5 +7,10 @@
   "key.projectfelix.squad_attack": "Squad: attack what I look at",
   "key.projectfelix.squad_back": "Squad: fall back to me",
   "key.projectfelix.squad_hold": "Squad: hold here",
-  "key.projectfelix.village_book": "Open the village book"
+  "key.projectfelix.village_book": "Open the village book",
+  "item.projectfelix.flintlock_pistol": "Flintlock Pistol",
+  "item.projectfelix.musket": "Musket",
+  "item.projectfelix.blunderbuss": "Blunderbuss",
+  "item.projectfelix.cartridge": "Paper Cartridge",
+  "itemGroup.projectfelix.arms": "Project Felix: Firearms"
 }

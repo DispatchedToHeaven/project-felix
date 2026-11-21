@@ -1,0 +1,1 @@
+{ "type": "minecraft:crafting_shapeless", "category": "equipment", "ingredients": ["minecraft:paper", "minecraft:gunpowder", "minecraft:iron_nugget"], "result": { "id": "projectfelix:cartridge", "count": 4 } }

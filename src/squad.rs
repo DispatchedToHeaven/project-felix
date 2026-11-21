@@ -1,7 +1,7 @@
 //! A player's squad: up to three NPCs of theirs following them at once. Keys (Options >
 //! Controls, Project Felix): attack what the player looks at (G), fall back to the player and stop
 //! fighting (H), hold where they are (J); `/felix squad attack|back|hold|list` too. An NPC with a
-//! bow in hand shoots from where it is instead of running in; one with a shield takes less from
+//! bow or a gun in hand shoots from where it is instead of running in; one with a shield takes less from
 //! each hit (see `gear`).
 use crate::companion::{self, Mode};
 use mod_api::{
@@ -115,6 +115,11 @@ fn has_bow(host: &dyn mod_api::Host, e: EntityRef) -> bool {
     LivingRef::new(e).equipment(host, EquipmentSlot::MainHand).is_some_and(|s| matches!(s.item().id(host).as_str(), "minecraft:bow" | "minecraft:crossbow"))
 }
 
+/// Whether NPC `e` fights from afar: with a bow, or a gun (see `guns`).
+fn shoots(host: &dyn mod_api::Host, e: EntityRef) -> bool {
+    has_bow(host, e) || crate::guns::held(host, e).is_some()
+}
+
 /// What player `p` looks at, within 32 blocks: a living thing, not theirs.
 fn looked_at(host: &dyn mod_api::Host, p: PlayerRef, mine: &[EntityRef]) -> Option<EntityRef> {
     let me = p.entity();
@@ -140,7 +145,7 @@ pub fn attack(host: &mut dyn ServerHost, p: PlayerRef) {
         if let Ok(mut s) = STATE.lock() {
             s.calm.remove(&m.id());
         }
-        if has_bow(&*host, *m) {
+        if shoots(&*host, *m) {
             if let Ok(mut s) = STATE.lock() {
                 s.aims.insert(m.id(), (target.id(), now - RELOAD));
             }
@@ -220,9 +225,12 @@ pub fn tick(host: &mut dyn ServerHost) {
             }
             continue;
         }
-        if !has_bow(&*host, me) {
+        // One with a gun shoots as far as the gun carries (see `guns`).
+        let gun = crate::guns::held(&*host, me);
+        if gun.is_none() && !has_bow(&*host, me) {
             continue;
         }
+        let range = gun.map_or(RANGE, |g| g.range);
         // An archer keeps its distance: what it would run at, it shoots at.
         if let Some(t) = mob.target(&*host) {
             mob.set_target(host, None);
@@ -242,14 +250,24 @@ pub fn tick(host: &mut dyn ServerHost) {
         let Some(to) = target.position(&*host) else { continue };
         let (dx, dz) = (to[0] - at[0], to[2] - at[2]);
         let flat = (dx * dx + dz * dz).sqrt();
-        if flat > RANGE * 1.5 {
+        if flat > range * 1.5 {
             if let Ok(mut s) = STATE.lock() {
                 s.aims.remove(id);
             }
             continue;
         }
         let _ = mob.look_at(host, [to[0], to[1] + 1.2, to[2]]);
-        if flat > RANGE || now - last < RELOAD || LivingRef::new(me).has_line_of_sight(&*host, target) != Some(true) {
+        if flat > range || LivingRef::new(me).has_line_of_sight(&*host, target) != Some(true) {
+            continue;
+        }
+        if let Some(g) = gun {
+            // Its trigger, twice a second: it loads, then fires.
+            if now % 10 < 2 {
+                crate::guns::npc_pull(host, me, target, g, now, flat);
+            }
+            continue;
+        }
+        if now - last < RELOAD {
             continue;
         }
         if let Ok(mut s) = STATE.lock() {
@@ -308,7 +326,13 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
         _ => {
             let names: Vec<String> = members(&*host, p).iter().map(|m| {
                 let name = m.name(&*host).unwrap_or_else(|| "NPC".into());
-                let what = if has_bow(&*host, *m) { "bow" } else { "melee" };
+                let what = if has_bow(&*host, *m) {
+                    "bow"
+                } else if crate::guns::held(&*host, *m).is_some() {
+                    "gun"
+                } else {
+                    "melee"
+                };
                 format!("{name} ({what}{})", if companion::mode_of(m.id()) == Mode::Wait { ", holding" } else { "" })
             }).collect();
             let line = format!("Squad {}/{MAX}: {}. Orders: attack (G), back (H), hold (J)", names.len(), if names.is_empty() { "no one".into() } else { names.join(", ") });

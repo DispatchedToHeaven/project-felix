@@ -6,7 +6,10 @@
     { "item": "minecraft:iron_pickaxe", "count": 1, "price": 4, "stock": 2 },
     { "item": "minecraft:iron_sword", "count": 1, "price": 4, "stock": 2 },
     { "item": "minecraft:shield", "count": 1, "price": 3, "stock": 2 },
-    { "item": "minecraft:chainmail_chestplate", "count": 1, "price": 7, "stock": 1 }
+    { "item": "minecraft:chainmail_chestplate", "count": 1, "price": 7, "stock": 1 },
+    { "item": "projectfelix:flintlock_pistol", "count": 1, "price": 10, "stock": 1 },
+    { "item": "projectfelix:musket", "count": 1, "price": 16, "stock": 1 },
+    { "item": "projectfelix:cartridge", "count": 8, "price": 2, "stock": 6 }
   ],
   "buys": [
     { "item": "minecraft:coal", "count": 15, "price": 1, "stock": 20 },
