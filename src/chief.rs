@@ -50,6 +50,11 @@ pub struct Report {
     pub building: bool,
     /// Jobs someone in the village does now (a newcomer or the jobless can only take those).
     pub jobs: Vec<String>,
+    /// Its guards, and whether raiders came lately (see `defence`).
+    pub guards: usize,
+    pub wary: bool,
+    /// Who could be made a guard: uuid, fighting, has no job.
+    pub recruits: Vec<(u128, u8, bool)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -57,6 +62,8 @@ pub enum Decision {
     Festival,
     BuildCabin,
     GiveJob(u128, String),
+    /// Makes this one a guard.
+    Appoint(u128),
     Newcomer(String),
     Ask(String, u32),
 }
@@ -89,7 +96,12 @@ pub fn decide(r: &Report) -> Vec<Decision> {
     if (r.rough > 0 || r.people + 1 > r.beds) && !r.building {
         out.push(Decision::BuildCabin);
     }
-    for u in &r.jobless {
+    // A guard short: the best fighter is made one (one a morning).
+    let guard = if r.guards < crate::defence::guards_wanted(r.people, r.wary) { crate::defence::recruit(&r.recruits) } else { None };
+    if let Some(u) = guard {
+        out.push(Decision::Appoint(u));
+    }
+    for u in r.jobless.iter().filter(|u| Some(**u) != guard) {
         out.push(Decision::GiveJob(*u, needed_job(r)));
     }
     if r.people < MOST && r.people < r.beds && r.mood >= 50.0 && r.days_since_newcomer >= NEWCOMER_EVERY {
@@ -167,6 +179,7 @@ mod tests {
             days_since_newcomer: 9,
             building: false,
             jobs: vec!["farm".into(), "wood".into()],
+            ..Report::default()
         };
         let d = decide(&r);
         assert!(d.contains(&Decision::Festival) && d.contains(&Decision::BuildCabin));
@@ -176,8 +189,17 @@ mod tests {
         let happy = Report { mood: 70.0, rough: 0, food: 500, jobless: vec![], ..r };
         let d = decide(&happy);
         assert_eq!(d, vec![Decision::Newcomer("farm".into())]);
-        let wood = Report { food: 500, logs: 0, ..happy };
+        let wood = Report { food: 500, logs: 0, ..happy.clone() };
         assert_eq!(needed_job(&wood), "wood");
+        // No guard: the best fighter is made one, and is not given other work.
+        let open = Report { jobless: vec![7, 8], recruits: vec![(7, 6, true), (8, 2, true), (9, 6, false)], ..happy.clone() };
+        let d = decide(&open);
+        assert!(d.contains(&Decision::Appoint(7)) && d.contains(&Decision::GiveJob(8, "farm".into())), "{d:?}");
+        assert!(!d.contains(&Decision::GiveJob(7, "farm".into())));
+        let kept = Report { guards: 1, ..open.clone() };
+        assert!(!decide(&kept).iter().any(|x| matches!(x, Decision::Appoint(_))));
+        let wary = Report { guards: 1, wary: true, people: 6, ..open };
+        assert!(decide(&wary).contains(&Decision::Appoint(7)));
     }
 
     #[test]

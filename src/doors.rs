@@ -28,11 +28,11 @@ fn set(host: &mut dyn ServerHost, level: LevelRef, p: [i32; 3], open: bool) {
     let facing = prop("facing");
     if id.ends_with("_fence_gate") {
         let wall = prop("in_wall");
-        crate::talk::queue(format!("execute in {dim} run setblock {} {} {} {id}[facing={facing},in_wall={wall},open={open},powered=false]", p[0], p[1], p[2]));
+        crate::talk::queue_try(format!("execute in {dim} run setblock {} {} {} {id}[facing={facing},in_wall={wall},open={open},powered=false]", p[0], p[1], p[2]));
     } else {
         let hinge = prop("hinge");
         for (half, y) in [("upper", p[1] + 1), ("lower", p[1])] {
-            crate::talk::queue(format!("execute in {dim} run setblock {} {y} {} {id}[facing={facing},half={half},hinge={hinge},open={open},powered=false]", p[0], p[2]));
+            crate::talk::queue_try(format!("execute in {dim} run setblock {} {y} {} {id}[facing={facing},half={half},hinge={hinge},open={open},powered=false]", p[0], p[2]));
         }
     }
     let sound = match (id.ends_with("_fence_gate"), open) {
@@ -41,7 +41,8 @@ fn set(host: &mut dyn ServerHost, level: LevelRef, p: [i32; 3], open: bool) {
         (false, true) => "minecraft:block.wooden_door.open",
         (false, false) => "minecraft:block.wooden_door.close",
     };
-    crate::talk::queue(format!("execute in {dim} run playsound {sound} block @a {} {} {} 0.8", p[0], p[1], p[2]));
+    // (Nobody near to hear it is no failure.)
+    crate::talk::queue_try(format!("execute in {dim} run playsound {sound} block @a {} {} {} 0.8", p[0], p[1], p[2]));
 }
 
 /// The tick of each level: doors next to its NPCs open, those left alone shut.

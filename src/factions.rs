@@ -3,7 +3,7 @@
 //! An enemy is not spoken to and its guards go for them; the unwelcome pay more, friends and
 //! allies less, and may ask the head for a share of the village's food. Heads send players with
 //! their good word to other villages; caravans come from villages on good terms, friends send
-//! food to the hungry, neighbours quarrel (see `storyteller`). Kept with the world in
+//! food to the hungry and fighters to those under attack, neighbours quarrel (see `storyteller`). Kept with the world in
 //! `factions.json`. `/felix standing`, `/felix ties`, and for ops `/felix standing set <value>`,
 //! `/felix ties set <value>` (the nearest village, the two nearest villages).
 use crate::faction::{self, Bond, Deed, Errand, Rank, Standing, Tie};
@@ -390,6 +390,38 @@ pub fn send_aid(host: &mut dyn ServerHost, from: &str, to: &str, n: u32, now: i6
     }
     warm(from, to, faction::AID, now / DAY);
     write(host);
+}
+
+/// The friendly village that sends its own to stand with `name` against raiders, and how many.
+pub fn helpers_for(host: &mut dyn ServerHost, name: &str) -> Option<(String, u32)> {
+    read(host);
+    let mut ties = ties_of(host, name);
+    ties.sort_by_key(|t| -t.1);
+    let s = STATE.lock().ok()?;
+    ties.into_iter().find_map(|(o, tie)| {
+        let n = crate::defence::helpers(tie, s.known.get(&o)?.people);
+        (n > 0).then_some((o, n))
+    })
+}
+
+/// Villages `a` and `b` stood together: they are closer for it.
+pub fn thank(host: &mut dyn ServerHost, a: &str, b: &str, by: i32, now: i64) {
+    read(host);
+    warm(a, b, by, now / DAY);
+    write(host);
+}
+
+/// Tells `line` to the friends and allies of village `name` among the players, wherever in the
+/// overworld they are (those within 64 of its middle hear what happens there anyway).
+pub fn call_friends(host: &mut dyn ServerHost, name: &str, center: [i32; 2], line: &str) {
+    read(host);
+    let Some(level) = host.level(OVERWORLD) else { return };
+    for p in level.online_players(&*host).unwrap_or_default() {
+        let near = p.entity().position(&*host).is_some_and(|q| (q[0] - f64::from(center[0])).powi(2) + (q[2] - f64::from(center[1])).powi(2) < 64.0 * 64.0);
+        if !near && standing_of(name, p.uuid()).rank() >= Rank::Friend {
+            tell(host, p, line);
+        }
+    }
 }
 
 /// `name` falls out with a village near it: which, over what, and how they get on now.

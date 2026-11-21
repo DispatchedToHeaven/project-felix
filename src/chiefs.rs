@@ -1,6 +1,7 @@
 //! Village heads on the server (see `chief`): each Felix settlement chooses a head among its
 //! grown-ups, and each morning the head sees to the village: calls a festival when spirits are low,
-//! has a cabin built (from the village's logs) when someone slept without a bed, gives work to
+//! has a cabin built (from the village's logs) when someone slept without a bed, makes its best
+//! fighter a guard when the village is short of them (see `defence`), gives work to
 //! those with none, takes in a newcomer when there is room, and asks travellers for what the village
 //! lacks. Players ask any villager who leads them and what has happened lately, and the head how the village is doing and what
 //! it needs, and bring it (which the village remembers: see `factions`). `/felix village`, `/felix village elect|morning|newcomer|build`.
@@ -245,8 +246,18 @@ pub fn report(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &
     r.beds = 2 * (crate::settlements::houses(host, center) + v.cabins);
     let mut moods = Vec::new();
     let mut chests = Vec::new();
+    r.wary = crate::storyteller::days_since_raid(host, name, now / DAY) < crate::defence::WARY_DAYS;
     for e in people {
         let job = crate::jobs::job_of(host, *e);
+        // Its guards, and who could be made one (not the head, a child, or one building).
+        if is_guard(host, *e) {
+            r.guards += 1;
+        } else if grown(host, *e)
+            && job.is_none_or(|j| j.name() != "build")
+            && let Some(u) = e.uuid(host).filter(|u| Some(*u) != head)
+        {
+            r.recruits.push((u, crate::skills::level(host, *e, Skill::Fighting), job.is_none()));
+        }
         if let Some(j) = job
             && !r.jobs.contains(&j.name().to_string())
             && j.name() != "build"
@@ -621,6 +632,26 @@ fn morning(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[En
                 crate::heart::say_aloud(host, e, "All right. I'll do my part.");
                 lines.push(line);
             }
+            Decision::Appoint(u) => {
+                let Some(e) = people.iter().find(|e| e.uuid(host) == Some(u)).copied() else { continue };
+                // Its post: by the middle, each guard a few steps from the last.
+                let (x, z) = (center[0] - 3 + 3 * (r.guards as i32 % 3), center[1] + 3);
+                let y = host.surface_heights(OVERWORLD, &[(x, z)], Heightmap::MotionBlockingNoLeaves).ok().and_then(|h| h.first().copied().flatten());
+                let Some(y) = y else { continue };
+                crate::jobs::set_job(host, e, "");
+                crate::routines::set_place(host, e, "guard", [f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5]);
+                crate::routines::set_routine(host, e, Some("projectfelix:guard"));
+                // A blade from the village: iron if it has the metal, else stone.
+                let iron = chests(host, people).into_iter().find(|c| crate::jobs::amount(host, *c, "minecraft:iron_ingot") >= 2 && crate::jobs::take(host, *c, "minecraft:iron_ingot", 2));
+                let blade = if iron.is_some() { "minecraft:iron_sword" } else { "minecraft:stone_sword" };
+                crate::talk::queue_try(format!("item replace entity {} weapon.mainhand with {blade}", crate::talk::uuid_text(u)));
+                let line = format!("{head_name} makes {} a guard of {name}.", name_of(&*host, e));
+                let mut v = village(name);
+                note(&mut v, now / DAY, &line);
+                set_village(name, v);
+                crate::heart::say_aloud(host, e, "I'll keep watch. Nobody gets past me.");
+                lines.push(line);
+            }
             Decision::Newcomer(job) => {
                 let l = newcomer(host, name, center, people, &job, now);
                 if !l.is_empty() {
@@ -882,7 +913,7 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
     let v = village(&name);
     let r = report(host, &name, center, &people, now);
     lines.push(format!(
-        "{name} (at {} {}): head {}, {} people loaded, beds {}, food {}, logs {}, mood {:.0}, jobless {}, slept rough {}{}",
+        "{name} (at {} {}): head {}, {} people loaded, beds {}, food {}, logs {}, mood {:.0}, jobless {}, slept rough {}, guards {}{}",
         center[0],
         center[1],
         v.head.as_ref().map(|h| h.1.as_str()).unwrap_or("none"),
@@ -893,6 +924,7 @@ pub fn run_command(host: &mut dyn ServerHost, e: &mut RunModCommandEvent<'_>) ->
         r.mood,
         r.jobless.len(),
         r.rough,
+        r.guards,
         if r.building { ", building a cabin" } else { "" }
     ));
     if !v.wants.is_empty() {

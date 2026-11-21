@@ -240,7 +240,19 @@ pub fn birth(host: &mut dyn ServerHost, a: EntityRef, b: EntityRef) -> Result<St
     Ok(name)
 }
 
-/// The children just born get their look, character, voice, day and family.
+/// A child belongs where its parent does: it takes the parent's village (its tags).
+fn belong(host: &mut dyn ServerHost, child: EntityRef, parent: EntityRef) {
+    let Some(u) = child.uuid(host) else { return };
+    let mine = child.tags(&*host).unwrap_or_default();
+    for t in parent.tags(&*host).unwrap_or_default() {
+        let village = t.starts_with("felix_") && !["felix_caravan", "felix_helper", "felix_raider"].iter().any(|x| t.starts_with(x));
+        if village && !mine.contains(&t) {
+            crate::talk::queue(format!("tag {} add {t}", crate::talk::uuid_text(u)));
+        }
+    }
+}
+
+/// The children just born get their look, character, voice, day, family and village.
 fn set_up(host: &mut dyn ServerHost) {
     let births = STATE.lock().map(|mut s| std::mem::take(&mut s.births)).unwrap_or_default();
     let mut later = Vec::new();
@@ -271,6 +283,7 @@ fn set_up(host: &mut dyn ServerHost) {
             }
         }
         crate::routines::set_routine(host, child, Some("projectfelix:child"));
+        belong(host, child, b.after);
     }
     if let Ok(mut s) = STATE.lock() {
         s.births.extend(later.into_iter().take(16));
@@ -289,6 +302,16 @@ pub fn tick(host: &mut dyn ServerHost) {
     for e in &npcs {
         let f = family_of(host, *e);
         fams.push((*e, f));
+    }
+    // Those born before children were counted of their parents' village are, now.
+    for (e, f) in &fams {
+        if f.parents.is_empty() || e.tags(&*host).unwrap_or_default().iter().any(|t| t.starts_with("felix_")) {
+            continue;
+        }
+        let parent = f.parents.iter().find_map(|(u, _)| host.entity(crate::heart::npc_by_uuid(*u)?));
+        if let Some(p) = parent {
+            belong(host, *e, p);
+        }
     }
     // Children who grew up.
     for (e, f) in &fams {

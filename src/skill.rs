@@ -20,12 +20,13 @@ pub enum Skill {
     Trading,
     Talking,
     Healing,
+    Fighting,
 }
 
 /// How many skills there are.
-pub const N: usize = 8;
+pub const N: usize = 9;
 
-pub const SKILLS: [Skill; N] = [Skill::Farming, Skill::Woodcutting, Skill::Fishing, Skill::Cooking, Skill::Building, Skill::Trading, Skill::Talking, Skill::Healing];
+pub const SKILLS: [Skill; N] = [Skill::Farming, Skill::Woodcutting, Skill::Fishing, Skill::Cooking, Skill::Building, Skill::Trading, Skill::Talking, Skill::Healing, Skill::Fighting];
 
 impl Skill {
     pub fn index(self) -> usize {
@@ -41,6 +42,7 @@ impl Skill {
             Skill::Trading => "trading",
             Skill::Talking => "talking",
             Skill::Healing => "healing",
+            Skill::Fighting => "fighting",
         }
     }
     pub fn parse(s: &str) -> Option<Skill> {
@@ -129,6 +131,7 @@ pub const CHILDHOODS: &[Past] = &[
     past("builders_kid", "My mother built houses; I carried her tools", &[(Skill::Building, 3), (Skill::Woodcutting, 1)], None),
     // New ones go last: an NPC's past is picked by its place in the list.
     past("herb_child", "I gathered herbs with my grandmother, who healed the village", &[(Skill::Healing, 4), (Skill::Farming, 1)], None),
+    past("scrapper", "I was a scrappy child, in a fight every other day", &[(Skill::Fighting, 3)], None),
 ];
 
 pub const ADULTHOODS: &[Past] = &[
@@ -138,10 +141,12 @@ pub const ADULTHOODS: &[Past] = &[
     past("baker", "then I kept a bakery", &[(Skill::Cooking, 6), (Skill::Trading, 1)], Some("bake")),
     past("carpenter", "then I was a carpenter", &[(Skill::Building, 6), (Skill::Woodcutting, 1)], Some("build")),
     past("peddler", "then I peddled wares from town to town", &[(Skill::Trading, 6), (Skill::Talking, 2)], None),
-    past("guard", "then I stood guard at a city gate", &[(Skill::Talking, 1)], None),
+    past("guard", "then I stood guard at a city gate", &[(Skill::Fighting, 6), (Skill::Talking, 1)], None),
     past("storyteller", "then I told stories for a living", &[(Skill::Talking, 6)], None),
     past("drifter", "then I drifted, never staying long", &[(Skill::Fishing, 2), (Skill::Woodcutting, 2), (Skill::Farming, 1)], None),
     past("healer", "then I tended the sick and the hurt", &[(Skill::Healing, 6), (Skill::Talking, 1)], None),
+    past("soldier", "then I soldiered in some lord's wars", &[(Skill::Fighting, 7)], None),
+    past("hunter", "then I hunted in the hills", &[(Skill::Fighting, 4), (Skill::Cooking, 1)], None),
 ];
 
 fn mix(mut x: u64) -> u64 {
@@ -281,6 +286,11 @@ impl Skills {
             s.passion[i] = arr("passion").and_then(|a| a.get(i)?.as_u64()).unwrap_or(0).min(2) as u8;
             s.used[i] = arr("used").and_then(|a| a.get(i)?.as_i64()).unwrap_or(0);
         }
+        // Fighting, to one made before it was a skill: what a life gives anyone, more to one who stood guard.
+        if xp.len() <= Skill::Fighting.index() {
+            let guard = s.past.as_ref().is_some_and(|p| p.1 == "guard");
+            s.xp[Skill::Fighting.index()] = xp_for(if guard { 6 } else { 2 });
+        }
         Some(s)
     }
 }
@@ -306,7 +316,7 @@ mod tests {
         assert_eq!(level_of(54_999.0), 9);
         assert_eq!(level_of(55_000.0), 10);
         assert_eq!(level_of(1e9), 20);
-        let mut s = Skills { xp: [0.0; N], passion: [0, 2, 0, 0, 0, 0, 0, 0], used: [0; N], faded: 0, past: None };
+        let mut s = Skills { xp: [0.0; N], passion: [0, 2, 0, 0, 0, 0, 0, 0, 0], used: [0; N], faded: 0, past: None };
         assert_eq!(s.practice(Skill::Woodcutting, 700.0, 5), Some(1));
         assert_eq!(s.practice(Skill::Farming, 700.0, 5), None);
         assert!(s.xp[1] > s.xp[0] * 4.0);
@@ -331,6 +341,14 @@ mod tests {
         }
         assert!(fits > 150, "{fits}");
         let s = Skills::new(7, Some("fish"));
-        assert_eq!(Skills::from_json(&s.to_json()), Some(s));
+        assert_eq!(Skills::from_json(&s.to_json()), Some(s.clone()));
+        // One saved before fighting was a skill can fight a little; one who stood guard, well.
+        let mut old = s.to_json();
+        for k in ["xp", "passion", "used"] {
+            old[k].as_array_mut().unwrap().truncate(8);
+        }
+        assert_eq!(Skills::from_json(&old).unwrap().level(Skill::Fighting), 2);
+        old["past"] = json!(["orphan", "guard"]);
+        assert_eq!(Skills::from_json(&old).unwrap().level(Skill::Fighting), 6);
     }
 }

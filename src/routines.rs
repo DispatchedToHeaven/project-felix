@@ -232,6 +232,15 @@ pub fn set_place(host: &mut dyn ServerHost, npc: EntityRef, name: &str, at: [f64
     }
 }
 
+/// NPC `id` takes up its day again where the hour finds it (after something took it from it).
+pub fn resume(id: u32) {
+    if let Ok(mut s) = STATE.lock()
+        && let Some(d) = s.days.get_mut(&id)
+    {
+        d.entry = None;
+    }
+}
+
 /// Gives NPC `npc` routine `id` (none: takes it away), and has it live by it (or follow).
 pub fn set_routine(host: &mut dyn ServerHost, npc: EntityRef, id: Option<&str>) -> bool {
     if ROUTINE.set(host, Holder::Entity(npc.id()), id.map(str::to_string)).is_err() {

@@ -52,6 +52,8 @@
 //! - `faction` is villages among others (no mod API types): a player's standing with a village,
 //!   the ties between villages; `factions` keeps them on the server: deeds, prices, enemies,
 //!   errands between villages.
+//! - `defence` is how a village defends itself (no mod API types): guards, who takes up arms,
+//!   help from friends, raiders routed or plundering; `defences` has fighting learned and count.
 //! - `remark` is what companions say on the way (no mod API types); `companions` has them say it
 //!   and help their hurt player.
 //! - `bond` is how close an NPC and a player are, up to romance (no mod API types); `bonds` keeps it.
@@ -135,6 +137,8 @@ pub mod story;
 pub mod storyteller;
 pub mod faction;
 pub mod factions;
+pub mod defence;
+pub mod defences;
 pub mod job;
 pub mod jobs;
 pub mod geo;
@@ -404,6 +408,7 @@ impl Hooks for Felix {
             needs::tick(host);
             minds::tick(host);
             skills::tick(host);
+            defences::tick(host);
             doors::tick(host);
             healers::tick(host);
             squad::tick(host);
@@ -442,6 +447,7 @@ impl Hooks for Felix {
             minds::forget(e.entity);
             skills::forget(e.entity);
             healers::forget(e.entity);
+            defences::forget(e.entity);
             gear::forget(e.entity);
             speech::forget(e.entity);
             builds::forget(e.entity);
@@ -483,6 +489,7 @@ impl Hooks for Felix {
         healers::clear();
         storyteller::clear();
         factions::clear();
+        defences::clear();
         quests::clear();
         routines::clear();
         rulebook::clear();
@@ -516,6 +523,7 @@ impl Hooks for Felix {
     fn living_damage_post(&self, _level: &mut dyn LevelRandomHost, e: &mut LivingDamagePostEvent<'_>) {
         rulebook::on_hurt(e.entity, e.source.causing);
         heart::on_hurt(e.entity, e.source.causing);
+        defences::on_hurt(e.entity, e.source.causing);
         routines::on_hurt(e.entity);
     }
 

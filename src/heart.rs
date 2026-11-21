@@ -740,7 +740,7 @@ fn enter(host: &mut dyn ServerHost, me: EntityRef, c: &Character, mood: &str, pl
 }
 
 fn set_speed(uuid: &str, speed: f32) {
-    crate::talk::queue(format!("attribute {uuid} minecraft:movement_speed modifier remove projectfelix:mood"));
+    crate::talk::queue_try(format!("attribute {uuid} minecraft:movement_speed modifier remove projectfelix:mood"));
     if (speed - 1.0).abs() > 0.01 {
         crate::talk::queue(format!("attribute {uuid} minecraft:movement_speed modifier add projectfelix:mood {:.2} add_multiplied_total", speed - 1.0));
     }

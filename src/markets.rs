@@ -213,7 +213,7 @@ pub fn bake(host: &mut dyn ServerHost, me: EntityRef, at: Option<[f64; 3]>) {
     let _ = LivingRef::new(me).swing(host, Hand::Main, false);
     crate::routines::play_animation(host, me, "animation.felix.swing");
     let _ = level.play_sound(host, "minecraft:block.smoker.smoke", [at[0], at[1] + 1.0, at[2]], SoundSource::Blocks, 0.7, 1.0);
-    crate::talk::queue(format!("execute in {} run particle minecraft:campfire_cosy_smoke {:.2} {:.2} {:.2} 0.2 0.3 0.2 0.01 3", level.dimension_id(), pos[0], pos[1] + 1.2, pos[2]));
+    crate::talk::queue_try(format!("execute in {} run particle minecraft:campfire_cosy_smoke {:.2} {:.2} {:.2} 0.2 0.3 0.2 0.01 3", level.dimension_id(), pos[0], pos[1] + 1.2, pos[2]));
     if may_say(me.id(), now, 2400) {
         crate::heart::say_aloud(host, me, pick(market::BAKER, now / 20));
     }

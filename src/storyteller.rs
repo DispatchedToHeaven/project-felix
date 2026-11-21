@@ -1,8 +1,10 @@
 //! The storyteller on the server (see `story`): once a day, after its head's morning, each Felix
 //! village may have something come to it. A wanderer settles (sometimes hurt); a caravan stops
 //! for a day, sells to players and swaps with the village what it lacks; stray animals wander in;
-//! raiders come at the village, its folk run home, its guards and the players about fight, and
-//! those who fight them are thanked; a blight sets the crops back; a sickness goes round; rot gets
+//! raiders come at the village: its guards and those who can fight take up arms, the rest run
+//! home, a friendly village sends help, friendly players hear of it; raiders who lose half their
+//! number run, raiders not driven off in time plunder the stores (see `defence`), and those who
+//! fight them are thanked; a blight sets the crops back; a sickness goes round; rot gets
 //! into the stores; it falls out with another village, or a friendly one sends it food in a hungry
 //! time (see `factions`). Everyone remembers it, the head tells of it ("What's been happening?").
 //! `/felix story`, `/felix story <incident>` (at the nearest village).
@@ -25,8 +27,10 @@ struct Tale {
     teller: Teller,
     /// The last day it was told.
     told: i64,
-    /// Raiders about until then.
+    /// Raiders about until then, how many came, and the village that sent help.
     raid: Option<i64>,
+    raiders: u32,
+    helpers: Option<String>,
     /// A caravan here until then.
     caravan: Option<i64>,
     /// The last day someone died.
@@ -39,6 +43,11 @@ struct State {
     world: Option<std::path::PathBuf>,
     tales: HashMap<String, Tale>,
     seed: u64,
+    /// Who of each village stands against its raiders now (not kept: a raid met again after a
+    /// restart is fought by whoever is hit).
+    militia: HashMap<String, Vec<u32>>,
+    /// The villages whose helpers have their blades.
+    armed: Vec<String>,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -66,6 +75,8 @@ fn read(host: &mut dyn ServerHost) {
                     teller: Teller { since: i("since").unwrap_or(0), phase: i("phase").unwrap_or(0), last },
                     told: i("told").unwrap_or(0),
                     raid: i("raid"),
+                    raiders: i("raiders").unwrap_or(0).max(0) as u32,
+                    helpers: x.get("helpers").and_then(Value::as_str).map(str::to_string),
                     caravan: i("caravan"),
                     death: i("death"),
                 },
@@ -86,7 +97,7 @@ fn write(host: &mut dyn ServerHost) {
             let last: crate::serde_json::Map<String, Value> = t.teller.last.iter().map(|(i, d)| (i.id().to_string(), json!(d))).collect();
             m.insert(
                 name.clone(),
-                json!({ "since": t.teller.since, "phase": t.teller.phase, "last": last, "told": t.told, "raid": t.raid, "caravan": t.caravan, "death": t.death }),
+                json!({ "since": t.teller.since, "phase": t.teller.phase, "last": last, "told": t.told, "raid": t.raid, "raiders": t.raiders, "helpers": t.helpers, "caravan": t.caravan, "death": t.death }),
             );
         }
         Value::Object(m)
@@ -281,20 +292,65 @@ fn happen(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[Ent
             }
             let mut t = tale(name, w.day);
             t.raid = Some(now + story::RAID_LASTS);
-            set_tale(name, t);
-            // Everyone runs home; the guards stay at their posts.
+            t.raiders = came;
+            // The guards and those who can fight stand by the middle; everyone else runs home.
+            let fighters = crate::defences::muster(host, people);
+            let post = [f64::from(center[0]) + 0.5, f64::from(ground(host, center[0], center[1]).unwrap_or(at[1])), f64::from(center[1]) + 0.5];
             for e in people {
-                if let Some(home) = crate::routines::place_named(host, *e, "home")
-                    && !is_guard(host, *e)
-                {
+                if fighters.contains(&e.id()) {
+                    crate::routines::wake(host, *e, None);
+                    companion::go_to(e.id(), None);
+                    companion::set_live(host, *e, post, companion::LiveDo::Guard);
+                } else if let Some(home) = crate::routines::place_named(host, *e, "home") {
                     companion::go_to(e.id(), Some(home));
                 }
             }
             remember_all(host, people, "raided");
             if let Some(h) = head {
-                crate::heart::say_aloud(host, h, "Raiders! Everyone, get inside!");
+                crate::heart::say_aloud(host, h, if fighters.is_empty() { "Raiders! Everyone, get inside!" } else { "Raiders! To arms! Everyone else, get inside!" });
             }
-            format!("{came} raiders are coming at {name}! Its folk run for their homes.")
+            let mut line = format!("{came} raiders are coming at {name}! ");
+            line.push_str(&match fighters.len() {
+                0 => "Its folk run for their homes.".to_string(),
+                1 => "One of its folk takes up arms, the rest run for their homes.".to_string(),
+                n => format!("{n} of its folk take up arms, the rest run for their homes."),
+            });
+            // A friendly village sends a few of its own (see `factions`).
+            if let Some((from, n)) = crate::factions::helpers_for(host, name)
+                && let Some(spot) = spot_out(host, center, 10.0, r >> 5)
+            {
+                let taken: Vec<String> = people.iter().map(|e| name_of(&*host, *e)).collect();
+                let look = companion::Look::of_model(companion::DEFAULT_MODEL);
+                let mut sent = 0;
+                for k in 0..n {
+                    let spec = NpcSpec {
+                        name: crate::settle::newcomer_name((r >> 16).wrapping_add(u64::from(k) * 31), &taken),
+                        model: look.model.clone(),
+                        texture: look.texture.clone(),
+                        character: Some("projectfelix:stoic".into()),
+                        places: vec![("home".into(), [0.0; 3])],
+                        tags: vec!["felix_helper".into(), tag_of(name, "helper")],
+                        orders: "guard".into(),
+                        ..NpcSpec::default()
+                    };
+                    let anchor = [f64::from(spot[0]) + 0.5 + f64::from(k), f64::from(spot[1]), f64::from(spot[2]) + 0.5];
+                    if crate::villages::settle(host, OVERWORLD, anchor, spec).is_some() {
+                        sent += 1;
+                    }
+                }
+                if sent > 0 {
+                    t.helpers = Some(from.clone());
+                    line.push_str(&format!(" {sent} from {from} come to stand with them."));
+                }
+            }
+            set_tale(name, t);
+            if let Ok(mut s) = STATE.lock() {
+                s.militia.insert(name.to_string(), fighters);
+                s.armed.retain(|v| v != name);
+            }
+            // Its friends among the players hear of it wherever they are.
+            crate::factions::call_friends(host, name, center, &format!("{name} is under attack, and calls for its friends!"));
+            line
         }
         Incident::Blight => {
             let y = ground(host, center[0], center[1])?;
@@ -386,38 +442,117 @@ fn short(item: &str) -> String {
     item.trim_start_matches("minecraft:").replace('_', " ")
 }
 
-fn is_guard(host: &mut dyn ServerHost, e: EntityRef) -> bool {
-    crate::routines::ROUTINE.get(host, mod_api::Holder::Entity(e.id())).ok().flatten().is_some_and(|r| r.ends_with(":guard"))
+/// Days since raiders last came at village `name` (many: never).
+pub fn days_since_raid(host: &mut dyn ServerHost, name: &str, day: i64) -> i64 {
+    read(host);
+    STATE.lock().ok().and_then(|s| s.tales.get(name).and_then(|t| t.teller.last_of(Incident::Raid))).map_or(999, |d| day - d)
 }
 
-/// Raiders about the village go for its folk (else the players about); gone, or given up, the
-/// raid is over.
+/// What raiders nobody drove off carry away from the village's chests: food, and logs.
+fn plunder(host: &mut dyn ServerHost, people: &[EntityRef]) -> (u64, u64) {
+    let (mut food, mut logs) = (0, 0);
+    for c in crate::chiefs::chests(host, people) {
+        for f in crate::need::FOODS {
+            let k = crate::defence::plunder(crate::jobs::amount(host, c, f.0));
+            if k > 0 && crate::jobs::take(host, c, f.0, k as u32) {
+                food += k;
+            }
+        }
+        for l in crate::chiefs::LOGS {
+            let k = crate::defence::plunder(crate::jobs::amount(host, c, l));
+            if k > 0 && crate::jobs::take(host, c, l, k as u32) {
+                logs += k;
+            }
+        }
+    }
+    (food, logs)
+}
+
+/// Raiders about the village go for its folk (else the players about), and those who stand go
+/// for them; all killed or half of them down (they run), the village has won; not driven off in
+/// time, they plunder it and leave.
 fn raid_tick(host: &mut dyn ServerHost, name: &str, center: [i32; 2], people: &[EntityRef], end: i64, now: i64) {
     let raiders = tagged(host, center, &tag_of(name, "raider"));
-    let over = raiders.is_empty() || now >= end;
+    let t = tale(name, now / DAY);
+    let helpers = if t.helpers.is_some() { tagged(host, center, &tag_of(name, "helper")) } else { Vec::new() };
+    // Those who came to help get their blades (once they are there to take them).
+    if !helpers.is_empty()
+        && STATE.lock().is_ok_and(|s| !s.armed.iter().any(|v| v == name))
+        && host.commands().run_command(&format!("item replace entity @e[tag={}] weapon.mainhand with minecraft:iron_sword", tag_of(name, "helper")))
+        && let Ok(mut s) = STATE.lock()
+    {
+        s.armed.push(name.to_string());
+    }
+    let routed = crate::defence::routed(t.raiders, raiders.len() as u32);
+    let over = raiders.is_empty() || routed || now >= end;
     if over {
-        let won = raiders.is_empty();
+        let won = raiders.is_empty() || routed;
         for e in &raiders {
             e.discard(host);
         }
-        let mut t = tale(name, now / DAY);
+        let from = t.helpers.clone();
+        let mut t = t;
         t.raid = None;
+        t.raiders = 0;
+        t.helpers = None;
         set_tale(name, t);
+        let militia = STATE.lock().ok().and_then(|mut s| s.militia.remove(name)).unwrap_or_default();
         for e in people {
             companion::go_to(e.id(), None);
+            if militia.contains(&e.id()) {
+                // Back to its day, and something to remember.
+                MobRef::new(*e).set_target(host, None);
+                crate::routines::resume(e.id());
+                crate::minds::remember(host, *e, "fought");
+            }
         }
         let line = if won {
             remember_all(host, people, "raid_won");
             if let Some(h) = crate::chiefs::head_of(host, name, people) {
                 crate::heart::say_aloud(host, h, "They're gone! Well done, everyone.");
             }
-            format!("{name} has driven off the raiders!")
+            if routed { format!("The raiders have had enough, and run from {name}!") } else { format!("{name} has driven off the raiders!") }
         } else {
-            format!("The raiders give up on {name} and slip away.")
+            remember_all(host, people, "plundered");
+            match plunder(host, people) {
+                (0, 0) => format!("The raiders find nothing worth taking in {name}, and leave."),
+                (food, 0) => format!("The raiders plunder {name}: {food} food is gone."),
+                (0, logs) => format!("The raiders plunder {name}: {logs} logs are gone."),
+                (food, logs) => format!("The raiders plunder {name}: {food} food and {logs} logs are gone."),
+            }
         };
         crate::chiefs::record(host, name, now, &line);
         crate::chiefs::tell_near(host, center, &line);
+        // Those who came to help go home; the two villages are closer for it.
+        if let Some(from) = from {
+            for e in &helpers {
+                e.discard(host);
+            }
+            if !helpers.is_empty() {
+                remember_all(host, people, "stood_by");
+                crate::factions::thank(host, name, &from, crate::faction::CARAVAN + 1, now);
+                let line = format!("The folk of {from} who stood with {name} head home.");
+                crate::chiefs::record(host, name, now, &line);
+                crate::chiefs::record(host, &from, now, &format!("{from} sent help to {name} against raiders."));
+                crate::chiefs::tell_near(host, center, &line);
+            }
+        }
         return;
+    }
+    // Those who stand go for the nearest raider.
+    let militia = STATE.lock().ok().and_then(|s| s.militia.get(name).cloned()).unwrap_or_default();
+    let stand = people.iter().filter(|e| militia.contains(&e.id())).chain(helpers.iter());
+    for e in stand.copied().collect::<Vec<_>>() {
+        let mob = MobRef::new(e);
+        if mob.target(&*host).is_some_and(|t| t.alive(&*host) == Some(true)) {
+            continue;
+        }
+        let Some(at) = e.position(&*host) else { continue };
+        let d = |p: [f64; 3]| (p[0] - at[0]).powi(2) + (p[1] - at[1]).powi(2) + (p[2] - at[2]).powi(2);
+        let near = raiders.iter().filter_map(|r| Some((d(r.position(&*host)?), *r))).filter(|(x, _)| *x < 40.0 * 40.0).min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((_, target)) = near {
+            mob.set_target(host, Some(LivingRef::new(target)));
+        }
     }
     let players = host.level(OVERWORLD).and_then(|l| l.online_players(&*host)).unwrap_or_default();
     for raider in raiders {

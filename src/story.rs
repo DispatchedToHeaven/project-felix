@@ -227,8 +227,8 @@ pub fn raiders(w: &World, days_in: i64) -> (u32, u32) {
     (n, n / 3)
 }
 
-/// How long raiders stay before they give up and leave (game time).
-pub const RAID_LASTS: i64 = DAY / 3;
+/// How long a village has to drive raiders off before they plunder it and leave (game time).
+pub const RAID_LASTS: i64 = DAY / 8;
 /// How long a caravan stays.
 pub const CARAVAN_STAYS: i64 = DAY;
 
